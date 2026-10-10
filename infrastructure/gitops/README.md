@@ -32,6 +32,8 @@ OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합�
 최신 데이터 복원과 실제 전환 상태는
 [Langfuse Kubernetes 이전 기록](docs/langfuse-kubernetes.md)에서 관리합니다.
 이후 웹·데이터·외부 접근 구성을 마무리해야 합니다.
+웹 정적 이미지와 기존 서비스 Chart를 재사용하는 구성은
+[웹 Kubernetes 배포](docs/web-kubernetes.md)에 있습니다. 구현·로컬 실행 확인과 실제 Argo 인계는 구분합니다.
 [평가 환경 이전의 상세 기준](docs/evaluation-kubernetes.md)을 함께 따릅니다.
 
 ## 현재 상태
@@ -56,6 +58,7 @@ OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합�
 | 전환 후 평가 데이터 백업 | `ops_db_snapshot.py backup --kubernetes-evaluation` → 기존 통합 백업. 새 PVC 데이터의 실제 MySQL·임시 Kubernetes PVC 복원 완료 |
 | 개인 환경 평가 서비스 이전 | 2026-10-10 Prefect·실행기·결과 서버와 Ops 연결을 실제 전환. 무료 평가 6사례·보고서 조회 성공, 원본 Compose 평가 서비스 3개 중지·볼륨 보존 |
 | 개인 환경 Langfuse 이전 | 2026-10-10 web/worker·저장소 4개 기동 및 실행기의 내부 Service 연결 완료. 무료 평가 6사례·점수 22개 갱신 확인. 원본 Compose 6개 중지·볼륨 보존. 새 설치의 기본 replica는 0 유지 |
+| 웹 배포 구성 | 정적 웹 이미지·Core/Ops 프록시·기존 서비스 Chart의 웹 values 추가. 개인 환경의 실제 웹 주소 전환과 공개 이미지 발행은 후속 단계 |
 | Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 

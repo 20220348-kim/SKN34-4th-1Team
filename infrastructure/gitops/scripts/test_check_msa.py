@@ -4,8 +4,8 @@ import shutil
 import subprocess
 import unittest
 
-from check_msa import ROOT, SERVICES, argo_errors, policy_errors, render
 import yaml
+from check_msa import ROOT, SERVICES, argo_errors, policy_errors, render
 
 HELM = os.environ.get("HELM", "helm")
 
@@ -16,6 +16,25 @@ class MsaChartTests(unittest.TestCase):
         for service in SERVICES:
             with self.subTest(service=service):
                 self.assertEqual(policy_errors(service, render(service, HELM)), [])
+
+    def test_web_reuses_service_chart_without_database_secrets_or_migration(self):
+        resources = render("web", HELM)
+        self.assertEqual({r["kind"] for r in resources}, {"Deployment", "Service"})
+        pod = next(r for r in resources if r["kind"] == "Deployment")["spec"]["template"]["spec"]
+        self.assertFalse(pod["automountServiceAccountToken"])
+        self.assertEqual(pod["securityContext"]["runAsUser"], 101)
+        container = pod["containers"][0]
+        self.assertEqual(container["image"], "govbiz-web:local-k8s")
+        self.assertNotIn("env", container)
+        self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+        self.assertEqual(container["volumeMounts"], [{"name": "tmp", "mountPath": "/tmp"}])
+        for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
+            self.assertEqual(container[probe]["httpGet"]["path"], "/healthz")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("web", HELM, ["--set", "localMode=false"])
+        published = render("web", HELM, ["--set", "localMode=false", "--set", "image.digest=sha256:" + "a" * 64])
+        published_pod = next(r for r in published if r["kind"] == "Deployment")["spec"]["template"]["spec"]
+        self.assertIn("@sha256:", published_pod["containers"][0]["image"])
 
     def test_reject_unsafe_values(self):
         for arguments in (
@@ -65,7 +84,7 @@ class MsaChartTests(unittest.TestCase):
         self.assertIn("core-service: Core source writer enabled", policy_errors("core-service", resources))
 
     def test_local_data_requires_explicit_opt_in(self):
-        result = subprocess.run([HELM, "template", "local-data", str(ROOT / "charts/govbiz-local-data")], capture_output=True)
+        result = subprocess.run([HELM, "template", "local-data", str(ROOT / "charts/govbiz-local-data")], capture_output=True, check=False)
         self.assertNotEqual(result.returncode, 0)
 
     def test_local_data_has_six_independent_persistent_stores(self):

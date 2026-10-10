@@ -144,7 +144,7 @@ jobs:
       - name: Lint services, disposable local storage and observability
         run: |
           set -euo pipefail
-          for service in core-service catalog-service ai-service ops-service; do
+          for service in core-service catalog-service ai-service ops-service web; do
             helm lint charts/govbiz-service -f "environments/local-msa/$service.yaml" --strict
           done
           helm lint charts/govbiz-local-data --set allowDisposableData=true --strict

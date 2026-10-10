@@ -181,7 +181,13 @@ Core API와 함께 켠 뒤 저장소 루트에서 Node 24.x/pnpm 11.22.x로 `pnp
 
 개발 프록시는 정적 배포에 포함되지 않습니다. 운영 환경에는 `/ops/*` SPA 라우팅과
 `/api/v1/ops/*` → Django 프록시를 별도로 연결해야 합니다. 현재 Vercel 미들웨어는 미연결 Ops 요청을
-503으로 반환하며 Core API에 잘못 전달하지 않습니다. 이번 범위는 로컬 실행과 Core 관리자 계정 통합이며 운영 배포는 별도입니다.
+503으로 반환하며 Core API에 잘못 전달하지 않습니다.
+
+Kubernetes용 [Dockerfile](Dockerfile)은 정적 번들과 [Nginx](nginx.conf)를 한 이미지로 빌드합니다.
+`/ops/*`를 포함한 SPA 새로고침과 같은 origin의 Core·Ops API를 처리하며, Vercel 미들웨어나
+Vite 개발 서버를 실행하지 않습니다. 기존 서비스 Chart를 사용하는
+[빌드·배포 안내](../../infrastructure/gitops/docs/web-kubernetes.md)를 따릅니다.
+개인 환경의 실제 웹 주소 전환은 이 이미지의 CI·발행·배포 후 별도로 확인해야 합니다.
 
 ### Mac Kubernetes 백엔드에 연결
 
