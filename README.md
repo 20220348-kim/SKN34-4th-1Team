@@ -472,12 +472,12 @@ AI가 제안한 조건을 사용자가 확인하면, 키워드·의미 검색으
 
 사진을 누르면 원본 크기로 볼 수 있습니다.
 
-**공고 조회·후보 검색:** 번호는 `core-service`가 조회·검색을 요청하는 순서입니다.
+**검색 대상 준비·후보 검색:** 번호는 사용자가 조건을 확정한 뒤 `core-service`가 조회·검색을 요청하는 순서입니다.
 
 ```mermaid
 flowchart LR
     User["웹 · 앱<br/>검색어 · 기업 조건"] --> Core["core-service<br/>검색 대상·접수 확인"]
-    Core -.->|1. 공고 조회| CoreDB[("Core MySQL<br/>공고 내용 · 기간")]
+    Core -.->|1. 검색 대상 공고 읽기| CoreDB[("Core MySQL<br/>공고 내용 · 기간")]
     Core -.->|2. 키워드 검색| Elastic[("Elasticsearch<br/>키워드 후보")]
     Core -->|3. 의미 검색| AI["ai-service<br/>질문 임베딩 · 검색"]
     AI -. 후보 검색 .-> Qdrant[("Qdrant<br/>공고 검색 벡터")]
@@ -492,6 +492,10 @@ flowchart LR
     class Qdrant vectorDb
     class Elastic searchIndex
 ```
+
+**1번은 검색에 사용할 공고를 준비하는 단계입니다.** `core-service`는 Core MySQL에서 현재 검색 가능한
+공고 목록과 내용을 읽어 메모리에 보관하고, ‘접수 중만’ 조건을 적용합니다. 2·3번에서는 이 공고들을
+대상으로 키워드·의미 검색을 수행해 관련 공고 ID를 찾습니다. 찾은 ID는 처음 읽어 둔 공고 내용과 연결합니다.
 
 **후보 결합·최종 응답:** 공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에 AI 평가 결과를 더합니다.
 
