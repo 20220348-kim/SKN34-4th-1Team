@@ -135,7 +135,11 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
         ragPaths.push(`/api/v1/ops/evaluations/${id}/rag-reviews`)
       }
       const reportPath = `/api/v1/ops/evaluations/${id}/report`
-      assert.equal(await page.getByRole('link', { name: 'Evidently 보고서', exact: true }).getAttribute('href'), reportPath)
+      // The UI opens the explanation page; the immutable HTML remains at the API URL.
+      const reportLink = page.getByRole('link', { name: 'Evidently 보고서', exact: true })
+      assert.equal(await reportLink.getAttribute('href'), `/ops/evaluations/${id}/report`)
+      assert.equal(await reportLink.getAttribute('target'), '_blank')
+      assert.deepEqual((await reportLink.getAttribute('rel')).split(' ').sort(), ['noopener', 'noreferrer'])
       progress('REPORT')
       const report = await page.evaluate(async (path) => {
         const reply = await fetch(path, { credentials: 'same-origin', cache: 'no-store' })
