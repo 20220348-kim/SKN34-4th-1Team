@@ -16,6 +16,7 @@ import { LiveReadinessPanel } from './LiveReadinessPanel'
 import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 import { PerformanceDashboard } from './PerformanceDashboard'
+import { EvaluationReport } from './EvaluationReport'
 
 const listPath = '/ops/evaluations'
 const notice = '저장된 과거 평가 결과를 비교합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
@@ -102,15 +103,16 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
   const previousPath = useRef(location.pathname)
   const current = opsPages.find((page) => page.path === location.pathname)
     ?? (location.pathname.startsWith(listPath) ? opsPages[1] : opsPages[0])
+  const title = location.pathname.startsWith(`${listPath}/`) && location.pathname.endsWith('/report') ? 'Evidently 평가 보고서' : current.label
   const legacyPath = location.pathname === listPath ? ({ '#new-evaluation': `${listPath}/new`, '#evaluation-budget': '/ops/budget', '#evaluation-schedules': '/ops/schedules' } as Record<string, string>)[location.hash] : undefined
   useEffect(() => {
-    document.title = `GovBiz · ${current.label}`
+    document.title = `GovBiz · ${title}`
     if (previousPath.current !== location.pathname) {
       previousPath.current = location.pathname
       document.getElementById('ops-main')?.focus({ preventScroll: true })
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
     }
-  }, [location.pathname, current.label])
+  }, [location.pathname, title])
   return <div className="mx-auto grid w-full max-w-[1480px] min-w-0 flex-1 content-start lg:grid-cols-[208px_minmax(0,1fr)] lg:content-stretch">
     <aside className="border-b border-line bg-white lg:border-r lg:border-b-0">
       <nav aria-label="LLMOps 작업 메뉴" className="grid grid-cols-2 gap-1 p-3 lg:sticky lg:top-0 lg:grid-cols-1 lg:gap-2 lg:px-4 lg:py-8">
@@ -127,6 +129,7 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
         <Route path="/ops/evaluations" element={<EvaluationList onExpired={onExpired} />} />
         <Route path="/ops/evaluations/new" element={<EvaluationCreate owner={session.user!.id} datasets={session.datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />} />
         <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
+        <Route path="/ops/evaluations/:runId/report" element={<EvaluationReport key={location.pathname} onExpired={onExpired} />} />
         <Route path="/ops/budget" element={<><WorkspacePageHeader title="예산 관리" /><div className={styles.content}><p className="text-sm text-ink-muted">누적·일별 한도와 예약·사용 내역을 확인하고 관리합니다.</p><BudgetOverview onExpired={onExpired} refreshKey={0} operatorId={session.user!.id} /></div></>} />
         <Route path="/ops/schedules" element={<><WorkspacePageHeader title="정기 실행" /><div className={styles.content}><EvaluationSchedulesPanel owner={session.user!.id} datasets={session.datasets} onExpired={onExpired} refreshKey={0} /></div></>} />
         <Route path="*" element={<Navigate replace to={listPath} />} />
@@ -433,7 +436,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-ink-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-ink-muted">점수 범위는 0–1입니다. AI 작성 참조 자료에 대한 평가이며 의미 충실도는 미측정입니다. 완료 상태는 품질 합격을 뜻하지 않습니다.</p></section>}
         {run.status === 'COMPLETED' && (run.comparison ? <ComparisonResult comparison={run.comparison} /> : <p className="text-sm text-ink-muted">이전 실행에는 비교 상세가 없습니다. 새 평가를 실행하면 기준·후보 차이를 확인할 수 있습니다.</p>)}
         <section className={styles.card}><h2 className={styles.cardTitle}>상세 기록과 보고서</h2><div className="flex flex-wrap gap-3">
-          {run.report_url && <a className={styles.primaryButton} href={run.report_url} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
+          {run.report_url && <a className={styles.primaryButton} href={`${listPath}/${run.id}/report`} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.trace_links.map((trace) => <a key={trace.case_id} className={styles.secondaryButton} href={trace.url} target="_blank" rel="noopener noreferrer">Langfuse {trace.case_id} 추적·점수</a>)}
           {run.langfuse_url && <a className={styles.secondaryButton} href={run.langfuse_url} target="_blank" rel="noopener noreferrer">Langfuse 평가 점수</a>}
           {run.prefect_url && <a className={styles.secondaryButton} href={run.prefect_url} target="_blank" rel="noopener noreferrer">Prefect 실행 로그</a>}
