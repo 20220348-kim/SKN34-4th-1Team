@@ -55,54 +55,93 @@ Kubernetes에서 신규 쓰기가 발생했다면 원본과 이미 데이터가 
 
 ## 2026-10-10 진행 기록
 
-이번 작업은 실제 서비스를 옮길 Chart와 **새 Retain PVC 네 개의 데이터 복원**까지 수행했다.
-새 배포 설정은 아직 커밋·필수 CI 통과 전이므로 Kubernetes Langfuse의 최종 기동과
-평가 실행기의 주소 전환은 다음 배포 단계다. 준비를 전체 Kubernetes 이전 완료로 계산하지 않는다.
+개인 환경에서 **Langfuse web/worker와 저장소 네 개를 실제 Kubernetes로 전환했다.**
+평가 실행기는 내부 Service를 사용하며 원본 Compose가 꺼진 상태에서 새 점수 저장·조회와
+Ops 보고서까지 확인했다. 웹·데이터·외부 접근을 포함한 전체 운영 환경의 이전 완료와는 구분한다.
 
-| 저장소 | 일반 파일 수 | 파일 내용의 합계 |
-| --- | ---: | ---: |
-| PostgreSQL | 1,749 | 71,602,180 bytes |
-| ClickHouse | 32,647 | 946,936,467 bytes |
-| Redis | 1 | 319,234 bytes |
-| MinIO | 264 | 368,859 bytes |
-| 합계 | 34,661 | 1,019,226,740 bytes |
+### 배포와 데이터
 
-네 저장소의 종료 코드 `0`을 확인한 같은 쓰기 중지 구간에 백업했다. 인증·복호화한
-백업으로 복원한 뒤 전체 파일 해시·소유권·권한·링크를 원본과 대조했다.
-복사 Pod를 제거한 뒤 새 Pod에서 PostgreSQL/Redis `999`, ClickHouse `101`, MinIO `65532`
-사용자로 복원 기록과 필수 데이터 파일을 읽는 것도 확인했다. 이 Pod도 제거했다.
-최종 복사본의 PVC 이름은 `postgres-stage2`, `clickhouse-stage2`, `redis-stage2`, `minio-stage2`다.
-이름이 Chart 기본값과 다르므로 개인 values의 `claims`를 함께 사용해야 한다.
+Chart 소스는 `cda98e5adf0a9e1aa86efeda9c6790a7bb2e7543`로 고정했다.
+해당 SHA의 Infra·GovBiz·Catalog·Ops·LLMOps CI가 모두 성공한 뒤 Argo CD에 등록했다.
+[Infra CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38037966450)와
+[최종 LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38037966436)의 실행 결과를 남겼다.
+`govbiz-observability` Application은 수동 동기화이며 자동 sync·prune·selfHeal은 비활성이다.
+저장소 4개를 먼저 기동하고 기존 데이터를 확인한 뒤 web/worker를 기동했다.
 
-첫 시도에서 ClickHouse의 기동 필수 경로를 잘못 지정한 문제를 발견했다.
-현재 이미지에 있는 `metadata/default.sql`로 수정하고 원본 서비스를 복구한 뒤,
-기존 복사본을 덮어쓰지 않고 네 저장소를 새 PVC에 같은 시점으로 다시 복사했다.
-재복원이 성공한 뒤 첫 시도의 임시 PVC/PV 네 개는 UID·소유권·미사용 상태를 확인해 정리했다.
-최종 PVC 네 개의 PV는 모두 `Retain`으로 유지하며 원본 Compose 볼륨은 삭제하지 않았다.
+앞선 `*-stage2` 복원본은 원본을 재개한 시점 백업이었다. 실제 전환에서는 평가 접수를 닫고
+실행기와 Langfuse의 쓰기를 중지한 뒤 **새 빈 `*-cutover` PVC 네 개**에 최신 데이터를 다시 복사했다.
+네 저장소의 정상 종료 코드 `0`, 암호화 백업 인증·복호화, 파일 해시·크기·권한·소유권·링크의
+일치를 확인했다. 임시 복사 Pod를 제거하고 실제 저장소 사용자 권한의 읽기도 확인했다.
 
-원본 Compose의 Langfuse 여섯 서비스를 재개하고 기존 프로젝트 API 키의 인증·익명 요청 거절을
-확인했다. Kubernetes 평가 실행기는 원래 replica `1`로 복구했고 평가 접수는 버전 `18`에서
-다시 허용했다. 웹 `5173`, Ops `18001`, Langfuse `13000`의 건강 확인 URL은 모두 HTTP `200`이다.
-원본 Compose 평가 서비스 세 개는 기존과 같이 중지 상태다.
+| 저장소 | 현재 사용 PVC | 일반 파일 수 | 복사 시 파일 내용의 합계 |
+| --- | --- | ---: | ---: |
+| PostgreSQL | `postgres-cutover` | 1,749 | 71,602,180 bytes |
+| ClickHouse | `clickhouse-cutover` | 34,585 | 1,067,587,669 bytes |
+| Redis | `redis-cutover` | 1 | 320,227 bytes |
+| MinIO | `minio-cutover` | 252 | 359,376 bytes |
+| 합계 | Retain PVC 4개 | 36,587 | 1,139,869,452 bytes |
 
-개인 WSL의 `/home/playdata2/govbiz-backups/20261010-langfuse-stage2`에 비공개 기록을 보존한다.
-원본 컨테이너 설정과 기존 키는 `source-config.enc`, 각 저장소는 암호화된 manifest와
-16 MiB 단위의 암호화 archive 조각으로 저장한다. manifest에는 조각 순서·암호문 해시·
-전체 archive 해시와 원본 파일 목록이 있다. 각 조각의 인증·복호화 후 순서대로 연결해야 한다.
-이 파일 형식은 이번 운영 기록이며 기존 평가 snapshot CLI 입력 형식과 다르다.
-복원·대조를 마친 임시 평문 tar는 삭제하고 0600 키·암호화 백업은 저장소 밖에 유지한다.
-같은 디렉터리의 `kubernetes-secrets.enc`에는 기존 키로 만든 두 Kubernetes Secret 입력을
-암호화해 보존했다. 클러스터에는 아직 적용하지 않았다. `values.yaml`에는 실제 노드·PVC 이름과
-replica `0` 설정을 기록했다.
+기동 후 PostgreSQL의 프로젝트 1개·사용자 1명과 ClickHouse 10개 테이블의 행 수가 원본과
+일치했다. Redis는 원본 184개 키 중 175개를 적재했고, 9개는 RDB 기동 로그에서 TTL 만료로
+확인했다. 데이터 파일은 복원 직후 원본과 일치했다. 기존 API 키·앱 암호화 키·저장소 암호는
+유지했고 자동 스키마 migration과 최초 프로젝트 생성은 실행하지 않았다.
 
-복사 중과 서비스 재개 뒤 WSL 새 프로세스 실행에 `0x8007274c` 시간 초과가 발생했다.
-마지막 정리는 Windows Docker와 WSL 파일 서버를 통해 완료했으며 WSL/Docker를 재시작하지
-않았다. 이 경로의 정리 성공을 WSL 실행 지연 자체가 해결됐다는 뜻으로 해석하지 않는다.
+### 기동 중 수정한 문제
 
-로컬에서는 Chart 렌더링 테스트 **4개**, Helm **4.3.0** lint, Ruff, 문서 링크와 YAML 구문을
-확인했다. 전체 CI는 이번 변경을 커밋·푸시한 최신 SHA에서 별도로 확인해야 한다.
-저장소의 실제 DB 기동·네트워크 차단·Argo 동기화는 이번 데이터 복원 결과에 포함하지 않는다.
+- 로컬 이미지 archive를 containerd에 직접 가져오면서 일부 `import-*` 참조가 정규화된 이름과
+  달라 `CreateContainerError`가 발생했다. 누락된 이름을 **같은 digest의 참조**로 연결해 복구했다.
+  이미지 내용·원본 볼륨·Chart의 이미지 digest는 변경하지 않았다.
+- web의 limit `1Gi`에서는 V8 힙이 약 `512Mi`로 제한되어 최초 기동 중 메모리가 부족했다.
+  검증된 Chart가 지원하는 개인 values로 web request `512Mi`, limit `2Gi`를 적용해 해결했다.
+  저장소의 기본 values도 같은 값으로 보정했다. worker의 limit은 `1Gi`를 유지한다.
+- WSL 새 프로세스와 파일 서버의 간헐적 `0x8007274c`/파일 읽기 오류는 남아 있다.
+  Windows kubectl·Docker 경로로 전환을 마쳤으며 WSL/Docker 전체를 재시작하지 않았다.
 
-원본 Compose를 재개한 뒤에는 Kubernetes 복사본과 데이터가 달라질 수 있다.
-최종 전환은 **최신 데이터 재복사 → 저장소 기동 → web/worker 기동 → 내부 주소 변경** 순서로
-진행해야 한다. 단순히 현재 복사본의 replica만 올려서는 안 된다.
+최종 관측에서 Langfuse 6개 Pod는 모두 Ready·재시작 0회, 전체 Argo Application 8개는
+`Synced/Healthy`였다. 기존 프로젝트 키 인증과 익명 요청 거절을 확인했다.
+허용되지 않은 namespace에서 실행기와 같은 Pod label로 접속해도 세 번 모두 차단됐으며,
+평가 namespace의 실제 실행기에서는 내부 Service 인증에 성공했다. 임시 프로브 namespace는 제거했다.
+
+### 실제 평가와 화면
+
+평가 실행기의 주소는 `http://langfuse-web.govbiz-observability.svc.cluster.local:3000`이다.
+기존 실행기 발행본 `2cab4881fa8b128687a35d0da409ac2c4ee08002`의 주소만 변경했으며,
+Ops 평가 접수는 버전 `20`에서 재개했다. 현재 실행 경로는 다음과 같다.
+
+`관리 화면 → Kubernetes Ops → Prefect → 평가 실행기 → Kubernetes Langfuse 및 결과 PVC → Ops 보고서`
+
+- 요청 `c5e00ccb-0c9c-4467-b81b-c44f1f860fa0`, Prefect flow
+  `cb7806c3-aa21-4225-a8f7-9a0cb6bd6a22`: 무료 평가 6사례 완료, 모델 호출 0회.
+- 점수 22개의 저장·재조회를 확인했고, ClickHouse의 갱신 시각이 이번 요청 이후인 것도 확인했다.
+- 관리자 로그인·CSRF·중복 요청의 동일 flow 유지·백그라운드 동기화·보고서 HTTP 200·공유 로그아웃을 확인했다.
+- 첫 확인에서는 평가 목록 GET이 15초 제한을 넘었다. 서버의 `COMPLETED` 상태를 확인한 뒤
+  **같은 요청 ID**로 확인을 재개해 완료했다. 시간 제한을 늘리거나 새 평가를 만들지 않았다.
+  개인 환경의 응답 지연이 해결됐다는 뜻은 아니다.
+
+Langfuse 화면은 `http://localhost:13000`, 기존 관리 화면은 `http://localhost:5173`이다.
+Langfuse는 Kubernetes Service의 Windows loopback 포워딩으로 연결한다. 웹 Pod를 교체한 뒤에는
+포워딩도 새 Pod에 다시 연결해야 한다. 개인 kubeconfig를 지정하는 수동 명령은 다음과 같다.
+
+```powershell
+kubectl --kubeconfig '<개인 fork kubeconfig 경로>' -n govbiz-observability port-forward --address 127.0.0.1 service/langfuse-web 13000:3000
+```
+
+원본 Compose의 Langfuse 6개와 기존 평가 서비스 3개는 모두 중지되어 있다. 원본 Langfuse 볼륨
+4개와 이전 시점 백업은 보존했다. 전환 후 새 데이터는 `*-cutover` PVC에 있으므로 원본을
+무조건 재개하는 방식으로 되돌리지 않는다. 개발용 Compose 구성 자체는 유지한다.
+
+### 보존 기록과 남은 범위
+
+비공개 기록은 `/home/playdata2/govbiz-backups/20261010-langfuse-cutover`에 있다.
+`source-config.enc`는 원본 설정·키, 저장소별 manifest와 16 MiB 암호화 조각은 냉간 백업이다.
+manifest의 순서·암호문 해시·전체 archive 해시를 대조하고 인증·복호화해야 한다.
+기존 평가 snapshot CLI와 다른 이번 운영 기록 형식이다. 임시 평문 tar는 복원 후 제거했다.
+`ci.json`, `storage-ready.json`, `network.json`, `fresh-scores.json`,
+`kubernetes-free-evaluation.json`, `completed.json`에 실제 전환 결과를 보존했다.
+
+메모리 기본값 보정 후 기존 Chart 렌더링 테스트 4개와 Helm 4.3.0 lint를 통과했다.
+위 원격 CI 결과는 배포한 `cda98e5a`의 결과이며, 이후 기본값 보정의 전체 CI는 다음 푸시 SHA에서
+별도로 확인해야 한다. 이번 무료 평가는 배포 경로 확인이며 실제 검색·RAG 품질 측정이 아니다.
+
+이전 시점의 냉간 복원은 마쳤지만 전환 후 Langfuse 데이터의 정기 백업·전체 장애 복구,
+단일 노드 밖의 운영 스토리지·웹 배포·외부 ingress/TLS는 남아 있다.

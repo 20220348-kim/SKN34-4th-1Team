@@ -27,8 +27,9 @@ OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합�
 
 현재 `govbiz-local-data`는 로컬 검증용이므로 운영 데이터 구성의 완료 증거로 사용하지 않습니다.
 개인 환경의 평가 저장소·실행기·Ops 연결은 2026-10-10에 실제 전환했습니다.
-새 Kubernetes 평가 데이터의 암호화 백업·격리 복원까지 완료했습니다. 다음 실제 이전 대상인
-Langfuse와 관련 저장소 6개의 Chart를 추가했으며, 데이터 준비·실제 전환 상태는
+새 Kubernetes 평가 데이터의 암호화 백업·격리 복원까지 완료했습니다. Langfuse와 관련 저장소
+6개도 실제 전환해 원본 Compose 중지 상태에서 무료 평가·점수 저장·보고서 조회를 확인했습니다.
+최신 데이터 복원과 실제 전환 상태는
 [Langfuse Kubernetes 이전 기록](docs/langfuse-kubernetes.md)에서 관리합니다.
 이후 웹·데이터·외부 접근 구성을 마무리해야 합니다.
 [평가 환경 이전의 상세 기준](docs/evaluation-kubernetes.md)을 함께 따릅니다.
@@ -54,7 +55,7 @@ Langfuse와 관련 저장소 6개의 Chart를 추가했으며, 데이터 준비�
 | 개인 환경 Argo 인계 | 2026-10-07 공개 이미지 4개를 수동 동기화해 `Synced/Healthy` 확인. 아래 실행 기록 참고 |
 | 전환 후 평가 데이터 백업 | `ops_db_snapshot.py backup --kubernetes-evaluation` → 기존 통합 백업. 새 PVC 데이터의 실제 MySQL·임시 Kubernetes PVC 복원 완료 |
 | 개인 환경 평가 서비스 이전 | 2026-10-10 Prefect·실행기·결과 서버와 Ops 연결을 실제 전환. 무료 평가 6사례·보고서 조회 성공, 원본 Compose 평가 서비스 3개 중지·볼륨 보존 |
-| Langfuse 이전 구성 | web/worker·저장소 4개의 Chart, 원본 이미지·키·복원 PVC 보존. 기본 replica 0이며 실제 기동·평가 주소 전환은 미완료 |
+| 개인 환경 Langfuse 이전 | 2026-10-10 web/worker·저장소 4개 기동 및 실행기의 내부 Service 연결 완료. 무료 평가 6사례·점수 22개 갱신 확인. 원본 Compose 6개 중지·볼륨 보존. 새 설치의 기본 replica는 0 유지 |
 | Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
@@ -97,8 +98,8 @@ EndpointSlice와 준비된 Pod의 UID·IP·포트를 대조하며 HTTP 통신 �
 개발 감시·웹 연결은 유지합니다. 소스 이미지 경로에는 GHCR 계정이나 PAT가 필요하지 않습니다.
 검증된 GHCR 이미지를 사용할 때는 `gh` 로그인과 해당 이미지의 pull 권한을 준비하고 일반 `up`을 실행합니다.
 
-로컬 개발용 Compose는 유지합니다. 개인 배포 환경의 Prefect·평가 실행기·결과 저장소는 Kubernetes로
-이전했고, Langfuse와 관련 저장소는 아직 Compose에서 실행됩니다.
+로컬 개발용 Compose는 유지합니다. 개인 배포 환경의 Prefect·평가 실행기·결과 저장소와
+Langfuse·전용 저장소는 Kubernetes에서 실행되며, 원본 Compose 서비스 9개는 중지되어 있습니다.
 [실제 이전 기록과 남은 완료 기준](docs/evaluation-kubernetes.md)을 참고하세요.
 [Ops 연결 계약](docs/ops-runtime.md)과 [스키마·migration 계약](docs/ops-migration.md)을 따릅니다.
 전환 전 원본 볼륨은 보존하지만, 전환 후 생성된 데이터는 새 Kubernetes PVC에 있습니다.

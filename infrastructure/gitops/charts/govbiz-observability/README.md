@@ -20,6 +20,9 @@ Langfuse web도 ClickHouse를 조회한다. 별도 운영자나 새로운 저장
 - 자동 PostgreSQL/ClickHouse migration과 최초 사용자·프로젝트 생성을 실행하지 않는다.
   이 Chart는 기존 스키마의 같은 버전 이전용이다. 버전 업그레이드는 별도 migration 작업이다.
 - Redis는 원본의 RDB 저장 방식과 `noeviction` 설정을 유지한다.
+- Langfuse web의 메모리는 request `512Mi`, limit `2Gi`다. 고정된 4.46.0 이미지의 실제
+  최초 기동에서 limit `1Gi`는 V8 힙을 약 `512Mi`로 제한해 시작 중 메모리 부족을 일으켰다.
+  worker의 limit은 `1Gi`로 유지한다. 개인 values로 조정할 때도 웹의 시작 메모리를 고려한다.
 - 모든 Service는 `ClusterIP`다. 기본 deny 정책 위에 DNS, 앱→저장소,
   평가 실행기 및 Core/AI→Langfuse web 통신만 허용한다.
   실제 차단 여부는 해당 클러스터의 네트워크 플러그인에 달려 있다.
