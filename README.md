@@ -209,20 +209,26 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 ### 5.2 배치 구조
 
-아래는 코드가 제공하는 배치 구성이며, 현재 가동 상태와는 구분합니다.
+업무 서비스와 LLMOps 평가·관측을 **하나의 Kubernetes(kind) 클러스터**에 배치하고,
+역할에 따라 세 namespace로 구분합니다.
 
-| 배치 구성 | 애플리케이션 서비스·업무 저장소 | Prefect·평가 실행기·결과 저장소·Langfuse |
-|---|---|---|
-| **Compose** | Compose. `ops-service`는 기존 `core-service`에 연결하는 독립 구성도 제공 | 별도 LLMOps Compose |
-| **Kubernetes 혼합** | Kubernetes | Compose 유지 |
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 배치 구조](docs/assets/architecture/govbiz-local-architecture.png)
 
-Kubernetes 혼합 구성에서는 **`ops-service`와 `ops-sync`가 같은 Pod**에서 실행되고,
-내부 HTTP 브리지로 Compose의 Prefect와 `ops-artifacts` 결과 서버에 접근합니다.
-결과 볼륨은 Compose에 유지하며 인증된 HTTP로 읽습니다.
-이 연결은 저장 응답 재평가를 대상으로 하며, 유료 실행의 Kubernetes 예산 API 연결은 별도입니다.
+[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg)
 
-[서비스 호출 상세](docs/architecture.md) · [배치 구성도](docs/assets/architecture/README-local.md) ·
-[Ops 연결 계약](infrastructure/gitops/docs/ops-runtime.md)
+| namespace | 배치 구성 |
+|---|---|
+| **`govbiz-msa` — 업무** | Core·Catalog·AI·Ops API, Ops와 같은 Pod의 `ops-sync`, 업무용 DB·검색·캐시·메시지 브로커 |
+| **`govbiz-evaluation` — 평가** | Prefect·평가 실행기·`ops-artifacts`, Prefect 이력·평가 결과 PVC |
+| **`govbiz-observability` — 관측** | Langfuse Web·Worker와 전용 PostgreSQL·ClickHouse·Redis·MinIO |
+
+서비스는 **ClusterIP·내부 DNS**로 통신하고, DB·평가 결과·관측 데이터는 **PVC**에 보존합니다.
+Ops가 평가를 접수하면 Prefect와 실행기가 처리하고, `ops-sync`가 상태·결과를 반영해 관리자가 검토합니다.
+
+로컬 React/Vite 웹은 port-forward를 통해 Core·Ops API에 연결하며, Prefect·Langfuse UI도 각각 포워딩해 접근합니다.
+배포는 검증된 이미지와 소스 SHA를 고정한 Helm Chart를 사용하고 **Argo CD로 수동 동기화**합니다.
+
+[배치·저장소·접근 방식 상세](docs/assets/architecture/README-local.md) · [서비스 호출 상세](docs/architecture.md)
 
 <a id="erd"></a>
 

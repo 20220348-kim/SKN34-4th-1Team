@@ -3,7 +3,7 @@
 주요 서비스 연결을 기술 로고와 함께 정리한 문서용 이미지입니다.
 **로컬 구성 기록(2026-09-12)**, **초기 배포 예정안(2026-09-13)**,
 **Vercel + AWS 배포 구성(2026-09-16 정리)**, **통합 전 Mac Kubernetes(2026-09-20)**,
-**Kubernetes·Compose LLMOps 연결 구성(2026-10-07)**을 별도 파일로 관리합니다.
+**LLMOps Kubernetes 통합 구성(2026-10-11)**을 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
 ## 메인 README 서비스 요청 관계 — 2026-10-06
@@ -16,20 +16,18 @@
 - Mermaid 원본을 수정하면 PNG·SVG도 함께 갱신하고 웹·앱의 높이, 연결선과 글자 겹침을 확인합니다.
   이 그림은 서비스 요청 관계이며 클라우드 배포 현황이나 DB 연결 전체를 표현하지 않습니다.
 
-## Kubernetes · Compose LLMOps 연결 구성 — 2026-10-07
+## LLMOps Kubernetes 통합 구성 — 2026-10-11
 
-![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](govbiz-local-architecture.png?v=4f2deb366694)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png)
 
-- [현재 구성 PNG](govbiz-local-architecture.png?v=4f2deb366694) · [SVG 원본](govbiz-local-architecture.svg)
-- [서비스·데이터·개발·배포 경로와 확인 범위](README-local.md)
-- [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ 로고 출처·해시](logo-sources.json)
+- [전환 후 구성 PNG](govbiz-local-architecture.png) · [SVG 원본](govbiz-local-architecture.svg)
+- [namespace·데이터·내부 통신·접근 방식](README-local.md)
+- [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ·MyBatis 로고 출처·해시](logo-sources.json)
 
-Kubernetes의 Core·Catalog·AI·Ops와 Compose의 Prefect·평가 실행기·결과 서버·Langfuse를 구분합니다.
-Ops API와 같은 Pod의 `ops-sync`가 전용 내부 HTTP 브리지로 무료 재평가의 상태·보고서를 조회하며,
-React에서 사람 검토·품질 판정·비교 기준 관리로 이어집니다. 유료 Kubernetes 예산 연결은 별도입니다.
-이미지는 같은 SHA의 다섯 필수 CI 후 발행하고, 소스 이미지 또는 검증된 GHCR로 로컬 환경을 준비합니다.
-새 Argo 자동 배포 연결과 실제 클러스터 Ready 상태를 완료로 표시하지 않습니다.
-작성 시점의 가동 관측과 구현 범위는 [그림 설명](README-local.md#현재-확인-범위)을 따릅니다.
+LLMOps까지 Kubernetes로 전환한 구조입니다. 하나의 kind 클러스터 안에서 업무(`govbiz-msa`),
+평가(`govbiz-evaluation`), 관측(`govbiz-observability`) namespace를 구분합니다.
+Prefect·실행기·결과 서버·Langfuse와 저장소를 내부 Service·PVC로 연결하고, UI는 port-forward로 접근합니다.
+실제 이전 기록과 그림의 범위는 [그림 설명](README-local.md#그림의-기준)을 따릅니다.
 
 ## 통합 전 Mac Kubernetes · 비공개 GHCR · Argo CD 기록
 
