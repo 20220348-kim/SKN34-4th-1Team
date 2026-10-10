@@ -155,12 +155,9 @@ def verify_rag_budget(before, after, *, calls, output, sent, events, unknown_cal
     """혼합 실행의 작업별 상한으로 계산한다. 임베딩 미확정을 답변 상한이나 0으로 바꾸지 않는다."""
     plan, rows = after["operation_plan"], after["calls"]
     assert after["closed"] and not after["corrections"]
-    assert len(plan) == 9 and len(rows) == calls
-    assert [item["kind"] for item in plan] == [
-        "document_embedding",
-        "query_embedding",
-        "answer",
-    ] * 3
+    assert len(plan) in (6, 8, 9) and len(rows) == calls
+    assert [item["kind"] for item in plan if item["kind"] != "document_embedding"] == ["query_embedding", "answer"] * 3
+    assert sum(item["kind"] == "document_embedding" for item in plan) == len(plan) - 6
     assert [row["sequence"] for row in rows] == list(range(calls))
     assert [row["sequence"] for row in rows if row["input_tokens"] is None] == list(
         range(calls - unknown_calls, calls)
@@ -236,7 +233,7 @@ def verify_correction(record, before, after, *, events_before, events_after):
 
 def verify_rag_recovery(source, recovered, before, after, files, *, events):
     """무료 복구의 입력 보존·예산 불변·전송 없음·출처를 함께 확인한다."""
-    assert source["status"] == "FAILED" and source["model_api_calls"] == 9
+    assert source["status"] == "FAILED" and source["model_api_calls"] in (6, 8, 9)
     assert recovered["status"] == "COMPLETED" and recovered["execution_mode"] == "recovery"
     assert recovered["source_run_id"] == source["id"]
     assert recovered["prefect_flow_run_id"] != source["prefect_flow_run_id"]
@@ -455,6 +452,10 @@ class Smoke:
 
     def start(self, name, *, dataset=None, **config):
         dataset = self.dataset if dataset is None else dataset
+        if dataset["id"] == self.rag_dataset["id"]:
+            status, session = self.api("/api/v1/ops/session")
+            assert status == 200
+            dataset = next(item for item in session["datasets"] if item["id"] == dataset["id"])
         self.active = {
             "scenario": name,
             "request_id": str(uuid4()),
@@ -795,7 +796,7 @@ class Smoke:
     def run_rag(self):
         self.start("rag_completed", dataset=self.rag_dataset)
         run = self.terminal("COMPLETED")
-        assert run["model_api_calls"] == 9
+        assert run["model_api_calls"] == 8
         report = run["comparison"]["current"]
         assert report["measurementKind"] == "recorded-live-evaluation"
         assert report["liveExecutionPerformed"] and report["completed"]
@@ -815,7 +816,7 @@ class Smoke:
         self.active["review_state"] = {"quality": "NOT_EVALUATED", "reference_approved": False}
         status, retry = self.api("/api/v1/ops/evaluations", self.active["payload"])
         assert status == 200 and retry["prefect_flow_run_id"] == run["prefect_flow_run_id"]
-        self.finish(calls=9, output=150, sent=9, rag=True)
+        self.finish(calls=8, output=150, sent=8, rag=True)
 
         self.start("rag_cancel_after_embedding", dataset=self.rag_dataset, hold="after_settle_0")
         self.stage("after_settle_0")
@@ -826,7 +827,7 @@ class Smoke:
 
         for name, fault, calls, output in (
             ("rag_embedding_response_lost", "embedding_lost", 1, 0),
-            ("rag_answer_response_lost", "model_lost", 3, 2000),
+            ("rag_answer_response_lost", "model_lost", 2, 2000),
         ):
             self.start(name, dataset=self.rag_dataset, fault=fault)
             self.terminal("FAILED")
@@ -836,11 +837,11 @@ class Smoke:
     def run_rag_recovery(self):
         self.start("rag_publish_failure", dataset=self.rag_dataset, fault="publish_error")
         source = self.terminal("FAILED")
-        assert source["model_api_calls"] == 9
+        assert source["model_api_calls"] == 6
         assert source["postprocessing"]["inputs_ready"] and source["postprocessing"]["can_recover"]
         assert source["postprocessing"]["stage"] == "publish"
         assert sum(e["stage"] == "publish_rejected" for e in self.control("state")["events"]) == 1
-        self.finish(calls=9, output=150, sent=9, rag=True)
+        self.finish(calls=6, output=150, sent=6, rag=True)
         source_files = json.loads(self.runner("artifacts", source["id"]))
         source_budget = self.db(source["id"])
         source_events = self.records[-1]["events"]

@@ -53,6 +53,31 @@ def validate_live_capture(capture, usage, spec, spec_hash):
     )
     cases = capture["cases"]
     require([case["caseId"] for case in cases] == spec["dataset"]["case_ids"])
+    vector_plan = spec["live_config"].get("document_vectors")
+    vector_hashes = {}
+    if vector_plan is not None:
+        for case in cases:
+            recorded = case.get("documentVectors")
+            if recorded is None:
+                require(case["failure"] is not None)
+                continue
+            selected = vector_plan[case["caseId"]]
+            expected_status = (
+                "created"
+                if selected["sha256"] is None and selected["source_case_id"] == case["caseId"]
+                else "reused"
+            )
+            require(
+                isinstance(recorded, dict)
+                and set(recorded) == {"key", "sha256", "status"}
+                and recorded["key"] == selected["key"]
+                and recorded["status"] == expected_status
+                and isinstance(recorded["sha256"], str)
+                and re.fullmatch(r"[a-f0-9]{64}", recorded["sha256"])
+                and (selected["sha256"] is None or recorded["sha256"] == selected["sha256"])
+                and recorded["sha256"]
+                == vector_hashes.setdefault(recorded["key"], recorded["sha256"])
+            )
     require(usage["schema_version"] == 1 and usage["execution_spec_sha256"] == spec_hash)
     count, operations = usage["model_api_calls"], usage["operations"]
     plan = spec["model_operations"]

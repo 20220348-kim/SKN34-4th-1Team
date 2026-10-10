@@ -24,6 +24,9 @@ CAPTURE = "rag-synthetic-capture-v1"
 )
 class RagLiveSubmissionTests(TestCase):
     def setUp(self):
+        cache = patch("apps.evaluations.vector_cache.discover", return_value=None)
+        self.cache_lookup = cache.start()
+        self.addCleanup(cache.stop)
         self.user = get_user_model().objects.create_user("core:rag-live-test")
         self.client = APIClient()
         self.client.force_authenticate(self.user)
@@ -70,7 +73,7 @@ class RagLiveSubmissionTests(TestCase):
         run = EvaluationRun.objects.get()
         self.assertIsNone(first.data["model_api_calls"])
         plan = run.execution_spec["model_operations"]
-        self.assertEqual(len(plan), 9)
+        self.assertEqual(len(plan), 8)
         self.assertEqual(
             {row["kind"] for row in plan}, {"document_embedding", "query_embedding", "answer"}
         )
@@ -86,6 +89,28 @@ class RagLiveSubmissionTests(TestCase):
                 repeated.data["prefect_flow_run_id"], first.data["prefect_flow_run_id"]
             )
             self.assertEqual(self.post(request_id=str(uuid4())).status_code, 400)
+        self.assertEqual(EvaluationBudgetReservation.objects.count(), 1)
+        self.create.assert_called_once()
+
+    def test_cached_vectors_reduce_reservation_and_do_not_change_existing_request(self):
+        self.cache_lookup.return_value = "b" * 64
+        dataset = next(row for row in public_datasets() if row["id"] == DATASET)
+        self.payload.update(
+            live_config=dataset["live_config"],
+            execution_profile=dataset["execution_profiles"]["live"],
+        )
+        EvaluationBudget.objects.filter(pk=self.budget.pk).update(call_limit=6)
+        self.assertEqual(self.post().status_code, 202)
+        reservation = EvaluationBudgetReservation.objects.get()
+        run = reservation.run
+        plan = run.execution_spec["model_operations"]
+        self.assertEqual([item["kind"] for item in plan], ["query_embedding", "answer"] * 3)
+        self.assertEqual(
+            reservation.reserved_input_tokens, sum(item["max_input_tokens"] for item in plan)
+        )
+        self.cache_lookup.return_value = None
+        self.assertEqual(self.post().status_code, 200)
+        self.assertEqual(self.post(request_id=str(uuid4())).status_code, 400)
         self.assertEqual(EvaluationBudgetReservation.objects.count(), 1)
         self.create.assert_called_once()
 

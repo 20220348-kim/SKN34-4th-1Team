@@ -48,6 +48,12 @@ def application(results, evidence, token):
                     raw = read_file(
                         results, receipt_name(run_id, int(sequence)), max_bytes=MAX_RECEIPT_BYTES
                     )
+                elif path.startswith("/v1/vector-cache/"):
+                    from .vector_cache import status as vector_status
+
+                    raw = json.dumps(
+                        vector_status(results, path.removeprefix("/v1/vector-cache/"))
+                    ).encode()
                 elif path.startswith("/v1/results/"):
                     run_id, name = path.removeprefix("/v1/results/").split("/", 1)
                     raw = read_file(results, result_name(run_id, name))

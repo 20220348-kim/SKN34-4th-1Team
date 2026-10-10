@@ -20,7 +20,7 @@ def evaluation_scope(dataset_id):
     return DATASETS[dataset_id].get("evaluation_scope", "fixed-answer-context-only")
 
 
-def live_config(dataset_id):
+def live_config(dataset_id, *, document_vectors=None):
     dataset = DATASETS[dataset_id]
     if evaluation_scope(dataset_id) == RAG_SCOPE:
         from .execution_spec import read_release
@@ -28,6 +28,15 @@ def live_config(dataset_id):
         plan = read_release()["datasets"][dataset_id].get("live_plan")
         if plan is None:
             return None
+        from .vector_cache import apply_plan
+        from .vector_cache import selection as vector_selection
+
+        plan = apply_plan(
+            plan,
+            vector_selection(plan["document_vector_keys"])
+            if document_vectors is None
+            else document_vectors,
+        )
         return {
             **plan["live_config"],
             "model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
@@ -49,12 +58,18 @@ def live_config(dataset_id):
     }
 
 
-def validate_execution(dataset_id, candidate_id, reference_id, execution_mode, config):
+def validate_execution(
+    dataset_id, candidate_id, reference_id, execution_mode, config, *, pinned_vectors=False
+):
     selected = selection(dataset_id, candidate_id, reference_id)
     if execution_mode == "live":
         if (
             candidate_id != LIVE_CAPTURE_ID
-            or config != live_config(dataset_id)
+            or config
+            != live_config(
+                dataset_id,
+                document_vectors=config.get("document_vectors") if pinned_vectors else None,
+            )
             or type(config.get("max_model_calls")) is not int
             or type(config.get("max_output_tokens")) is not int
             or type(config.get("max_input_tokens")) is not int
@@ -125,32 +140,35 @@ def public_datasets():
     from .execution_spec import digest, profile, read_release
 
     release = read_release()
-    return [
-        {
-            "id": item["id"],
-            "label": item["label"],
-            "evaluation_scope": evaluation_scope(item["id"]),
-            "case_ids": item["case_ids"],
-            "fixture": item["fixture"],
-            "live_config": live_config(item["id"]),
-            "execution_profiles": {
-                mode: (
-                    digest(
-                        profile(
-                            release,
-                            item["id"],
-                            mode,
-                            live_config(item["id"]) if mode == "live" else {},
+    result = []
+    for item in DATASETS.values():
+        config = live_config(item["id"])
+        result.append(
+            {
+                "id": item["id"],
+                "label": item["label"],
+                "evaluation_scope": evaluation_scope(item["id"]),
+                "case_ids": item["case_ids"],
+                "fixture": item["fixture"],
+                "live_config": config,
+                "execution_profiles": {
+                    mode: (
+                        digest(
+                            profile(
+                                release,
+                                item["id"],
+                                mode,
+                                config if mode == "live" else {},
+                            )
                         )
+                        if mode != "live" or config
+                        else None
                     )
-                    if mode != "live" or live_config(item["id"])
-                    else None
-                )
-                for mode in ("replay", "live")
-            },
-            "captures": [
-                {"id": capture["id"], "label": capture["label"]} for capture in item["captures"]
-            ],
-        }
-        for item in DATASETS.values()
-    ]
+                    for mode in ("replay", "live")
+                },
+                "captures": [
+                    {"id": capture["id"], "label": capture["label"]} for capture in item["captures"]
+                ],
+            }
+        )
+    return result

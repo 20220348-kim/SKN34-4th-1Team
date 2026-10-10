@@ -38,6 +38,9 @@ const dashboardReviewStatusSchema = z.object({
 export type DashboardReviewStatus = z.infer<typeof dashboardReviewStatusSchema>
 const scheduleUsageSchema = z.object({ calls: z.number().int().positive(), input_tokens: z.number().int().positive(), output_tokens: z.number().int().positive() })
 const liveConfigSchema = z.object({
+  document_vectors: z.record(z.string(), z.object({
+    key: z.string().regex(/^[a-f0-9]{64}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(), source_case_id: z.string(),
+  })).optional(),
   max_input_tokens: z.number().int().positive().optional(),
   embedding_model: z.string().optional(), embedding_dimensions: z.number().int().positive().optional(),
   source_mode: z.literal('fixed-source-and-chunks').optional(),

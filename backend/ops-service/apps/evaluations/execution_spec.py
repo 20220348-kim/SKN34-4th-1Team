@@ -43,6 +43,8 @@ PIPELINE_FILES = (
     OPS + "recovery_inputs.py",
     OPS + "execution_spec.py",
     OPS + "quality_policy.py",
+    OPS + "vector_cache.py",
+    OPS + "artifact_files.py",
 )
 RAG_FILES = (
     EVIDENCE + "rag_evaluate.py",
@@ -56,6 +58,7 @@ RAG_FILES = (
 
 RAG_GENERATION_FILES = (
     *GENERATION_FILES,
+    OPS + "vector_cache.py",
     *(
         EVIDENCE + name + ".py"
         for name in ("rag_live", "rag_budget", "embedding_budget", "budget_client", "serve_flow")
@@ -232,6 +235,7 @@ def build_release(root):
             "settings": generation_settings(root),
             "source_mode": "fixed-source-and-chunks",
             "index_storage": "isolated-in-memory",
+            "document_vectors": "content-addressed-evaluation-cache-v1",
         },
         "pipeline": fingerprint(PIPELINE_FILES),
         "datasets": datasets,
@@ -254,6 +258,12 @@ def profile(release, dataset_id, mode, config):
         if mode == "live" and not config:
             raise ValueError("RAG generation requires an approved call plan")
     evaluation = release["rag_evaluation"] if rag else release["evaluation"]
+    if rag and mode == "live":
+        from .vector_cache import operations
+
+        rag_operations = operations(
+            release["datasets"][dataset_id]["live_plan"], config["document_vectors"]
+        )
     return {
         "schema_version": 2,
         "evaluation_scope": evaluation["scope"],
@@ -277,7 +287,7 @@ def profile(release, dataset_id, mode, config):
                 **item,
                 "model": config["model"] if item["kind"] == "answer" else config["embedding_model"],
             }
-            for item in release["datasets"][dataset_id]["live_plan"]["model_operations"]
+            for item in rag_operations
         ]
         if rag and mode == "live"
         else [

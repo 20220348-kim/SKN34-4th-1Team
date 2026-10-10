@@ -2,6 +2,7 @@
 import asyncio
 import json
 from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -59,7 +60,7 @@ def runner(tmp_path, monkeypatch):
                 for text in body["input"]
             ]
             return httpx2.Response(200, headers={"x-request-id": f"req_{len(calls)}"}, json={
-                "model": body["model"], "usage": {"prompt_tokens": len(body["input"]), "total_tokens": len(body["input"])},
+                "model": body["model"], "usage": None if fault["kind"] == "embedding_unknown" else {"prompt_tokens": len(body["input"]), "total_tokens": len(body["input"])},
                 "data": [{"index": i, "embedding": vector} for i, vector in enumerate(vectors)],
             })
         assert path == "/v1/responses"
@@ -103,11 +104,11 @@ def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
     folder = root / params["request_id"]
     capture = json.loads((folder / "capture/capture.json").read_text())
     usage = json.loads((folder / "capture/usage-summary.json").read_text())
-    assert usage["completed"] and usage["model_api_calls"] == len(calls) == 9
+    assert usage["completed"] and usage["model_api_calls"] == len(calls) == 8
     assert usage["input_token_count_requests"] == 3
-    assert [body["sequence"] for action, body in actions if action == "authorize"] == list(range(9))
+    assert [body["sequence"] for action, body in actions if action == "authorize"] == list(range(8))
     assert actions[0][0] == "claim" and actions[-1][0] == "close"
-    assert len(list((folder / "capture").glob("usage-*.json"))) == 10  # Nine receipts and the summary.
+    assert len(list((folder / "capture").glob("usage-*.json"))) == 9  # Eight receipts and the summary.
     validate_live_capture(capture, usage, params["execution_spec"], params["execution_spec_sha256"])
     result = read_result(params["execution_spec"], params["execution_spec_sha256"], manifest,
                          (folder / "evaluation/comparison.json").read_bytes(),
@@ -123,11 +124,11 @@ def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
         **params, "request_id": str(uuid4()), "execution_mode": "recovery", "live_config": {},
         "recovery_config": recovery, "execution_spec": spec, "execution_spec_sha256": digest(spec),
     })
-    assert recovered["status"] == "completed" and len(calls) == 9
+    assert recovered["status"] == "completed" and len(calls) == 8
     assert len([action for action, _ in actions if action == "claim"]) == 1
     with pytest.raises(FileExistsError):
         ops_flow.evaluate_saved_capture.fn(**params)
-    assert len(calls) == 9
+    assert len(calls) == 8
 
 
 @pytest.mark.parametrize("version", ["v1", "v2"])
@@ -139,9 +140,9 @@ def test_official_paragraph_rag_uses_guarded_search_and_keeps_reference_unmeasur
     folder = root / params["request_id"]
     capture = json.loads((folder / "capture/capture.json").read_text())
     usage = json.loads((folder / "capture/usage-summary.json").read_text())
-    assert usage["completed"] and usage["model_api_calls"] == len(calls) == 18
+    assert usage["completed"] and usage["model_api_calls"] == len(calls) == 14
     assert usage["input_token_count_requests"] == 6
-    assert [body["sequence"] for action, body in actions if action == "authorize"] == list(range(18))
+    assert [body["sequence"] for action, body in actions if action == "authorize"] == list(range(14))
     assert actions[-1][0] == "close"
     validate_live_capture(capture, usage, params["execution_spec"], params["execution_spec_sha256"])
     result = read_result(params["execution_spec"], params["execution_spec_sha256"], manifest,
@@ -186,7 +187,7 @@ def test_failed_postprocessing_recovers_exact_bytes_without_new_model_or_budget(
     source_files = {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()}
     manifest = json.loads(source_files[Path("evaluation/manifest.json")])
     assert manifest["status"] == "failed" and manifest["stage"] == stage
-    assert len(calls) == 9 and actions[-1][0] == "close"
+    assert len(calls) == 8 and actions[-1][0] == "close"
     original_actions = deepcopy(actions)
     _, recovery, inputs = read_recovery_inputs(root, HERE, params["request_id"])
     monkeypatch.setattr(rag_replay_flow, target, original)
@@ -198,7 +199,7 @@ def test_failed_postprocessing_recovers_exact_bytes_without_new_model_or_budget(
         "recovery_config": recovery, "execution_spec": spec, "execution_spec_sha256": digest(spec),
     })
     recovered = root / recovered_id
-    assert result["status"] == "completed" and len(calls) == 9 and actions == original_actions
+    assert result["status"] == "completed" and len(calls) == 8 and actions == original_actions
     assert (recovered / "capture/capture.json").read_bytes() == inputs["capture"]
     assert (recovered / "reference-capture.json").read_bytes() == inputs["reference_capture"]
     assert (recovered / "recovery-fixture.json").read_bytes() == inputs["fixture"]
@@ -267,7 +268,72 @@ def test_generated_plans_match_current_tokenizer_and_fixtures():
     assert rag_live.catalog_plans() == json.loads(rag_live.PLANS.read_text())
 
 
-@pytest.mark.parametrize("change", ["count", "sequence", "operation", "spec", "model", "prompt", "completed"])
+def test_repeat_run_reuses_document_vectors_with_reduced_approved_budget(runner):
+    root, calls, actions, _ = runner
+    cold = parameters()
+    ops_flow.evaluate_saved_capture.fn(**cold)
+    assert len(calls) == cold["live_config"]["max_model_calls"] == 8
+    assert len(list((root / "vector-cache").glob("*.json"))) == 2
+    warm = parameters()
+    assert warm["live_config"]["max_model_calls"] == 6
+    assert warm["live_config"]["max_total_input_tokens"] < cold["live_config"]["max_total_input_tokens"]
+    assert warm["live_config"]["max_total_output_tokens"] == cold["live_config"]["max_total_output_tokens"]
+    assert all(item["sha256"] for item in warm["live_config"]["document_vectors"].values())
+    assert all(item["kind"] != "document_embedding" for item in warm["execution_spec"]["model_operations"])
+    actions.clear()
+    ops_flow.evaluate_saved_capture.fn(**warm)
+    assert len(calls) == 14
+    assert [body["sequence"] for action, body in actions if action == "authorize"] == list(range(6))
+    capture = json.loads((root / warm["request_id"] / "capture/capture.json").read_text())
+    assert all(case["documentVectors"]["status"] == "reused" for case in capture["cases"])
+    assert capture["fixtureSha256"] == warm["live_config"]["fixture_sha256"]
+
+
+@pytest.mark.parametrize("change", ["removed", "modified"])
+def test_pinned_vectors_fail_before_any_new_call_if_lost_or_changed(runner, change):
+    root, calls, actions, _ = runner
+    ops_flow.evaluate_saved_capture.fn(**parameters())
+    warm = parameters()
+    cached = next((root / "vector-cache").glob("*.json"))
+    if change == "removed":
+        cached.unlink()
+    else:
+        cached.write_bytes(cached.read_bytes() + b" ")
+    calls.clear()
+    actions.clear()
+    with pytest.raises((ValueError, FileNotFoundError)):
+        ops_flow.evaluate_saved_capture.fn(**warm)
+    assert calls == []
+    assert not any(action == "authorize" for action, _ in actions)
+    assert actions[-1][0] == "close"
+
+
+def test_unknown_embedding_usage_never_publishes_reusable_vectors(runner):
+    root, calls, _, fault = runner
+    fault["kind"] = "embedding_unknown"
+    with pytest.raises(ValueError, match="incomplete"):
+        ops_flow.evaluate_saved_capture.fn(**parameters())
+    assert len(calls) == 1
+    assert not list((root / "vector-cache").glob("*.json"))
+
+
+def test_vector_identity_ignores_answer_changes_but_tracks_sources_and_chunks(runner):
+    from rag_budget import make_rag_spec
+    _, _, plan = rag_live.prepare(HERE / "rag-fixture.json", model="gpt-6-luna")
+    cases, sources = deepcopy(plan["rag_cases"]), deepcopy(plan["document_sources"])
+    cases[0]["question"] += " 자세히"
+    answer_change = make_rag_spec(cases, model="different-answer-model", document_sources=sources)
+    assert answer_change["document_vector_keys"] == plan["document_vector_keys"]
+    first = cases[0]["case_id"]
+    sources[first] = "0" * 64
+    assert make_rag_spec(cases, document_sources=sources)["document_vector_keys"][first] != plan["document_vector_keys"][first]
+    sources = deepcopy(plan["document_sources"])
+    cases[0]["chunks"][0]["text"] += " 추가 원문"
+    cases[0]["chunks"][0]["contentHash"] = sha256(cases[0]["chunks"][0]["text"].encode()).hexdigest()
+    assert make_rag_spec(cases, document_sources=sources)["document_vector_keys"][first] != plan["document_vector_keys"][first]
+
+
+@pytest.mark.parametrize("change", ["count", "sequence", "operation", "spec", "model", "prompt", "vectors_key", "vectors_hash", "vectors_status", "completed"])
 def test_usage_or_generation_tampering_is_rejected(runner, change):
     root, _, _, _ = runner
     params = parameters()
@@ -287,6 +353,9 @@ def test_usage_or_generation_tampering_is_rejected(runner, change):
         capture["execution"]["embeddingModel"] = "unapproved"
     elif change == "prompt":
         capture["execution"]["promptSha256"] = "0" * 64
+    elif change.startswith("vectors_"):
+        field = change.removeprefix("vectors_")
+        capture["cases"][0]["documentVectors"]["sha256" if field == "hash" else field] = "reused" if field == "status" else "0" * 64
     else:
         usage["completed"] = False
     with pytest.raises(ValueError):
@@ -309,4 +378,4 @@ def test_pinned_recorded_reference_can_be_compared_without_regenerating_it(runne
     value = json.loads((root / params["request_id"] / "evaluation/comparison.json").read_text())
     assert value["reference"]["measurementKind"] == "recorded-capture-replay"
     assert value["reference"]["captureSha256"] == manifest["capture_sha256"]
-    assert value["current"]["measurementKind"] == "recorded-live-evaluation" and len(calls) == 18
+    assert value["current"]["measurementKind"] == "recorded-live-evaluation" and len(calls) == 14

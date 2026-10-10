@@ -1314,6 +1314,29 @@ const ragLiveConfig = { ...liveConfig, max_model_calls: 9, max_input_tokens: 327
   max_total_input_tokens: 98999, max_total_output_tokens: 6000 }
 const ragLiveDataset = { ...ragDataset, live_config: ragLiveConfig, execution_profiles: executionProfiles }
 
+it('벡터 재사용·생성·공유 계획을 표시하고 승인한 해시를 그대로 접수한다', async () => {
+  const config = { ...ragLiveConfig, document_vectors: {
+    R01: { key: 'a'.repeat(64), sha256: 'b'.repeat(64), source_case_id: 'R01' },
+    R02: { key: 'c'.repeat(64), sha256: null, source_case_id: 'R02' },
+    R03: { key: 'c'.repeat(64), sha256: null, source_case_id: 'R02' },
+  } }
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (path, options) => path === '/api/v1/ops/session'
+    ? json({ ...session(), rag_live_enabled: true, datasets: [{ ...ragLiveDataset, live_config: config }] })
+    : original(path, options))
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  expect(screen.getByText('저장 벡터 재사용 1사례 · 새 임베딩 1묶음 · 실행 내 공유 1사례')).toBeTruthy()
+  expect(screen.getByText('R01: 저장 벡터 재사용')).toBeTruthy()
+  expect(screen.getByText('R02: 새 임베딩')).toBeTruthy()
+  expect(screen.getByText('R03: 이번 실행의 R02 벡터 재사용')).toBeTruthy()
+  fireEvent.click(screen.getByLabelText('위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.'))
+  fireEvent.click(screen.getByRole('button', { name: '새 응답 생성 및 평가' }))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(true))
+  const post = fetchMock.mock.calls.find(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')!
+  expect(JSON.parse(String(post[1]?.body)).live_config.document_vectors).toEqual(config.document_vectors)
+})
+
 it.each([false, true])('RAG 별도 활성화(%s)와 전송·예산 확인이 있어야 새 실행을 접수한다', async (enabled) => {
   const original = fetchMock.getMockImplementation()!
   fetchMock.mockImplementation(async (path, options) => {
