@@ -43,7 +43,7 @@ jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), prog
 jest.mock('../auth/oauth', () => ({ supportsNativeOAuth: () => false }))
 jest.mock('../auth/introductionStorage', () => ({ completeIntroduction: jest.fn(), readIntroductionCompleted: jest.fn() }))
 jest.mock('../api/partners', () => ({ ...jest.requireActual('../api/partners'), browseRecruitments: jest.fn(), browseProposals: jest.fn() }))
-jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: () => ({ settings: null, busy: false, error: null }) }))
+jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: () => ({ settings: null, busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn() }) }))
 jest.mock('../api/applicationPreparation', () => ({ ...jest.requireActual('../api/applicationPreparation'), applicationPreparationUseCase: jest.fn() }))
 
 const preparationApi = { get: jest.fn(), replaceInputs: jest.fn() }

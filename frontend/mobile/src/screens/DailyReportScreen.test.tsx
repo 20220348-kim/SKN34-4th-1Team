@@ -12,7 +12,7 @@ jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => () => void) => 
 } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: jest.fn(() => ({
-  settings: { enabled: false, available: true, schedulerEnabled: true, sendHour: 8 }, busy: false, error: null, refresh: jest.fn(), toggle: jest.fn(),
+  settings: { enabled: false, available: true, schedulerEnabled: true, sendHour: 8 }, busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn(), refresh: jest.fn(), toggle: jest.fn(),
 })) }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiRequest: jest.fn() }))
 
@@ -65,7 +65,7 @@ beforeEach(() => {
   jest.mocked(apiRequest).mockReset().mockImplementation(respond)
   signedIn()
   jest.mocked(useDailyReportPush).mockReturnValue({ settings: { enabled: false, available: true, schedulerEnabled: true, sendHour: 8 },
-    busy: false, error: null, refresh: jest.fn(), toggle: jest.fn() })
+    busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn(), refresh: jest.fn(), toggle: jest.fn() })
 })
 
 test('push notification fetches its exact report instead of the latest report or paid preview', async () => {
@@ -78,7 +78,7 @@ test('push notification fetches its exact report instead of the latest report or
 
 test('push-only subscription shows next report timing without requiring email verification', async () => {
   jest.mocked(useDailyReportPush).mockReturnValue({ settings: { enabled: true, available: true, schedulerEnabled: true, sendHour: 8 },
-    busy: false, error: null, refresh: jest.fn(), toggle: jest.fn() })
+    busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn(), refresh: jest.fn(), toggle: jest.fn() })
   render(<DailyReportScreen {...callbacks} />)
   await screen.findByText('다음 리포트는 서울 시간 오전 8시 이후 생성될 예정이에요.')
   fireEvent.press(screen.getByLabelText('수신 설정'))

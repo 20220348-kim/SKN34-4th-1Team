@@ -21,7 +21,7 @@ beforeEach(() => {
   invalidateSession.mockReset().mockResolvedValue(undefined)
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'owner', account: { email: 'member@example.test' } },
     invalidateSession } as unknown as ReturnType<typeof useAuth>)
-  jest.mocked(useDailyReportPush).mockReturnValue({ settings: null, busy: false, error: null, refresh: jest.fn(), toggle: jest.fn() })
+  jest.mocked(useDailyReportPush).mockReturnValue({ settings: null, busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn(), refresh: jest.fn(), toggle: jest.fn() })
   jest.mocked(apiRequest).mockReset().mockResolvedValue(settings)
 })
 
@@ -33,7 +33,7 @@ test('turning on saves the confirmed email through the shared contract and keeps
   const toggle = await screen.findByLabelText('관심 공고 마감 알림')
   expect(screen.getByText('마감 7일·3일·1일 전 오전 9시 이후에 한 번씩 보내요.')).toBeTruthy()
   expect(screen.queryByText('알림 시점')).toBeNull()
-  fireEvent.press(toggle)
+  fireEvent(toggle, 'valueChange', true)
   expect(apiRequest).toHaveBeenLastCalledWith(path, expect.objectContaining({
     method: 'PUT', accessToken: 'owner', body: { deadlineReminder: { enabled: true, email: true, push: false } },
   }))
@@ -41,7 +41,7 @@ test('turning on saves the confirmed email through the shared contract and keeps
   expect(screen.getByLabelText('앱 알림로 받기').props.accessibilityState.disabled).toBe(true)
   await act(async () => finish({ ...settings, deadlineReminder: { enabled: true, email: true, push: false } }))
   await waitFor(() => expect(screen.getByLabelText('관심 공고 마감 알림').props.accessibilityState.disabled).toBe(false))
-  fireEvent.press(screen.getByLabelText('앱 알림로 받기'))
+  fireEvent(screen.getByLabelText('앱 알림로 받기'), 'valueChange', true)
   expect(apiRequest).toHaveBeenLastCalledWith(path, expect.objectContaining({
     method: 'PUT', body: { deadlineReminder: { enabled: true, email: true, push: true } },
   }))
@@ -51,7 +51,7 @@ test('server rejection restores the previous state and explains the stable error
   jest.mocked(apiRequest).mockImplementation((_path, options) => options?.method === 'PUT'
     ? Promise.reject(new ApiError(409, '요청을 처리하지 못했습니다.', 'EMAIL_CONFIRMATION_REQUIRED')) : Promise.resolve(settings))
   render(<DeadlineReminderSettings />)
-  fireEvent.press(await screen.findByLabelText('관심 공고 마감 알림'))
+  fireEvent(await screen.findByLabelText('관심 공고 마감 알림'), 'valueChange', true)
   expect(await screen.findByText('아래에서 리포트 수신 주소를 먼저 확인해 주세요.')).toBeTruthy()
   expect(screen.getByLabelText('관심 공고 마감 알림').props.accessibilityState.checked).toBe(false)
 })
@@ -62,7 +62,7 @@ test('without a usable channel the switch stays locked and explains how to enabl
   const toggle = await screen.findByLabelText('관심 공고 마감 알림')
   expect(toggle.props.accessibilityState.disabled).toBe(true)
   expect(screen.getByText('받을 방법이 아직 없어요. 아래에서 리포트 수신 주소를 확인하거나 이 기기 앱 알림을 켜 주세요.')).toBeTruthy()
-  fireEvent.press(toggle)
+  fireEvent(toggle, 'valueChange', true)
   expect(jest.mocked(apiRequest).mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false)
 })
 

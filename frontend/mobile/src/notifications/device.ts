@@ -5,6 +5,9 @@ import { Platform } from 'react-native'
 import { z } from 'zod'
 
 let devicePromise: Promise<string> | undefined
+export class PushPermissionDeniedError extends Error {
+  constructor() { super('기기 설정에서 GovBiz 알림을 허용해 주세요.'); this.name = 'PushPermissionDeniedError' }
+}
 export function getPushDeviceId(): Promise<string> {
   devicePromise ??= (async () => {
     const stored = await SecureStore.getItemAsync('govbiz.push-device.v1')
@@ -42,7 +45,7 @@ export async function getExpoPushToken(requestPermission: boolean): Promise<stri
   }
   let permission = await notifications.getPermissionsAsync()
   if (requestPermission && !permission.granted) permission = await notifications.requestPermissionsAsync()
-  if (!permission.granted) throw new Error('기기 설정에서 GovBiz 알림을 허용해 주세요.')
+  if (!permission.granted) throw new PushPermissionDeniedError()
   try { return (await notifications.getExpoPushTokenAsync({ projectId })).data }
   catch { throw new Error('앱 알림 토큰을 받지 못했어요. 네트워크와 앱 연결 설정을 확인해 주세요.') }
 }
