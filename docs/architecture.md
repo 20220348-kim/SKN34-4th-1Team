@@ -67,6 +67,11 @@ Core HTTP·DB 계약과 shared 계약은 변경하지 않으며 로그인·화�
 삭제 미리보기와 명시적인 삭제 확인을 구분하고 서버 삭제 성공 뒤 기존 `AuthProvider.invalidateSession`으로 기기 세션을 정리합니다.
 비밀번호 찾기는 기존 공개 인증번호 발송·확인·재설정 API를 호출하며 재설정 통행 토큰은 가입 인증 타입과 구분합니다.
 
+모바일 정책·도움말은 `MenuScreen / AccountScreen → ServiceInformationSheet → content/serviceInformation`으로 읽습니다.
+본문·초안 표시·문의처 설정은 모바일 번들에 포함되며 새 API나 별도 동의 저장 계약은 추가하지 않습니다.
+현재 약관·처리방침은 미확정 초안이고 문의처도 미정입니다. 비로그인과 세션 복원 실패 상태에서도 메뉴의 안내를 읽으며,
+문의처를 설정하면 명시적인 버튼 선택에서만 `Linking`으로 운영 URL·메일 앱을 엽니다.
+
 앱 이메일 인증은 `AccountMobileAuthController → 기존 로그인/가입 Service → AccountRepository → MyBatis → MySQL`이며,
 네이티브에서 받은 Bearer JWT도 웹과 같은 DB 세션 만료·폐기 규칙을 사용합니다. 웹은 HttpOnly 쿠키를 유지하며,
 쿠키와 Bearer가 함께 오면 쿠키를 우선하고 Origin 검사를 그대로 적용합니다.

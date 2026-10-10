@@ -3,6 +3,7 @@ import { DevSettings } from 'react-native'
 import { useAuth } from '../auth/session'
 import { MenuScreen } from './MenuScreen'
 import { clearIntroductionCompleted } from '../auth/introductionStorage'
+import { serviceContact } from '../content/serviceInformation'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../auth/introductionStorage', () => ({ clearIntroductionCompleted: jest.fn() }))
@@ -12,7 +13,15 @@ const auth = (account: { email: string; company: { companyName: string } | null 
     session: account ? { accessToken: 'token', account } : null, restoreError: null } as unknown as ReturnType<typeof useAuth>)
 }
 beforeEach(() => { auth(null); jest.mocked(clearIntroductionCompleted).mockReset().mockResolvedValue(undefined) })
-afterEach(() => jest.restoreAllMocks())
+
+test('policy drafts and help can be opened before login without requesting an account destination', () => {
+  const open = jest.fn()
+  render(<MenuScreen onOpen={open} />)
+  fireEvent.press(screen.getByLabelText('도움말·문의'))
+  expect(screen.getByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeTruthy()
+  expect(open).not.toHaveBeenCalled()
+})
+afterEach(() => { serviceContact.email = null; serviceContact.url = null; jest.restoreAllMocks() })
 
 test('All removes duplicate entries and combines proposal destinations into partner management', () => {
   auth({ email: 'member@example.test', company: null })
@@ -87,4 +96,24 @@ test('guest All retains all feature destinations and labels private ones as requ
   for (const name of ['관심 공고함', '맞춤 리포트', '신청 문서', '중복 검토', '파트너 관리']) {
     expect(screen.getByLabelText(name)).toBeTruthy()
   }
+})
+
+test('policy documents remain public when session restoration is unavailable', () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'unavailable', session: null, restoreError: '복원 실패' } as unknown as ReturnType<typeof useAuth>)
+  const open = jest.fn()
+  render(<MenuScreen onOpen={open} />)
+  fireEvent.press(screen.getByLabelText('개인정보 처리방침'))
+  expect(screen.getByText('문서 초안 · 운영 문서 확정 전')).toBeTruthy()
+  fireEvent.press(screen.getAllByLabelText('닫기')[0])
+  expect(screen.getByText('복원 실패')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('도움말·문의'))
+  expect(screen.getByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeTruthy()
+  expect(open).not.toHaveBeenCalled()
+})
+
+test('a configured contact updates the public menu guidance', () => {
+  serviceContact.email = 'help@example.test'
+  render(<MenuScreen onOpen={jest.fn()} />)
+  expect(screen.getByLabelText('도움말·문의').props.accessibilityHint).toBe('도움말 · 문의처')
+  expect(screen.queryByText('도움말 · 문의처 준비 중')).toBeNull()
 })
