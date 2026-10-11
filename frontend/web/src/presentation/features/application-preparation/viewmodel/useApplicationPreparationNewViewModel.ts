@@ -30,9 +30,23 @@ function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error('신청 문서 정보를 처리하지 못했습니다.')
 }
 
-/** 조회 결과에서 바로 작성할 수 있는 양식입니다. AVAILABLE이 아니면 양식이 있어도 쓰지 않습니다. */
+/** 양식의 문항 중 원본 문서에 자동으로 넣을 수 있는 문항 수입니다. 넣을 칸을 찾지 못한 문항은 원본에 직접 적어야 합니다. */
+export function writableFieldCount(form: ApplicationForm): { writable: number; total: number } {
+  const fields = form.sections.flatMap((section) => section.fields)
+  return { writable: fields.filter((field) => field.documentWritable !== false).length, total: fields.length }
+}
+
+function writableRatio(form: ApplicationForm): number {
+  const { writable, total } = writableFieldCount(form)
+  return total === 0 ? 1 : writable / total
+}
+
+/**
+ * 조회 결과에서 바로 작성할 수 있는 양식입니다. AVAILABLE이 아니면 양식이 있어도 쓰지 않습니다.
+ * 자동 기입되는 문항 비율이 높은 양식을 앞에 두어 처음 고른 양식이 가장 많이 채워지게 합니다(비율이 같으면 원래 순서).
+ */
 export function storedForms(result: ApplicationFormAvailability): ApplicationForm[] {
-  return result.state.status === 'AVAILABLE' ? result.forms.items : []
+  return result.state.status === 'AVAILABLE' ? [...result.forms.items].sort((a, b) => writableRatio(b) - writableRatio(a)) : []
 }
 
 function availabilityReason(code: string): string {
@@ -63,6 +77,11 @@ export type NoFormNotice = {
   message: string | null
   /** 지난 분석이 남긴 원인입니다. 아직 분석하지 않았거나 원문이 바뀐 경우에는 없습니다. */
   detail: string | null
+  /**
+   * 다시 분석하면 결과가 달라질 수 있는지입니다. 읽을 수 있는 신청서 파일이 없거나 첨부가 너무 큰 경우는 공식 첨부가 바뀌지 않는 한
+   * 같은 결과라 false이고, 이때는 분석 대신 공고 원문을 먼저 권합니다.
+   */
+  reanalysisUseful: boolean
 }
 
 /**
@@ -98,23 +117,42 @@ function lastFormAnalysisOf(job: ApplicationFormDiscoveryJob | undefined): LastF
  * 나머지는 제목만 둡니다.
  */
 export function noFormNotice(result: ApplicationFormAvailability, lastAnalysisShown = false): NoFormNotice | null {
-  const { status, reasonCode, nextRetryAt } = result.state
+  const { status, nextRetryAt } = result.state
+  // 사용자가 요청한 분석은 이유 코드 앞에 APPLICATION_FORM_이 붙어 저장됩니다. 같은 이유로 읽습니다.
+  const reasonCode = result.state.reasonCode.replace(/^APPLICATION_FORM_/, '')
   if (status === 'AVAILABLE') return null
-  if (status === 'STALE') return { title: '공고가 바뀌어 다시 분석해야 해요', message: '공고나 공식 첨부가 바뀌어 양식을 다시 분석해야 해요.', detail: null }
-  const notice = noFormNoticeOf(status, nextRetryAt)
-  if (lastAnalysisShown) return { title: status === 'PENDING' ? '저장된 양식이 없어요' : notice.title, message: null, detail: null }
-  return { ...notice, detail: status === 'PENDING' ? null : `최근 분석: ${availabilityReason(reasonCode)}` }
+  if (status === 'STALE') return { title: '공고가 바뀌어 다시 분석해야 해요', message: '공고나 공식 첨부가 바뀌어 양식을 다시 분석해야 해요.', detail: null, reanalysisUseful: true }
+  const notice = noFormNoticeOf(status, reasonCode, nextRetryAt)
+  if (lastAnalysisShown) return { title: status === 'PENDING' ? '저장된 양식이 없어요' : notice.title, message: null, detail: null, reanalysisUseful: notice.reanalysisUseful }
+  // 원인을 제목·안내가 이미 말하는 경우(읽을 신청서 파일 없음 · 너무 큰 첨부)는 같은 이야기를 한 줄 더 쓰지 않습니다.
+  const detail = status === 'PENDING' || !notice.reanalysisUseful ? null : `최근 분석: ${availabilityReason(reasonCode)}`
+  return { ...notice, detail }
 }
 
-function noFormNoticeOf(status: ApplicationFormAvailability['state']['status'], nextRetryAt: string | null): Omit<NoFormNotice, 'detail'> {
+function noFormNoticeOf(status: ApplicationFormAvailability['state']['status'], reasonCode: string, nextRetryAt: string | null): Omit<NoFormNotice, 'detail'> {
+  return { reanalysisUseful: true, ...noFormCopyOf(status, reasonCode, nextRetryAt) }
+}
+
+function noFormCopyOf(status: ApplicationFormAvailability['state']['status'], reasonCode: string, nextRetryAt: string | null): Omit<NoFormNotice, 'detail' | 'reanalysisUseful'> & { reanalysisUseful?: boolean } {
+  // 첨부가 없거나(포스터 이미지만 있는 경우 포함) 지원하지 않는 형식·스캔본뿐이면 다시 분석해도 같은 결과입니다.
+  if (status === 'DOCUMENT_UNAVAILABLE' && reasonCode.includes('UNSUPPORTED')) return {
+    title: '자동으로 읽을 수 있는 신청서 파일이 없어요',
+    message: '공식 첨부에 PDF·HWP·HWPX·DOCX·XLSX 신청서가 없거나, 있어도 글자를 읽을 수 없는 파일(스캔·암호 PDF 등)이에요. 공고 원문에서 신청 방법을 확인해 주세요.',
+    reanalysisUseful: false,
+  }
+  // 서식 여러 개를 한 파일에 묶은 큰 첨부는 입력칸이 자동 처리 한도를 넘어 다시 분석해도 읽지 못합니다.
+  if (status === 'TOO_LARGE') return {
+    title: '첨부가 너무 커서 자동으로 읽지 못했어요',
+    message: '서식 여러 개를 한 파일로 묶은 큰 첨부는 자동으로 읽지 못해요. 원문에서 내려받아 필요한 서식만 직접 작성해 주세요.',
+    reanalysisUseful: false,
+  }
   switch (status) {
     case 'PENDING': return { title: '아직 분석하지 않은 공고예요', message: '이 공고는 아직 신청 양식을 분석한 적이 없어요. 입력칸별로 분석해 보세요.' }
     case 'NO_FORM': return {
       title: '작성할 신청 양식이 없어요',
       message: '공식 첨부에서 채워 낼 신청서 양식을 찾지 못했어요. 공고의 신청 방법(온라인 접수 등)을 확인해 주세요.',
     }
-    case 'DOCUMENT_UNAVAILABLE':
-    case 'TOO_LARGE': return {
+    case 'DOCUMENT_UNAVAILABLE': return {
       title: '첨부를 읽지 못했어요',
       message: '신청 양식이 있을 수 있지만 공식 첨부를 자동으로 읽지 못했어요. 원문에서 내려받아 직접 작성해 주세요.',
     }

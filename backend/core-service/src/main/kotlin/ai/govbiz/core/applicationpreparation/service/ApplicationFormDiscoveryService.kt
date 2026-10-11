@@ -251,7 +251,7 @@ class ApplicationFormDiscoveryService(
                         )) throw error
                     hasExcludedDocument = true
                     if (error.reason == SupportProgramDocumentException.Reason.TOO_LARGE) excludedReason = Reason.SOURCE_TOO_LARGE
-                    excluded += file.fileName to "자동 분석 제외 첨부(SOURCE_${error.reason.name}): ${file.fileName.take(250)}"
+                    excluded += file.fileName to "자동 분석 제외 첨부(${error.reason.excludedLabel}): ${file.fileName.take(250)}"
                     return@mapIndexedNotNull null
                 }
                 logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} mimeType={} fileSize={} stage=PARSED blockCount={} sourceLength={}",
@@ -277,7 +277,7 @@ class ApplicationFormDiscoveryService(
                     excludedReason = Reason.SOURCE_TOO_LARGE
                     logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} fileSize={} stage=SOURCE_LIMIT sourceLength={} limit={} errorCode=SOURCE_TOO_LARGE",
                         sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), document.format, document.bytes, length, sourceLimit)
-                    excluded += document.fileName to "자동 분석 제외 첨부(SOURCE_TOO_LARGE): ${document.fileName.take(250)}"
+                    excluded += document.fileName to "자동 분석 제외 첨부(${SupportProgramDocumentException.Reason.TOO_LARGE.excludedLabel}): ${document.fileName.take(250)}"
                     false
                 } else true
             }
@@ -313,7 +313,7 @@ class ApplicationFormDiscoveryService(
             signaled.filter { it !in preferred }.forEach { document ->
                 logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=ROLE_FILTER role=NON_APPLICANT",
                     sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
-                warnings.add("자동 분석 제외 첨부(NON_APPLICANT_ROLE): ${document.fileName.take(250)}")
+                warnings.add("자동 분석 제외 첨부(공고문·안내문처럼 신청자가 작성하지 않는 문서): ${document.fileName.take(250)}")
             }
             preferred.drop(MAX_DISCOVERY_DOCUMENTS).forEach { document ->
                 warnings.add("분석할 첨부가 ${MAX_DISCOVERY_DOCUMENTS}개를 넘어 분석하지 않은 첨부: ${document.fileName.take(250)}")
@@ -356,7 +356,7 @@ class ApplicationFormDiscoveryService(
             outcomes.mapNotNull { it.excluded }.forEach { document ->
                 hasExcludedDocument = true
                 excludedReason = Reason.SOURCE_TOO_LARGE
-                warnings.add("자동 분석 제외 첨부(NATIVE_TARGET_LIMIT): ${document.fileName.take(250)}")
+                warnings.add("자동 분석 제외 첨부(서식 여러 개가 묶여 입력칸이 자동 처리 한도를 넘는 파일): ${document.fileName.take(250)}")
             }
             candidateFailure = outcomes.firstNotNullOfOrNull { it.failure }
             val extracted = outcomes.flatMap { it.candidates }
@@ -433,7 +433,9 @@ class ApplicationFormDiscoveryService(
                 ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM, warnings = forUser(warnings))
             bound.forEach { form ->
                 val unmapped = (form.documentMapSnapshot?.documentMap?.get("unmappedFieldIds") as? List<*>).orEmpty().size
-                if (unmapped > 0) warnings.add("「${form.formTitle.take(200)}」에서 문항 ${unmapped}개는 넣을 칸을 찾지 못해 원본에서 직접 작성해야 해요.")
+                // 전체 문항 수를 함께 적어 자동 기입이 얼마나 되는 양식인지 고르기 전에 알 수 있게 합니다.
+                val total = form.sections.sumOf { it.fields.size }
+                if (unmapped > 0) warnings.add("「${form.formTitle.take(200)}」의 문항 ${total}개 중 ${unmapped}개는 넣을 칸을 찾지 못해 원본에서 직접 작성해야 해요.")
                 val document = documents.firstOrNull { it.sha256 == form.attachmentSha256 } ?: return@forEach
                 if (ApplicationAttachmentRole.hasConsentCheck(document.blocks.joinToString("\n") { it.text })) {
                     warnings.add("「${form.formTitle.take(200)}」에는 신청자가 직접 체크해야 하는 동의 항목이 있어요. 제출 전 원본에서 확인해 주세요.")

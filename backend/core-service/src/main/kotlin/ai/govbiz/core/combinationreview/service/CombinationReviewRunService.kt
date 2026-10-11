@@ -116,7 +116,7 @@ class CombinationReviewRunService(
                             )
                         ) throw error
                         rejectedReason = error.reason
-                        warnings.add("사업 ${index + 1}: 자동 분석 제외 첨부(SOURCE_${error.reason.name}): ${file.fileName.take(250)}. 원본 대조가 필요합니다.")
+                        warnings.add("사업 ${index + 1}: 자동 분석 제외 첨부(${error.reason.excludedLabel}): ${file.fileName.take(250)}. 원본 대조가 필요합니다.")
                         return@forEach
                     }
                     val document = ReviewSourceDocument(

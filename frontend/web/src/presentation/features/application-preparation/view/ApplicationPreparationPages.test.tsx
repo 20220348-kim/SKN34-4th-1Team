@@ -1980,7 +1980,8 @@ describe('application preparation creation and detail', () => {
   it.each([
     ['NO_FORM', 'NO_FORM', '작성할 신청 양식이 없어요', '공고의 신청 방법(온라인 접수 등)을 확인해 주세요.', '최근 분석: 분석한 공식 첨부에서 작성할 신청 양식을 찾지 못했습니다.'],
     ['DOCUMENT_UNAVAILABLE', 'SOURCE_NOT_FOUND', '첨부를 읽지 못했어요', '원문에서 내려받아 직접 작성해 주세요.', '최근 분석: 공식 공고 또는 첨부가 없어졌거나 변경되었습니다.'],
-    ['TOO_LARGE', 'SOURCE_TOO_LARGE', '첨부를 읽지 못했어요', '신청 양식이 있을 수 있지만', '최근 분석: 첨부 파일의 크기나 문서 분량이 분석 제한을 초과했습니다.'],
+    // 사용자가 요청한 분석은 이유 코드 앞에 APPLICATION_FORM_이 붙어 저장되지만 같은 문장으로 읽습니다.
+    ['NO_FORM', 'APPLICATION_FORM_NO_FORM', '작성할 신청 양식이 없어요', '공고의 신청 방법(온라인 접수 등)을 확인해 주세요.', '최근 분석: 분석한 공식 첨부에서 작성할 신청 양식을 찾지 못했습니다.'],
     ['RETRY_WAITING', 'AI_UNAVAILABLE', '잠시 후 다시 확인해요', '자동으로 다시 확인해요.', '최근 분석: AI 분석 서비스에 연결하지 못했습니다.'],
     ['REVIEW_REQUIRED', 'RETRY_EXHAUSTED:AI_UNAVAILABLE', '양식을 확인하지 못했어요', '확인이 필요해요.', '최근 분석: AI 분석 서비스에 연결하지 못했습니다. 자동 재시도 한도에 도달하여 관리자 확인이 필요합니다.'],
     ['PENDING', 'NOT_ANALYZED', '아직 분석하지 않은 공고예요', '이 공고는 아직 신청 양식을 분석한 적이 없어요.', null],
@@ -2003,6 +2004,53 @@ describe('application preparation creation and detail', () => {
     expect(follows(card, startButton())).toBe(true)
     expect(repository.discover).not.toHaveBeenCalled()
     expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['DOCUMENT_UNAVAILABLE', 'APPLICATION_FORM_SOURCE_UNSUPPORTED', '자동으로 읽을 수 있는 신청서 파일이 없어요', '글자를 읽을 수 없는 파일(스캔·암호 PDF 등)이에요.'],
+    ['TOO_LARGE', 'SOURCE_TOO_LARGE', '첨부가 너무 커서 자동으로 읽지 못했어요', '서식 여러 개를 한 파일로 묶은 큰 첨부는 자동으로 읽지 못해요.'],
+  ])('puts the official notice first for a %s / %s program because analyzing again gives the same result', async (status, reasonCode, title, message) => {
+    repository.availability.mockResolvedValue(availabilityOf(status, reasonCode, [], ['미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX/XLSX 이외): 포스터.png']))
+    mount(newPath)
+    const card = await screen.findByRole('region', { name: title })
+    expect(within(programSection()).getByText(title).parentElement?.textContent).toContain('아래 ②에서 이유를 확인하고 공고 원문을 봐 주세요.')
+    expect(card.textContent).toContain(message)
+    // 제목·안내가 원인을 말하므로 "최근 분석:" 줄을 겹쳐 쓰지 않습니다.
+    expect(card.textContent).not.toContain('최근 분석:')
+    expect(within(card).getByRole('link', { name: /공고 원문 보기/ }).getAttribute('target')).toBe('_blank')
+    expect(within(card).queryByRole('button', { name: '입력칸별로 분석' })).toBeNull()
+    expect(within(card).getByText('공식 첨부가 바뀌었을 때만 결과가 달라져요. 새 첨부가 있으면 유료 AI로 분석해요.')).toBeTruthy()
+    repository.discover.mockReturnValue(new Promise(() => {}))
+    await act(async () => fireEvent.click(within(card).getByRole('button', { name: '첨부 다시 확인' })))
+    expect(repository.discover).toHaveBeenCalledOnce()
+    expect(startButton().disabled).toBe(true)
+  })
+
+  it('says writing happens in the original when no readable form exists', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('TOO_LARGE', 'SOURCE_TOO_LARGE'))
+    mount(newPath)
+    await screen.findByRole('region', { name: '첨부가 너무 커서 자동으로 읽지 못했어요' })
+    expect(startButton().disabled).toBe(true)
+    expect(startReason()).toBe('자동으로 읽을 양식이 없어 원문에서 직접 작성해요')
+  })
+
+  it('shows how many questions go into the original and lists the most fillable form first', async () => {
+    const mostlyManual = structuredClone(firstForm)
+    mostlyManual.sections.forEach((section) => section.fields.forEach((field) => { field.documentWritable = false }))
+    mostlyManual.sections[0].fields.push({ key: 'ceo', label: '대표자', guidance: '대표자 이름', required: true })
+    const fillable = { ...structuredClone(secondForm), sourceProgramId: 'PBLN_1' }
+    repository.availability.mockResolvedValue(availabilityOf('AVAILABLE', 'FORM_FOUND', [mostlyManual, fillable]))
+    mount(newPath)
+    const radios = await screen.findAllByRole('radio', { name: /자동 기입/ })
+    // 자동 기입 비율이 높은 양식이 먼저 나오고 처음부터 골라져 있습니다.
+    expect(radios.map((radio) => radio.closest('label')?.textContent)).toEqual([
+      '수출 실행계획서혁신바우처 사업계획서.hwpx · 자동 기입 2/2문항',
+      '혁신바우처 사업계획서혁신바우처 사업계획서.hwpx · 자동 기입 1/3문항',
+    ])
+    expect((radios[0] as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByText(/문항 대부분을 원본에 직접 적어야 해요/)).toBeNull()
+    fireEvent.click(radios[1])
+    expect(screen.getByText('이 양식은 문항 대부분을 원본에 직접 적어야 해요. 답변을 정리해 두고 원본에 옮겨 적는 용도로 쓸 수 있어요.')).toBeTruthy()
   })
 
   it('shows what the last analysis left out, such as an uncollected ZIP form, next to the no-form card', async () => {
