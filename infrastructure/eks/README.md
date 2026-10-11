@@ -1,14 +1,15 @@
-# EKS 이전 준비
+# EKS 배포와 데이터 이전
 
 현재 **Vercel 웹 + Mac의 직접 배포 백엔드 → 시드니 EKS 2노드** 경로는
 [시드니 시연 배포](sydney-demo.md)를 따른다. 이 경로는 Argo CD 설치를 전제로 하지 않으며,
 `cluster.sydney-demo.yaml`과 `capture --source-mode manifests`를 사용한다.
 `prepare --vercel-origin https://govbiz.vercel.app`으로 웹 Pod·Service를 목적지에서 제외하고
-Core·Ops의 웹 주소를 설정한다. Vercel과 EKS 사이의 외부 API·Ops 프록시 연결은 후속 배포 작업이다.
+Core·Ops의 웹 주소를 설정한다. 2026-10-12 활성 PVC 13개를 복원하고 백엔드·저장소·평가 도구
+20개와 API 게이트웨이를 기동했다. Vercel 운영 웹에서 Core·Ops API 응답과 익명 접근 차단을 확인했다.
 개인 저장소 `ilil1/SKN34-4th-1Team` main의 필수 CI 통과 후 ECR·EKS·Vercel을 갱신하는 코드와
 [Vercel 최초 설정·자동 배포 연결 절차](continuous-deployment.md)를 준비했다.
-[CloudFront·내부 ALB·Core/Ops 프록시](api-entrypoint.md)의 배포 설정과 무료 격리 검증도 준비했다.
-실제 AWS 스택·GitHub 변수와 권한·Vercel 프로젝트를 연결하기 전에는 자동 배포를 활성화하지 않는다.
+[CloudFront·내부 ALB·Core/Ops 프록시](api-entrypoint.md)는 실제 AWS에 적용했다.
+GitHub OIDC가 관리형 조직 정책에 막혀 **현재는 수동 배포이며 자동 배포는 비활성 상태**다.
 
 아래는 **다른 원본 클러스터의 기존 Argo CD 이전 절차와 기록**이다. 아래의 PVC 14개·Argo 앱
 9개·`work/eks-handoff-20261011-final` 기록을 현재 Mac의 백업 완료 증거로 사용하지 않는다.

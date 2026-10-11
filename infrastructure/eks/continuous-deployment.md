@@ -9,14 +9,19 @@ AWS 스택·GitHub environment·Vercel 프로젝트 설정과 최초 EKS 데이�
 
 운영 웹은 **[govbiz.vercel.app](https://govbiz.vercel.app)**이며,
 [Vercel 프로젝트](https://vercel.com/geonwoo4/govbiz)는 `govbiz`다.
-2026-10-11 개인 main의 `4323b42874c9df14410bd5d25d57859a28471b72`가 Vercel Ready이며
-공개 웹은 HTTP 200을 확인했다. Core/Ops API는 설정 미완료 503이다.
-이 최초 Git 배포와 아래 CI 통과 후 자동 배포 연결은 구분한다. 이 workflow·Git 설정 변경은 아직 배포 전이며,
-AWS 자원과 배포 토큰 등 최초 연결을 완료한 뒤 활성화한다.
+2026-10-12 개인 main `6bfe7a31963aa9f8cf8b2d541a6b14565dff7536`의 필수 CI 5개를 확인하고
+웹을 **수동 배포**했다. `--skip-domain`으로 빌드한 뒤 Ready와 동일 main CI를 다시 확인해 promote했다.
+운영 웹·Core/AI health·Ops session은 HTTP 200, 익명 평가 이력은 401이다.
+이 수동 배포 성공은 아래 GitHub Actions 자동 배포의 활성화·성공을 의미하지 않는다.
 개인 GitHub의 `eks-production` 환경은 main 브랜치만 허용하도록 만들고,
 해당 Vercel 프로젝트의 `VERCEL_ORG_ID`·`VERCEL_PROJECT_ID` 변수를 등록했다.
 2026-10-11 `VERCEL_TOKEN` Secret 등록도 확인했다. 값과 실제 배포 권한은 읽지 않았다.
-repository variable `EKS_RELEASE_ENABLED=false`를 유지하며, AWS 역할·EKS 연결과 최초 배포 검증은 남아 있다.
+repository variable **`EKS_RELEASE_ENABLED=false`를 유지**한다. AWS의 관리형 조직 정책(SCP)이
+GitHub OIDC provider 조회(`ListOpenIDConnectProviders`, `GetOpenIDConnectProvider`)를 거절했다.
+사용자는 수동 배포 우선을 선택했으며 유료 플랜 전환·장기 AWS 키 발급은 수행하지 않았다.
+자동 배포용 `release-stack.yaml`·CodeBuild는 생성하지 않았다. OIDC 권한 문제 해결과 배포 전용
+역할 연결 후 첫 자동 실행을 검증해야 한다. EKS 데이터 복원·수동 운영 상태는
+[실배포 기록](sydney-demo.md#2026-10-12-수동-배포-기록)을 참고한다.
 
 ## 배포 흐름
 

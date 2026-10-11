@@ -8,15 +8,16 @@
 
 운영 웹 주소는 **`https://govbiz.vercel.app`**, Vercel 프로젝트는 `geonwoo4/govbiz`다.
 개인 저장소 `ilil1/SKN34-4th-1Team`의 main, Root Directory `frontend/web`에 연결했다.
-2026-10-11 확인 시 웹은 HTTP 200이며, Core health와 Ops session API는 설정 미완료로 503이다.
-이 기록은 웹 배포 확인이며 EKS·API 연동 완료를 의미하지 않는다.
+2026-10-12 EKS 백엔드·저장소·평가 도구 20개와 API 게이트웨이를 기동했다.
+CloudFront 경유 Core·AI health, 공개 공고 조회, Ops session 응답과 익명 이력 접근 거절을 확인했다.
+Vercel 운영 연결과 관리자 화면의 확인 범위는 아래 실배포 기록에 구분한다.
 
 **웹은 기존처럼 Vercel에 배포한다.** 현재 Mac의 웹 Pod는 로컬 검증용으로 유지하고,
 EKS 목적지에서는 `govbiz-msa/web` Deployment와 Service를 제외한다. 백엔드·저장소·평가 도구는
 EKS로 이전하며 MySQL을 RDS로 바꾸는 작업은 이번 선택에 포함하지 않는다.
 
-목표 요청 경로는 다음과 같다. [CloudFront·내부 ALB·Ops 프록시 구성](api-entrypoint.md)은
-코드와 격리 검증을 준비했으며 실제 AWS 적용은 아직 하지 않았다.
+실제 AWS에 적용한 요청 경로는 다음과 같다.
+[CloudFront·내부 ALB·Ops 프록시 구성](api-entrypoint.md)은 API만 제공한다.
 
 ```text
 사용자 → Vercel React 웹 (일반 화면·/ops/evaluations)
@@ -39,13 +40,70 @@ EKS로 이전하며 MySQL을 RDS로 바꾸는 작업은 이번 선택에 포함�
   프록시 비밀값, 쿠키·Origin·CSRF 헤더 전달, NetworkPolicy·허용 Host를 검증한 뒤
   Vercel Production의 `GOVBIZ_OPS_PROXY_ENABLED=true`로 연다. 이 옵션만으로 AWS 경로가 만들어지지는 않는다.
 - Core의 OAuth 공급자에도 같은 Vercel 주소의 callback을 등록한다. 외부 API
-  진입점 생성, 로그인·Ops 검증은 후속 배포 단계이며 이 문서의 변환 명령은 이를 실행하지 않는다.
+  로그인·Ops 검증은 실제 배포 단계에서 수행하며 이 문서의 변환 명령만으로 완료되지 않는다.
 
 기존 EC2·RDS 구성 기록은 [Vercel 배포 안내](../../docs/deployment-aws-vercel.md)를 참고하되,
 Compose의 고정 프록시 IP나 EC2 배포 명령을 EKS에 그대로 적용하지 않는다.
 Vercel 프로젝트 생성과 개인 저장소 `ilil1/SKN34-4th-1Team` main의 필수 CI 통과 후 자동 배포 연결은
 [EKS·Vercel 자동 배포](continuous-deployment.md)를 따른다. 이 흐름은 최초 클러스터 생성·데이터 복원과
 외부 API 연결이 끝난 뒤 활성화한다.
+
+## 2026-10-12 수동 배포 기록
+
+- 시드니 `govbiz-eks`, Kubernetes 1.36, private `m7i-flex.large` 2대와 NAT 1개를 생성했다.
+  EKS API 공개 접근은 관리용 IP로 제한하고 private 접근도 유지한다.
+- 활성 PVC 13개의 냉간 백업을 암호화하고 EBS에 복원했다. gp3 15개는 모두 암호화됐으며,
+  데이터 280GiB와 노드 루트 160GiB를 합해 **440GiB**다. 로컬 PVC와 서비스는 보존·재개했다.
+- 암호화 백업·메타데이터 84개를 비공개 버전 관리 S3에 보관하고 크기·SHA-256을 확인했다.
+  복호화 키는 S3나 Git에 올리지 않았다. 로컬 재개 이후 변경은 AWS와 자동 동기화되지 않는다.
+- 기존 실행 이미지 17개를 `govbiz-migration/*` private ECR에 발행하고 linux/amd64의 실행 설정·
+  레이어를 원본과 대조했다. 이번 이전은 기존 런타임의 보존이며 모든 백엔드를 최신 main으로
+  다시 빌드한 배포가 아니다.
+- MySQL 81개 테이블, Langfuse PostgreSQL 78개 테이블, ClickHouse 14개 테이블과 검색 인덱스를
+  대조했다. 접수 중지·재개 감사 이력은 원본과 목적지에 각각 남겼으며 유료 평가·정기 실행은 꺼 두었다.
+
+| 대조 항목 | EKS 복원 결과 |
+| --- | --- |
+| Catalog·Core 저장 공고 | 각각 10,129건 |
+| 기존 계정 | 5개 |
+| 평가 실행·비교 기준 | 실행 33건(완료 29·실패 4), 기준 7건 |
+| Qdrant | 공고 벡터 10,131건, 근거 벡터 2건 |
+| Elasticsearch·공개 공고 목록 | 각각 9,918건 |
+
+수동 배포 중 ECR 저장소 이름 오탐, EBS 마운트 후 RabbitMQ 쿠키 권한, Nginx의 Kubernetes
+서비스 DNS 해석을 수정했다. 쿠키 값·큐 데이터는 유지하며 기존 소유자가 파일 권한만 `600`으로
+복구한다. 게이트웨이는 `*.govbiz-msa.svc.cluster.local` 전체 주소를 사용한다.
+
+AWS Load Balancer Controller 3.6.0은 전용 Pod Identity 역할로 실행한다. 업무 노드의 CPU 예약
+부족을 해결하기 위해 컨트롤러는 observability 노드에 두고 CoreDNS는 노드별 1개로 분산했다.
+노드·디스크를 추가하지 않았다. 두 노드의 실제 메모리 사용량과 시스템 Pod 배치를 함께 확인해야 한다.
+
+GitHub OIDC provider 조회는 계정의 관리형 조직 정책(SCP)에 거절됐다. 사용자 결정에 따라
+**수동 배포를 우선하며 `EKS_RELEASE_ENABLED=false`를 유지**한다. 유료 플랜 전환이나
+장기 AWS 키 발급으로 우회하지 않았다. 자동 배포용 CodeBuild·release 스택은 생성하지 않았다.
+
+배포 기준 main `6bfe7a31963aa9f8cf8b2d541a6b14565dff7536`의 필수 CI 5개는 통과했다.
+현장 수정은 관련 변환 테스트·게이트웨이 격리 검증과 실제 EKS 요청으로 확인했으며,
+이 추가 수정의 전체 CI 완료 여부는 후속 커밋의 결과로 별도 판단한다.
+Vercel에는 같은 main의 추적된 웹·shared 소스만 빌드했다. Ready와 필수 CI 재확인 후 운영 주소로
+전환했으며 웹·Core/AI health·공고 목록·Ops session은 200, 익명 평가 이력은 401을 확인했다.
+브라우저의 필터 검색에서도 접수 중 공고 1,158건이 표시됐다. 실제 관리자 로그인 후 Ops 조회와
+유료 모델 품질 평가는 이 무료 검증만으로 완료된 것으로 보지 않는다.
+
+Langfuse·Prefect는 공개하지 않는다. 현재 Mac의 localhost 터널만 EKS로 연결했으며 각각
+`http://localhost:13000`, `http://localhost:14200`에서 health 200을 확인했다.
+다른 PC에서는 EKS 권한이 있는 kubeconfig로 아래 터널을 직접 열어야 한다. 이미 같은 포트에서
+로컬 환경을 보고 있다면 그 터널의 대상을 확인하고 전환한다. DB나 원본 Pod를 중지할 필요는 없다.
+
+```sh
+kubectl --kubeconfig '<EKS kubeconfig>' -n govbiz-observability \
+  port-forward --address 127.0.0.1 service/langfuse-web 13000:3000
+kubectl --kubeconfig '<EKS kubeconfig>' -n govbiz-evaluation \
+  port-forward --address 127.0.0.1 service/prefect 14200:4200
+```
+
+AWS 자원은 실행 중인 동안 비용이 발생한다. 7일 종료 시 자동 삭제나 비용 차단은 설정하지 않았다.
+백업 S3·ECR과 Retain EBS는 스택·클러스터 삭제만으로 함께 삭제된다고 가정하지 않는다.
 
 ## 노드와 디스크 배치
 

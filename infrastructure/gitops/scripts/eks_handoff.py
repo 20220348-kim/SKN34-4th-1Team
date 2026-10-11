@@ -839,7 +839,10 @@ def manifest_destination(config, image_map, vercel_origin=None):
             "Every destination image needs a published digest",
         )
         require(
-            "govbiz-migration/" not in target,
+            not re.match(
+                r"(?:(?:docker\.io|index\.docker\.io|registry-1\.docker\.io)/)?govbiz-migration/",
+                target,
+            ),
             "Publish local migration images to a pullable registry",
         )
     dependencies, storage, apps, services, policies, pvcs, replicas = (
@@ -1002,6 +1005,39 @@ def manifest_destination(config, image_map, vercel_origin=None):
                         e for e in c.get("env", []) if e["name"] not in overrides
                     ]
                     c["env"] += [{"name": k, "value": v} for k, v in overrides.items()]
+            if kind == "StatefulSet" and (ns, name) == ("govbiz-msa", "rabbitmq"):
+                rabbit = next(c for c in pod["containers"] if c["name"] == "rabbitmq")
+                # EBS fsGroup processing can add group access to a restored cookie.
+                # Repair only its mode, as its existing non-root owner, before boot.
+                pod.setdefault("initContainers", []).append(
+                    {
+                        "name": "cookie-permissions",
+                        "image": rabbit["image"],
+                        "imagePullPolicy": "IfNotPresent",
+                        "command": [
+                            "sh",
+                            "-ec",
+                            (
+                                "if [ -f /var/lib/rabbitmq/.erlang.cookie ]; then "
+                                "chmod 600 /var/lib/rabbitmq/.erlang.cookie; fi"
+                            ),
+                        ],
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "allowPrivilegeEscalation": False,
+                            "capabilities": {"drop": ["ALL"]},
+                        },
+                        "resources": {
+                            "requests": {"cpu": "10m", "memory": "16Mi"},
+                            "limits": {"cpu": "100m", "memory": "32Mi"},
+                        },
+                        "volumeMounts": [
+                            copy.deepcopy(m)
+                            for m in rabbit["volumeMounts"]
+                            if m["mountPath"] == "/var/lib/rabbitmq"
+                        ],
+                    }
+                )
             (storage if kind == "StatefulSet" else apps).append(row)
     require({identity(p) for p in pvcs} == claims, "A source PVC is missing")
     return {

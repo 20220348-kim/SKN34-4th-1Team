@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -434,6 +435,83 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(
             next(e["value"] for e in env if e["name"] == "LLMOPS_LIVE_ENABLED"), "false"
         )
+
+    def test_manifest_export_accepts_published_migration_repository_but_not_local_alias(
+        self,
+    ):
+        config = manifest_configuration()
+        sources = [i["source"] for i in handoff.manifest_inventory(config)["images"]]
+        image_map = {
+            source: "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/"
+            + source.removeprefix("docker.io/")
+            for source in sources
+        }
+        out = handoff.manifest_destination(config, image_map)
+        for filename in ("30-data-stopped.json", "50-workloads-stopped.json"):
+            for workload in out[filename]["items"]:
+                pod = workload["spec"]["template"]["spec"]
+                for container in pod["containers"] + pod.get("initContainers", []):
+                    self.assertIn(container["image"], image_map.values())
+        for prefix in ("", "docker.io/", "index.docker.io/", "registry-1.docker.io/"):
+            with (
+                self.subTest(prefix=prefix),
+                self.assertRaisesRegex(
+                    handoff.snapshot.SnapshotError, "pullable registry"
+                ),
+            ):
+                handoff.manifest_destination(
+                    config,
+                    {
+                        source: prefix + source.removeprefix("docker.io/")
+                        for source in sources
+                    },
+                )
+
+    @unittest.skipIf(os.name == "nt", "Linux container cookie permissions")
+    def test_manifest_export_repairs_restored_rabbit_cookie_without_root_or_new_image(
+        self,
+    ):
+        config = manifest_configuration()
+        store = config["resources"][1]
+        store["metadata"]["name"] = "rabbitmq"
+        store["spec"].pop("volumeClaimTemplates")
+        pod = store["spec"]["template"]["spec"]
+        pod["securityContext"] = {"runAsUser": 999, "runAsGroup": 999, "fsGroup": 999}
+        pod["volumes"] = [
+            {
+                "name": "data",
+                "persistentVolumeClaim": {"claimName": "data-core-mysql-0"},
+            }
+        ]
+        pod["containers"][0].update(
+            name="rabbitmq",
+            volumeMounts=[{"name": "data", "mountPath": "/var/lib/rabbitmq"}],
+        )
+        original = copy.deepcopy(config)
+        out = handoff.manifest_destination(config, published_images(config))
+        self.assertEqual(config, original)
+        target = out["30-data-stopped.json"]["items"][0]["spec"]["template"]["spec"]
+        self.assertEqual(target["securityContext"], pod["securityContext"])
+        self.assertEqual(target["initContainers"][0]["name"], "restored")
+        repair = target["initContainers"][-1]
+        self.assertEqual(repair["image"], target["containers"][0]["image"])
+        self.assertEqual(repair["volumeMounts"], pod["containers"][0]["volumeMounts"])
+        self.assertEqual(repair["securityContext"]["runAsNonRoot"], True)
+        self.assertEqual(repair["securityContext"]["capabilities"], {"drop": ["ALL"]})
+        self.assertNotIn("env", repair)
+        with tempfile.TemporaryDirectory() as temp:
+            cookie = Path(temp) / ".erlang.cookie"
+            cookie.write_text("existing-cookie")
+            cookie.chmod(0o660)  # EBS fsGroup adds group access during mounting.
+            command = [
+                part.replace("/var/lib/rabbitmq", temp) for part in repair["command"]
+            ]
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual(cookie.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(cookie.read_text(), "existing-cookie")
+            cookie.unlink()
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertFalse(cookie.exists())
 
     def test_manifest_export_rejects_missing_init_image_and_unsafe_placement(self):
         config = manifest_configuration()

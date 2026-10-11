@@ -19,10 +19,11 @@ http {
         "${GOVBIZ_PROXY_SECRET}" 1;
     }
     map $uri $govbiz_upstream {
-        default core-service:8080;
-        ~^/api/v1/ops(?:/|$) ops-service:8000;
+        default core-service.govbiz-msa.svc.cluster.local:8080;
+        ~^/api/v1/ops(?:/|$) ops-service.govbiz-msa.svc.cluster.local:8000;
     }
-    # Re-resolve stable Service names after Service recreation; no fixed Pod IPs.
+    # Nginx's async resolver does not apply resolv.conf search domains. Use full
+    # Service DNS names and re-resolve after recreation; no fixed Pod IPs.
     resolver ${GOVBIZ_DNS_RESOLVER} valid=10s ipv6=off;
     server {
         listen 8080;
