@@ -101,7 +101,7 @@ class SupportProgramRepository(
         return true
     }
 
-    /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 완료를 기록합니다. */
+    /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 완료를 기록합니다. 이미 준비 완료면 revision을 올리지 않습니다. */
     @Transactional
     fun markIndexReadyIfPublishedSnapshotMatches(
         sourceCode: String,
@@ -120,7 +120,7 @@ class SupportProgramRepository(
         return updated
     }
 
-    /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 실패를 기록합니다. */
+    /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 실패를 기록합니다. 이미 준비 실패면 revision을 올리지 않습니다. */
     @Transactional
     fun markIndexNotReadyIfPublishedSnapshotMatches(
         sourceCode: String,
