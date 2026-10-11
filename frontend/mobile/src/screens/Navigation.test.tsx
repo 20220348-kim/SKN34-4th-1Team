@@ -23,6 +23,7 @@ import ReviewListRoute from '../../app/(tabs)/all/reviews'
 import NewReviewRoute from '../../app/(tabs)/all/reviews/new'
 import ReviewRoute from '../../app/(tabs)/all/reviews/[id]'
 import { programClient } from '../api/client'
+import { planUsageUseCase } from '../api/planUsage'
 import { browseRecruitments, browseProposals } from '../api/partners'
 import { LoginFlowProvider } from '../auth/loginFlow'
 import { AppEntryGate } from '../auth/AppEntryGate'
@@ -45,8 +46,8 @@ jest.mock('../auth/introductionStorage', () => ({ completeIntroduction: jest.fn(
 jest.mock('../api/partners', () => ({ ...jest.requireActual('../api/partners'), browseRecruitments: jest.fn(), browseProposals: jest.fn() }))
 jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: () => ({ settings: null, busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn() }) }))
 jest.mock('../api/applicationPreparation', () => ({ ...jest.requireActual('../api/applicationPreparation'), applicationPreparationUseCase: jest.fn() }))
-// 이용량 표시는 ChatScreen·AccountScreen 테스트가 확인합니다. 여기서는 응답을 보내지 않아 네트워크에 닿지 않습니다.
-jest.mock('../api/planUsage', () => ({ planUsageUseCase: () => ({ usage: () => new Promise(() => undefined) }) }))
+// 기본은 미응답으로 두고, 요금제·내 계정 연결 테스트에서만 확인된 이용량을 돌려줍니다. 실제 네트워크에는 닿지 않습니다.
+jest.mock('../api/planUsage', () => ({ planUsageUseCase: jest.fn() }))
 
 const preparationApi = { get: jest.fn(), replaceInputs: jest.fn() }
 const originalApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL
@@ -72,6 +73,7 @@ const routes = {
 }
 
 beforeEach(() => {
+  jest.mocked(planUsageUseCase).mockReset().mockImplementation(() => ({ usage: () => new Promise(() => undefined) }) as unknown as ReturnType<typeof planUsageUseCase>)
   preparationApi.get.mockReset().mockResolvedValue(documentPreparation)
   preparationApi.replaceInputs.mockReset()
   jest.mocked(applicationPreparationUseCase).mockReturnValue(preparationApi as unknown as ReturnType<typeof applicationPreparationUseCase>)
@@ -322,6 +324,39 @@ test('a signed-in public pricing link continues in the member menu without a pla
   expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
   expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
   expect(screen.queryByRole('button', { name: /체험|이용하기/ })).toBeNull()
+})
+
+test('member pricing reads the trial, opens the same account usage and refreshes after returning', async () => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const endsAt = '2026-12-22T21:00:00+09:00'
+  const trial = { plan: 'PLUS' as const, planSource: 'TRIAL' as const, planEndsAt: endsAt, items: [
+    { feature: 'AI_SEARCH' as const, period: 'PLAN' as const, limit: 500, used: 2, resetsAt: endsAt },
+  ] }
+  const read = jest.fn().mockResolvedValue(trial)
+  jest.mocked(planUsageUseCase).mockImplementation(() => ({ usage: read }) as unknown as ReturnType<typeof planUsageUseCase>)
+  const view = renderRouter(routes, { initialUrl: '/all/pricing' })
+  await screen.findByText('체험 중')
+  expect(screen.getByText('12월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')).toBeTruthy()
+  expect(planUsageUseCase).toHaveBeenCalledWith(memberAuth.session!.accessToken)
+  const pricingSignal = read.mock.calls[0][0] as AbortSignal
+  fireEvent.press(screen.getByRole('button', { name: '내 계정에서 이용량 보기' }))
+  await screen.findByText('플러스 체험')
+  expect(view.getPathname()).toBe('/all/account')
+  expect(screen.getByText('이번 기간 498회 남음')).toBeTruthy()
+  expect(screen.getByText('12월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')).toBeTruthy()
+  expect(pricingSignal.aborted).toBe(true)
+  const accountSignal = read.mock.calls.at(-1)![0] as AbortSignal
+  const previousReads = read.mock.calls.length
+  read.mockResolvedValue({ plan: 'FREE', items: [] })
+  await act(async () => router.back())
+  await waitFor(() => expect(view.getPathname()).toBe('/all/pricing'))
+  await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(previousReads))
+  await waitFor(() => expect(screen.queryByText('체험 중')).toBeNull())
+  expect(accountSignal.aborted).toBe(true)
+  // 갱신으로 무료가 되어도 이미 열어 두었던 플러스 탭을 강제로 바꾸지 않습니다.
+  expect(screen.getByRole('tab', { name: '플러스' }).props.accessibilityState.selected).toBe(true)
+  fireEvent.press(screen.getByRole('tab', { name: '무료' }))
+  expect(screen.getByText('이용 중')).toBeTruthy()
 })
 
 test('signing in from the guest collaboration tab retains its destination inside the member All stack', async () => {

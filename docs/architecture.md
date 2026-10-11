@@ -16,8 +16,16 @@
 `frontend/web`와 Expo React Native `frontend/mobile`은 `frontend/packages/shared`의 domain·유스케이스·DTO 검증을 가져옵니다.
 색·모서리 디자인 토큰(`design/tokens.ts`)도 shared 한 곳에 두고, 웹은 이 값으로 만든 Tailwind `@theme` 파일을, 모바일은 값을 그대로 씁니다.
 요금제 가격·혜택·출시 안내·FAQ는 shared `design/pricingContent.ts`에서 웹과 모바일이 함께 읽습니다.
-모바일은 `비로그인 요금제 탭 또는 메뉴 → PricingScreen → shared 표시 내용`으로 무료·플러스·프리미엄을 전환하며,
-표시만으로 HTTP 요청을 보내지 않습니다. 플러스 이용 버튼은 기존 `LoginFlowProvider`가 확인한 로그인 뒤 관심함으로 이동합니다.
+모바일은 `비로그인 요금제 탭 또는 메뉴 → PricingScreen → shared 표시 내용`으로 무료·플러스·프리미엄을 전환합니다.
+비로그인은 플러스를 먼저 보여 주고 개인 이용량을 조회하지 않습니다. 로그인 회원은
+`PricingRoute → usePlanUsage → shared PlanUsageUseCase → 모바일 Repository → apiRequest → GET /api/v1/plan-usage`
+로 읽고 shared `planUsageSchema`로 검증한 현재 플랜·체험 출처·종료일을 화면에 전달합니다.
+최초 응답은 현재 플랜을 선택하되 직접 고른 탭과 이후 갱신의 선택은 유지합니다. 계정이 바뀌면 선택을 초기화합니다.
+현재 카드와 비교 목록은 "이용 중"·"체험 중"으로 강조하고 종료일은 shared `planEndsText`를 사용합니다. 30일 상품 가격과 체험 종료일은 구분합니다.
+조회 중·실패·재시도를 표시하며 실패를 추천 플랜으로 대신하지 않습니다. 읽기 전용 이용량 바로가기는 기존 내 계정으로 이동합니다.
+`usePlanUsage`는 활성화·앱 전경 복귀·명시적 재조회와 가장 가까운 미래의 플랜/사용량 기간 종료에 다시 읽습니다.
+요금제·내 계정은 화면 포커스로 활성화를 제어하며 비활성화·백그라운드·계정 변경·언마운트 시 요청과 타이머를 취소합니다.
+긴 타이머는 나누어 예약하고 같은 종료 시각의 자동 조회는 반복하지 않습니다. 기기 시각으로 플랜을 변경하지 않고 서버 응답을 따릅니다.
 비로그인 `/pricing`과 로그인 후 메뉴 안의 `/all/pricing`은 같은 화면을 사용하고 결제·구독 API는 추가하지 않습니다.
 공고 호출은 `웹/앱 화면 → 공통 유스케이스 → 플랫폼 Repository → 공통 공고 HTTP 클라이언트 → Core API`
 로 이어집니다. 공통 클라이언트에는 공개 API 주소와 fetch만 주입하며 Vite/Expo 환경변수·브라우저 저장소·React를 참조하지 않습니다.

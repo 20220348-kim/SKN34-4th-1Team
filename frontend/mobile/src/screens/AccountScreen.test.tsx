@@ -221,6 +221,26 @@ test('account usage that cannot be read offers a retry instead of a guessed coun
   expect(apiRequest).toHaveBeenCalledTimes(2)
 })
 
+test('account entry keeps the pass end date across a focus recheck and labels the previous usage', async () => {
+  signIn()
+  const endsAt = '2026-10-31T15:30:00+09:00'
+  const pass = { plan: 'PLUS', planSource: 'OPERATOR', planEndsAt: endsAt, items: [
+    { feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 20, resetsAt: endsAt },
+  ] }
+  jest.mocked(apiRequest).mockResolvedValueOnce(pass)
+  const view = render(<AccountScreen onCompany={jest.fn()} />)
+  await view.findByText('10월 31일 15:30까지 이용할 수 있어요.')
+  view.rerender(<AccountScreen onCompany={jest.fn()} usageEnabled={false} />)
+  let finish!: (value: unknown) => void
+  jest.mocked(apiRequest).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+  view.rerender(<AccountScreen onCompany={jest.fn()} usageEnabled />)
+  expect(view.getByText('이용 상태를 다시 확인하고 있어요. 아래는 이전에 확인한 정보예요.')).toBeTruthy()
+  await act(async () => finish({ ...pass, items: [{ ...pass.items[0]!, used: 21 }] }))
+  expect(view.getByText('이번 기간 479회 남음')).toBeTruthy()
+  expect(view.getByText('10월 31일 15:30까지 이용할 수 있어요.')).toBeTruthy()
+  expect(view.queryByText('이용 상태를 다시 확인하고 있어요. 아래는 이전에 확인한 정보예요.')).toBeNull()
+})
+
 test('signup rejects a password with Korean characters before sending it', async () => {
   const view = await verifyEmail()
   const password = '비밀번호1234'
