@@ -1,6 +1,5 @@
-"""Exercise release rejection, rollout failure boundaries and workflow/IAM wiring offline."""
+"""Exercise build gates, retired rollout rejection and workflow/IAM wiring offline."""
 
-import copy
 import importlib.util
 import io
 import json
@@ -9,7 +8,6 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
@@ -54,50 +52,6 @@ def receipt():
             name: f"123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/govbiz-demo/{name}@sha256:"
             + "b" * 64
             for name in release.COMPONENTS
-        },
-    }
-
-
-def deployment(name, mapping):
-    return {
-        "metadata": {"name": name},
-        "spec": {
-            "replicas": 1,
-            "template": {
-                "metadata": {
-                    "labels": {
-                        "app.kubernetes.io/name": name,
-                        "app.kubernetes.io/instance": name,
-                    }
-                },
-                "spec": {
-                    "nodeSelector": {"govbiz.io/workload-pool": "application"},
-                    "containers": [
-                        {
-                            "name": container,
-                            "image": "old@sha256:" + "c" * 64,
-                            "env": [
-                                {
-                                    "name": "DB_PASSWORD",
-                                    "valueFrom": {
-                                        "secretKeyRef": {
-                                            "name": "ops-runtime",
-                                            "key": "DB_PASSWORD",
-                                        }
-                                    },
-                                }
-                            ],
-                            "ports": [{"containerPort": 8000}],
-                            "readinessProbe": {
-                                "httpGet": {"path": "/health", "port": 8000}
-                            },
-                            "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
-                        }
-                        for container in mapping
-                    ],
-                    "volumes": [{"name": "tmp", "emptyDir": {}}],
-                },
-            },
         },
     }
 
@@ -183,53 +137,14 @@ class EksReleaseTests(unittest.TestCase):
             ):
                 release.digest("govbiz-demo/core-service", "git-" + SHA)
 
-    def test_rollout_requires_current_ci_and_matching_receipt_before_mutation(self):
-        with tempfile.TemporaryDirectory() as temp:
-            file = Path(temp) / "release.json"
-            file.write_text(json.dumps(receipt()))
-            with (
-                patch.object(release, "check") as check,
-                patch.dict("sys.modules", {"deploy": deploy}),
-                patch.object(deploy, "deploy") as apply,
-            ):
-                release.rollout(SHA, file)
-                check.assert_called_once_with(SHA)
-                apply.assert_called_once_with(receipt())
-                apply.reset_mock()
-                with self.assertRaisesRegex(ValueError, "does not match"):
-                    release.rollout("c" * 40, file)
-                apply.assert_not_called()
-                check.side_effect = ValueError("CI rerun pending")
-                with self.assertRaisesRegex(ValueError, "CI rerun pending"):
-                    release.rollout(SHA, file)
-                apply.assert_not_called()
-
-    def test_rollout_failures_are_not_reported_as_success(self):
-        with tempfile.TemporaryDirectory() as temp:
-            file = Path(temp) / "release.json"
-            file.write_text(json.dumps(receipt()))
-            with (
-                patch.object(release, "check"),
-                patch.dict("sys.modules", {"deploy": deploy}),
-                patch.object(
-                    deploy, "deploy", side_effect=ValueError("migration failed")
-                ),
-                self.assertRaisesRegex(ValueError, "migration failed"),
-            ):
-                release.rollout(SHA, file)
-
-    def test_codebuild_uses_actions_token_for_ci_and_preserves_failure(self):
-        with (
-            patch.dict(os.environ, {"GH_TOKEN": "test-only"}),
-            patch.object(deploy, "current") as current,
-            patch.object(deploy.gate, "ci_blocked_reason", return_value=None) as ci,
-        ):
-            deploy.check_ci(SHA)
-            self.assertIs(ci.call_args.args[2], deploy.gate.api)
-            current.assert_called_once_with(SHA)
-            ci.return_value = "ci_jobs_not_successful_or_incomplete:ci.yml"
-            with self.assertRaisesRegex(ValueError, "CI changed"):
-                deploy.check_ci(SHA)
+    def test_legacy_rollout_is_disabled_before_any_cluster_or_ci_access(self):
+        with patch.object(release, "check") as check, patch.object(release, "run") as run:
+            with self.assertRaisesRegex(ValueError, "Direct rollout is disabled"):
+                release.rollout(SHA, Path("unused"))
+            with self.assertRaisesRegex(ValueError, "Direct EKS deployment is disabled"):
+                deploy.deploy(receipt())
+            check.assert_not_called()
+            run.assert_not_called()
 
     def test_receipt_rejects_other_account_registry_tag_and_missing_runner(self):
         deploy.validate(receipt(), ENV)
@@ -245,157 +160,6 @@ class EksReleaseTests(unittest.TestCase):
             mutate(record)
             with self.assertRaises(ValueError):
                 deploy.validate(record, ENV)
-
-    def test_image_patch_keeps_env_data_and_init_settings_out_of_mutation(self):
-        obj = deployment(
-            "ops-service", {"ops-service": "ops-service", "ops-sync": "ops-service"}
-        )
-        original = copy.deepcopy(obj)
-        change = deploy.image_patch(
-            obj, {"ops-service": "ops-service", "ops-sync": "ops-service"}, receipt()
-        )
-        self.assertEqual(obj, original)
-        self.assertEqual(set(change["spec"]["template"]["spec"]), {"containers"})
-        self.assertEqual(
-            {c["name"] for c in change["spec"]["template"]["spec"]["containers"]},
-            {"ops-service", "ops-sync"},
-        )
-        self.assertNotIn("replicas", change["spec"])
-        with self.assertRaisesRegex(ValueError, "containers"):
-            deploy.image_patch(obj, {"unexpected": "ops-service"}, receipt())
-
-    def test_migration_uses_new_image_secret_refs_and_no_service_selector(self):
-        obj = deployment(
-            "ops-service", {"ops-service": "ops-service", "ops-sync": "ops-service"}
-        )
-        job = deploy.migration_job(obj, receipt()["images"]["ops-service"], SHA)
-        pod = job["spec"]["template"]["spec"]
-        self.assertEqual(len(pod["containers"]), 1)
-        container = pod["containers"][0]
-        self.assertEqual(container["image"], receipt()["images"]["ops-service"])
-        self.assertIn("migrate_deployment", container["command"])
-        self.assertNotIn("ports", container)
-        self.assertNotIn("readinessProbe", container)
-        self.assertIn("valueFrom", container["env"][0])
-        self.assertNotIn(
-            "app.kubernetes.io/instance", job["spec"]["template"]["metadata"]["labels"]
-        )
-        self.assertFalse(pod["automountServiceAccountToken"])
-        self.assertEqual(job["spec"]["backoffLimit"], 0)
-        obj["spec"]["template"]["spec"]["volumes"][0] = {
-            "name": "tmp",
-            "persistentVolumeClaim": {"claimName": "data"},
-        }
-        with self.assertRaisesRegex(ValueError, "PVC"):
-            deploy.migration_job(obj, receipt()["images"]["ops-service"], SHA)
-
-    def simulation(
-        self,
-        *,
-        failure=None,
-        busy=False,
-        changed=True,
-        completed=False,
-        unfinished=False,
-    ):
-        objects = {
-            name: deployment(name, mapping) for _, name, mapping in deploy.TARGETS
-        }
-        if completed:
-            for _, name, mapping in deploy.TARGETS:
-                objects[name]["spec"]["template"] = deploy.image_patch(
-                    objects[name], mapping, receipt()
-                )["spec"]["template"]
-            objects["ops-service"]["metadata"]["annotations"] = {
-                "govbiz.io/release-complete": SHA
-            }
-        if unfinished:
-            objects["ops-service"]["metadata"]["annotations"] = {
-                "govbiz.io/release-in-progress": "d" * 40
-            }
-        calls = []
-
-        def kube(ns, *args, payload=None):
-            calls.append((ns, args, payload))
-            if args[:2] == ("get", "deployment"):
-                return json.dumps(objects[args[2]])
-            if args[:2] == ("get", "job"):
-                return ""
-            if failure == "migration" and args[0] == "wait":
-                raise subprocess.CalledProcessError(1, ["kubectl"])
-            return ""
-
-        with (
-            patch.dict(os.environ, ENV),
-            patch.object(deploy, "current"),
-            patch.object(deploy, "check_ci"),
-            patch.object(
-                deploy,
-                "run",
-                return_value=SimpleNamespace(
-                    stdout=json.dumps({"Account": ENV["AWS_ACCOUNT_ID"]})
-                ),
-            ),
-            patch.object(deploy, "kube", side_effect=kube),
-            patch.object(
-                deploy,
-                "ops_command",
-                return_value=json.dumps(
-                    {"changed": changed, "version": 3, "busy": busy}
-                ),
-            ) as ops,
-        ):
-            try:
-                deploy.deploy(receipt())
-            except (ValueError, subprocess.CalledProcessError) as error:
-                return calls, ops.call_args_list, error
-            return calls, ops.call_args_list, None
-
-    def test_active_evaluations_prevent_scaling_and_migration(self):
-        calls, ops, error = self.simulation(busy=True)
-        self.assertIn("Active evaluations", str(error))
-        self.assertEqual(len(ops), 1)
-        self.assertFalse(
-            any(args[0] in {"scale", "patch", "create"} for _, args, _ in calls)
-        )
-
-    def test_failed_migration_cannot_replace_images_or_resume_admission(self):
-        calls, ops, error = self.simulation(failure="migration")
-        self.assertIsInstance(error, subprocess.CalledProcessError)
-        self.assertEqual(len(ops), 1)
-        self.assertFalse(
-            any(
-                "--type=strategic" in args or "--replicas=1" in args
-                for _, args, _ in calls
-            )
-        )
-
-    def test_success_waits_for_all_rollouts_before_restoring_own_pause(self):
-        calls, ops, error = self.simulation()
-        self.assertIsNone(error)
-        self.assertEqual(len(ops), 2)
-        self.assertIn("PAUSE_VERSION=3", ops[-1].args[0])
-        self.assertEqual(sum("--type=strategic" in args for _, args, _ in calls), 6)
-        last_patch = json.loads(calls[-1][1][-1])
-        self.assertEqual(
-            last_patch["metadata"]["annotations"]["govbiz.io/release-complete"], SHA
-        )
-        calls, ops, error = self.simulation(changed=False)
-        self.assertIsNone(error)
-        self.assertEqual(len(ops), 1, "An operator's earlier pause must remain closed")
-
-    def test_completed_duplicate_does_not_pause_or_migrate_again(self):
-        calls, ops, error = self.simulation(completed=True)
-        self.assertIsNone(error)
-        self.assertEqual(ops, [])
-        self.assertFalse(
-            any(args[0] in {"create", "scale", "patch"} for _, args, _ in calls)
-        )
-
-    def test_incomplete_prior_release_requires_recovery_before_new_rollout(self):
-        _calls, ops, error = self.simulation(unfinished=True)
-        self.assertIn("prior release", str(error))
-        self.assertEqual(ops, [])
 
     def test_archive_uses_only_tracked_selected_inputs(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -456,7 +220,12 @@ class EksReleaseTests(unittest.TestCase):
             "codebuild-${{ vars.EKS_DEPLOY_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}",
         )
         commands = "\n".join(step.get("run", "") for step in backend["steps"])
-        self.assertIn("release.py rollout", commands)
+        self.assertNotIn("release.py rollout", commands)
+        self.assertIn("gitops.py publish", commands)
+        self.assertIn("gitops.py wait", commands)
+        self.assertLess(commands.index("gitops.py preflight"), commands.index("release.py publish"))
+        self.assertLess(commands.index("gitops.py publish"), commands.index("gitops.py wait"))
+        self.assertEqual(backend["permissions"]["contents"], "write")
         self.assertNotIn("release.py dispatch", commands)
         self.assertFalse(
             any(
@@ -554,7 +323,7 @@ class EksReleaseTests(unittest.TestCase):
                     {"secrets", "persistentvolumeclaims", "statefulsets"}
                     & set(rule["resources"])
                 )
-                self.assertNotIn("delete", rule["verbs"])
+                self.assertEqual(rule["verbs"], ["get"])
 
 
 class VercelPromotionTests(unittest.TestCase):

@@ -1200,6 +1200,8 @@ Kubernetes는 같은 이미지의 PreSync Job을 사용합니다.
 접수를 중지하고 진행 중인 평가가 없을 때 migration을 실행합니다. 모든 앱이 Healthy가 된 뒤
 `local_release resume` hook이 평가 연결을 확인하고 자기 접수 중지만 복구합니다.
 관리자의 기존 중지·이후 상태 변경은 보존하며, migration·배포 실패 시 접수를 자동 재개하지 않습니다.
+[EKS Argo 배포](../../infrastructure/eks/argo-cd.md)는 같은 보호 로직의 `argo_release` 명령과
+`govbiz-eks/*` 태그를 사용합니다. 기존 `local_release` 명령은 호환 진입점으로 유지합니다.
 
 ## Python을 호스트에서 실행
 

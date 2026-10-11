@@ -52,7 +52,7 @@ function label(x, y, value, max=360, fill=muted) {
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
 <title id="title">GovBiz AWS EKS 아키텍처 — Vercel 웹 · 모바일 · 업무 · LLMOps</title>
-<desc id="desc">2026-10-12 저장소 구성과 워크플로에 근거한 자동 배포 활성화 목표 구조. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. 모바일은 같은 Core API 계약을 사용하며 운영 기기 연결은 별도 검증한다. 시드니 EKS의 사설 EC2 워커 2대는 한 가용 영역에 있고 업무·평가·관측 namespace를 운영한다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 GitHub Actions와 CodeBuild 임시 실행기가 ECR 이미지를 발행하고 EKS를 갱신한 뒤 Vercel 웹을 전환한다. 실제 활성화·검증 상태는 설명 문서에 기록한다.</desc>
+<desc id="desc">2026-10-12 저장소 구성과 워크플로에 근거한 자동 배포 활성화 목표 구조. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. 모바일은 같은 Core API 계약을 사용하며 운영 기기 연결은 별도 검증한다. 시드니 EKS의 사설 EC2 워커 2대는 한 가용 영역에 있고 업무·평가·관측 namespace를 운영한다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 활성화·검증 상태는 설명 문서에 기록한다.</desc>
 <defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
@@ -105,7 +105,7 @@ edge('M2590 368V411');
 card(60,640,2880,2350,'#FFFCF7','#D7BB8B',30);
 icon('aws',90,667,68,49);
 text(182,707,'AWS · Sydney / ap-southeast-2',{size:35,weight:700,max:1470});
-text(2900,707,'CI 검증 → ECR 이미지 → EKS · Vercel 자동 배포',{size:24,fill:'#98631F',anchor:'end',max:1210});
+text(2900,707,'CI → ECR · Helm → Git → Argo CD · EKS → Vercel',{size:24,fill:'#98631F',anchor:'end',max:1210});
 card(85,745,2830,1830,'#F5F9FD','#B9CFE2',26);
 icon('vpc',112,765,47);
 text(178,801,'Amazon VPC · 사설 서브넷의 백엔드',{size:29,weight:700,max:1500});
@@ -286,28 +286,34 @@ edge('M110 2396H98V2590H505V2620');
 label(320,2611,'PVC → EBS CSI',330);
 edge('M1437 2620V2590H2902V2396H2890');
 label(1720,2611,'ECR → EKS 노드 이미지 pull',460);
-text(95,2931,'인프라 관리: eksctl · CloudFormation · IAM / Pod Identity · EBS CSI · AWS Load Balancer Controller',{size:24,max:2760});
-text(95,2967,'노드 배치: 워커 2대가 한 AZ에 위치 · 고가용성 구성 아님 · 평가 실행은 승인·예산 정책으로 제어',{size:22,fill:muted,max:2760});
+card(90,2896,1110,78,'#FFFFFF','#DCC7A4',16);
+icon('helm',112,2913,42);
+text(173,2929,'Helm → AWS Load Balancer Controller 설치',{size:25,weight:600,max:1000});
+text(173,2960,'Controller가 Ingress 설정을 읽어 내부 ALB 구성',{size:21,fill:muted,max:1000});
+text(1230,2929,'인프라: eksctl · CloudFormation · IAM / Pod Identity · EBS CSI',{size:23,max:1670});
+text(1230,2966,'워커 2대는 한 AZ · 평가 실행은 승인·예산 정책으로 제어',{size:22,fill:muted,max:1670});
 
-card(60,3040,2880,430,'#FDF9F2','#E3D0AC',26);
+card(60,3040,2880,466,'#FDF9F2','#E3D0AC',26);
 text(90,3086,'02   main 변경 → CI 검증 → AWS / Vercel 자동 배포',{size:28,weight:700,fill:'#98631F'});
 text(2905,3086,'같은 최신 SHA 검증 · 백엔드 갱신 후 웹 전환',{size:22,fill:'#98631F',anchor:'end',max:1050});
 const delivery = [
-  [90,460,'githubactions','GitHub Actions',['개인 main · 필수 CI 5개','같은 최신 SHA 통과 확인','배포 순서·조건 조율']],
-  [630,545,'aws','CodeConnections',['CodeBuild 임시 실행기','VPC 내부 · IAM 역할 인증','서비스 빌드·EKS 사설 접속']],
-  [1255,470,'ecr','ECR 이미지 발행',['Core · Catalog · AI','Ops · evaluation-runner','git-SHA 고정 → digest']],
-  [1805,490,'kubernetes','EKS rollout',['평가 접수 중지·실행 확인','Ops migration → Ready','검증 후 접수 재개']],
-  [2375,530,'vercel','Vercel 웹 전환',['같은 SHA의 웹·shared','빌드 → 필수 CI 재확인','Ready 확인 후 promote']],
+  [90,410,'githubactions','GitHub Actions',['개인 main · 필수 CI 5개','같은 최신 SHA 통과 확인','배포 순서·조건 조율']],
+  [545,445,'aws','CodeBuild · ECR',['CodeConnections · IAM 인증','서비스 이미지 5개 빌드·발행','git-SHA 고정 → digest']],
+  [1035,445,'helm','Helm 배포 설정',['검증된 Chart · EKS 설정','이미지 digest로 YAML 생성','DB · PVC · Secret 제외']],
+  [1525,415,'github','Git 불변 태그',['govbiz-eks/v1.RUN.ATTEMPT','배포 YAML · CI 근거 보관','기존 태그 덮어쓰기 금지']],
+  [1985,465,'argocd','Argo CD · EKS',['PreSync: 접수 보호·migration','앱 동기화 → 평가 연결 검증','PostSync: 접수 상태 복구']],
+  [2495,410,'vercel','Vercel 웹 전환',['정확한 Argo revision 확인','같은 SHA의 웹·shared 빌드','CI 재확인 → promote']],
 ];
 for (const [x,w,brand,title,lines] of delivery) {
   card(x,3123,w,220,'#FFFFFF','#E1D3BC',20);
   icon(brand,x+22,3145,39);
-  text(x+80,3180,title,{size:27,weight:700,max:w-100});
-  lines.forEach((line,i)=>text(x+22,3226+i*38,line,{size:23,fill:i===2?muted:ink,max:w-44}));
+  text(x+80,3180,title,{size:25,weight:700,max:w-100});
+  lines.forEach((line,i)=>text(x+22,3226+i*38,line,{size:21,fill:i===2?muted:ink,max:w-44}));
 }
-for (const [a,b] of [[550,630],[1175,1255],[1725,1805],[2295,2375]]) edge(`M${a} 3230H${b}`,'deploy');
-text(90,3396,'배포 조건: 개인 main의 최신 SHA · 필수 CI 전체 통과 · EKS rollout 성공 후 Vercel 빌드·검증·전환',{size:24,fill:'#98631F',max:2800});
+for (let i=0;i<delivery.length-1;i++) edge(`M${delivery[i][0]+delivery[i][1]} 3230H${delivery[i+1][0]}`,'deploy');
+text(90,3396,'배포 조건: 개인 main의 최신 SHA · 필수 CI 통과 · 정확한 Git revision / hook / 앱 이미지 확인 후 Vercel 전환',{size:24,fill:'#98631F',max:2800});
 text(90,3438,'자동 교체 범위: 애플리케이션·평가 실행기·결과 서버 · DB / PVC / 네트워크 / Langfuse는 별도 관리',{size:23,fill:muted,max:2800});
+text(90,3479,'권한 분리: CodeBuild는 빌드·ECR·Git 발행과 EKS 상태 조회 · Argo CD가 Git 설정으로 운영 앱 갱신',{size:23,fill:muted,max:2800});
 
 parts.push('<path d="M70 3520H2930" stroke="#E4EBF0" stroke-width="2"/>');
 for(const [x,kind,name] of [[80,'runtime','요청 · 데이터 관계'],[790,'config','조건부 연결 · 별도 검증'],[1640,'deploy','CI 통과 후 자동 배포']]) {

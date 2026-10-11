@@ -63,7 +63,9 @@ Windows의 로컬 소스 빌드·기동·웹 연결 확인은 [WSL2 수동 설�
 | [개인 Ops 갱신·복구](ops-upgrade-runbook.md) | 진행 중 평가·백업 복원·migration·이미지 교체·실패 단계 기록과 접수 재개 조건 |
 | [Windows Kubernetes 수동 설치](windows-kubernetes-setup.md) | Ubuntu 연동, 도구 설치, GHCR 없는 소스 빌드·kind 배포, Windows 웹 연결, 재시작·문제 해결 |
 | [LLMOps Kubernetes 통합 구성도](assets/architecture/README-local.md) | 업무·평가·관측 namespace와 내부 Service·PVC, 로컬 화면 접근·자동 동기화 |
+| [Docker Compose 로컬 전체 구성도](assets/architecture/README-compose.md) | 호스트 웹·업무·LLMOps Compose, 프로젝트 사이 연결, named volume과 기본 통합 Ops의 차이 |
 | [로컬 Argo 자동 배포](../infrastructure/gitops/docs/local-auto-sync.md) | 필수 CI·6개 이미지 검증·불변 배포 태그, 평가 접수 보호, 기존 환경 최초 인계 |
+| [EKS Argo 자동 배포 전환](../infrastructure/eks/argo-cd.md) | CodeBuild 빌드·ECR 발행, Helm·Git 배포 설정, Argo 앱 관리권 인계·읽기 전용 검증 |
 | [Vercel·AWS EKS 전체 구성도](assets/architecture/README-aws-eks.md) | CloudFront·내부 ALB, 사설 워커·EBS·ECR·이전 백업 S3, 업무·LLMOps와 CI 통과 후 자동 배포 |
 | [통합 전 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | 2026-09-20 GovBiz-Team 두 저장소와 Mac portfolio 실행 기록 |
 | [기존 AWS 배포 구성](assets/architecture/README-aws-deployed.md) · [CodeBuild](deployment-codebuild.md) | Vercel·CloudFront·EC2 Compose·RDS와 기존 자동 배포 경로 |

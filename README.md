@@ -119,6 +119,7 @@ flowchart LR
 | 웹 배포 | Vercel |
 | 검증·이미지 관리 | GitHub Actions, GitHub Container Registry(GHCR), Amazon ECR |
 | AWS 배포 도구 | AWS CloudFormation, eksctl, AWS CodeConnections, AWS CodeBuild |
+| GitOps 배포 | Helm, Argo CD |
 | 모노레포·공통 계약 | pnpm workspace, 웹·앱 공통 TypeScript 계약 |
 
 버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
@@ -215,21 +216,30 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 ### 5.2 전체 구성도
 
-로컬은 **Kubernetes(kind)**에서 개발·검증하고, 운영은 **Vercel·AWS EKS**에서 서비스를 제공합니다.
-두 환경 모두 업무·평가·관측을 다음 세 namespace로 구분합니다.
+로컬은 **Docker Compose** 또는 **Kubernetes(kind)**에서 개발·검증하고, 운영은 **Vercel·AWS EKS**에서 서비스를 제공합니다.
+각 구성의 실행 경계·데이터 저장·화면 접근 방식을 아래에 구분했습니다.
 
-| namespace | 배치 구성 |
+<a id="521-docker-compose-로컬-전체-구성도"></a>
+
+<img src="docs/assets/readme/architecture-compose-caption.svg" alt="5.2.1 Docker Compose 로컬 전체 구성도 — 호스트의 React/Vite 웹에 업무 Compose와 별도 LLMOps Compose를 연결한 전체 평가 실행 경로입니다." width="820">
+
+![GovBiz Docker Compose 로컬 전체 구성도](docs/assets/architecture/govbiz-compose-architecture.png?v=127a77d72a67)
+
+[이미지 크게 보기](docs/assets/architecture/govbiz-compose-architecture.png?v=127a77d72a67) · [SVG 원본](docs/assets/architecture/govbiz-compose-architecture.svg?v=8b508bff3504)
+
+| 구분 | Docker Compose 구성 |
 |---|---|
-| **`govbiz-msa` — 업무** | Core·Catalog·AI·Ops API, Ops와 같은 Pod의 `ops-sync`, 업무용 DB·검색·캐시·메시지 브로커 |
-| **`govbiz-evaluation` — 평가** | Prefect·평가 실행기·`ops-artifacts`, Prefect 이력·평가 결과 PVC |
-| **`govbiz-observability` — 관측** | Langfuse Web·Worker와 전용 PostgreSQL·ClickHouse·Redis·MinIO |
+| **웹·모바일 접근** | 호스트 Vite(`5173`)가 Core(`8080`)·LLMOps Ops(`18001`)의 공개 포트로 프록시합니다. React Native·Expo 앱은 기기에서 접근 가능한 Core API와 Bearer 인증을 사용합니다. |
+| **서비스·데이터** | 업무·LLMOps를 별도 Compose 프로젝트로 실행합니다. 프로젝트 안에서는 서비스 이름으로 통신하고, DB·검색·큐·평가 결과는 named volume에 보존합니다. |
+| **평가·관측** | Prefect·평가 실행기·독립 `ops-sync`가 실행과 결과를 관리합니다. 기본 결과 조회는 공유 볼륨을 사용하며 `ops-artifacts` HTTP 방식은 선택 overlay입니다. Prefect(`14200`)·Langfuse(`13000`)는 로컬 공개 포트로 접근합니다. |
+| **개발 반영** | 필요한 이미지를 빌드하고 Compose로 컨테이너를 갱신합니다. 웹은 Vite HMR, 앱은 Expo Fast Refresh를 사용합니다. 프로젝트 사이의 Core 인증·Langfuse 추적은 호스트 연결 주소를 설정합니다. |
+| **기본 통합 실행과의 구분** | 루트 `compose.yaml`은 웹·업무·Ops(`8001`)의 기본 통합 경로입니다. 그림의 LLMOps 전용 Ops(`18001`)는 별도 DB·결과 볼륨을 사용하므로 같은 실행 이력으로 취급하지 않습니다. |
 
-서비스는 **ClusterIP·내부 DNS**로 통신하고, DB·평가 결과·관측 데이터는 **PVC**에 보존합니다.
-Ops가 평가를 접수하면 Prefect와 실행기가 처리하고, `ops-sync`가 상태·결과를 반영해 관리자가 검토합니다.
+[Compose 구성·실행 경로 상세](docs/assets/architecture/README-compose.md) · [루트 통합 개발 안내](docs/ops-monorepo-migration.md) · [LLMOps Compose 실행](infrastructure/llmops/README.md#compose-시작)
 
-#### 5.2.1 로컬 전체 구성도
+<a id="522-kubernetes-로컬-전체-구성도"></a>
 
-개발 PC의 kind 클러스터에 업무 서비스와 LLMOps를 함께 실행합니다.
+<img src="docs/assets/readme/architecture-kubernetes-caption.svg" alt="5.2.2 Kubernetes 로컬 전체 구성도 — 개발 PC의 kind 클러스터에 업무 서비스와 LLMOps를 함께 실행합니다. 업무(govbiz-msa)·평가(govbiz-evaluation)·관측(govbiz-observability) namespace로 구분하고, 서비스는 ClusterIP·내부 DNS로 통신하며 데이터는 PVC에 보존합니다." width="820">
 
 ![GovBiz 로컬 전체 구성도 — kind 기반 업무·평가·관측](docs/assets/architecture/govbiz-local-architecture.png?v=73d524f283f6)
 
@@ -243,21 +253,21 @@ Ops가 평가를 접수하면 Prefect와 실행기가 처리하고, `ops-sync`�
 
 [로컬 배치·저장소·접근 방식 상세](docs/assets/architecture/README-local.md) · [자동 배포 설정·최초 전환](infrastructure/gitops/docs/local-auto-sync.md)
 
-#### 5.2.2 운영 전체 구성도
+<a id="523-운영-전체-구성도"></a>
 
-웹은 Vercel, 백엔드·LLMOps는 AWS EKS에 배치합니다.
-아래는 **main의 CI 통과 후 자동 배포가 적용되는 구조**입니다.
+<img src="docs/assets/readme/architecture-production-caption.svg" alt="5.2.3 운영 전체 구성도 — 웹은 Vercel, 백엔드·LLMOps는 AWS EKS에 배치합니다. 아래는 main의 CI 통과 후 자동 배포가 적용되는 구조입니다." width="820">
 
-![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=74bf26a75576)
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=be244c2d5ed5)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=74bf26a75576) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=68d48de0ee6c)
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=be244c2d5ed5) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=1ffd1dac1d04)
 
 | 구분 | 운영 구성 |
 |---|---|
 | **웹·API 접근** | Vercel 웹의 API 요청은 CloudFront VPC origin → 내부 ALB → EKS Nginx를 거쳐 Core·Ops로 분기합니다. 모바일은 운영 HTTPS 주소로 같은 Core API를 호출합니다. |
 | **서비스 실행** | 사설 EC2 워커 2대의 EKS에 업무·평가·관측 namespace를 배치합니다. 현재 노드 배치는 단일 AZ입니다. |
 | **데이터 보존** | MySQL·검색·큐·평가·관측 데이터는 EBS gp3 PVC에 보존합니다. S3는 암호화한 이전 백업을 보관합니다. |
-| **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → EKS 갱신 → Vercel 웹 전환 순서로 진행합니다. |
+| **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → Helm 배포 YAML·불변 Git 태그 발행 → Argo CD의 EKS 동기화 → Vercel 웹 전환 순서입니다. |
+| **배포 도구** | Helm은 Chart·EKS 설정·이미지 digest로 YAML을 만듭니다. Argo CD가 평가 접수 보호·migration·앱 교체·연결 검증을 수행하고, CodeBuild는 결과를 조회합니다. 최초 운영 인계·활성화 상태는 아래 검증 기록에서 구분합니다. |
 | **관리·관측** | 관리자 Ops는 같은 React 웹에서 이용합니다. Prefect·Langfuse UI는 EKS 권한을 가진 사용자가 port-forward로 접근합니다. |
 
 [운영 구성·적용 및 검증 기록](docs/assets/architecture/README-aws-eks.md) · [자동 배포 상세](infrastructure/eks/continuous-deployment.md) · [서비스 호출 상세](docs/architecture.md)

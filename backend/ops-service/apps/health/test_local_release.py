@@ -9,23 +9,25 @@ from django.test import SimpleTestCase, TestCase
 
 from apps.evaluations.admission import change_admission, status
 from apps.evaluations.models import EvaluationAdmissionChange, EvaluationRun
-from apps.health.management.commands import local_release as release
+from apps.health.management.commands import argo_release as release
 
 TAG = "govbiz-local/v1.100.1"
 
 
 class LocalReleaseUnitTests(SimpleTestCase):
+    tag = TAG
+
     def test_failed_runtime_check_prevents_postsync_resume(self):
         with (
             patch.object(release, "call_command", side_effect=CommandError("runtime failed")),
             patch.object(release, "resume") as resume,
             self.assertRaisesRegex(CommandError, "runtime failed"),
         ):
-            release.Command().handle(phase="resume", release=TAG)
+            release.Command().handle(phase="resume", release=self.tag)
         resume.assert_not_called()
 
     def test_invalid_release_never_touches_database(self):
-        for value in ("main", "govbiz-local/v1.0.1", "govbiz-local/v1.100.1;env"):
+        for value in ("main", "govbiz-local/v1.0.1", "govbiz-eks/v1.0.1", self.tag + ";env"):
             with self.subTest(value=value), self.assertRaises(CommandError):
                 release.prepare(value)
 
@@ -53,7 +55,7 @@ class LocalReleaseUnitTests(SimpleTestCase):
             changes.return_value.first.return_value = pause
             runs.return_value.exists.return_value = True
             with self.assertRaisesRegex(CommandError, "Active evaluations"):
-                release.prepare(TAG)
+                release.prepare(self.tag)
             runs.assert_called_once_with(status__in=release.ACTIVE)
             migration.assert_not_called()
         self.assertEqual(set(release.ACTIVE), {"REQUESTED", "QUEUED", "RUNNING", "CANCELLING"})
@@ -61,6 +63,9 @@ class LocalReleaseUnitTests(SimpleTestCase):
 
 class LocalReleaseDatabaseTests(TestCase):
     """CI runs these admission/audit transactions against MySQL 8.4."""
+
+    tag = TAG
+    next_tag = "govbiz-local/v1.101.1"
 
     def operator_change(self, accepting):
         return change_admission(
@@ -73,23 +78,23 @@ class LocalReleaseDatabaseTests(TestCase):
 
     @patch.object(release, "call_command")
     def test_open_admission_is_restored_and_postsync_replay_preserves_later_pause(self, migration):
-        release.prepare(TAG)
+        release.prepare(self.tag)
         self.assertFalse(status()["accepting"])
         migration.assert_called_once_with("migrate_deployment")
-        release.resume(TAG)
+        release.resume(self.tag)
         self.assertTrue(status()["accepting"])
         self.operator_change(False)
-        release.resume(TAG)
+        release.resume(self.tag)
         self.assertFalse(status()["accepting"])
         self.assertEqual(EvaluationAdmissionChange.objects.count(), 3)
 
     @patch.object(release, "call_command")
     def test_manual_pause_stays_closed_across_multiple_releases(self, migration):
         self.operator_change(False)
-        release.prepare(TAG)
-        release.resume(TAG)
-        release.prepare("govbiz-local/v1.101.1")
-        release.resume("govbiz-local/v1.101.1")
+        release.prepare(self.tag)
+        release.resume(self.tag)
+        release.prepare(self.next_tag)
+        release.resume(self.next_tag)
         self.assertFalse(status()["accepting"])
 
     @patch.object(release, "call_command")
@@ -103,25 +108,43 @@ class LocalReleaseDatabaseTests(TestCase):
                 self.subTest(state=state),
                 self.assertRaisesRegex(CommandError, "Active evaluations"),
             ):
-                release.prepare(TAG)
+                release.prepare(self.tag)
             self.assertFalse(status()["accepting"])
         migration.assert_not_called()
         self.assertEqual(EvaluationAdmissionChange.objects.count(), 1)
         run.status = EvaluationRun.Status.COMPLETED
         run.save(update_fields=["status"])
-        release.prepare(TAG)
-        release.resume(TAG)
+        release.prepare(self.tag)
+        release.resume(self.tag)
         self.assertTrue(status()["accepting"])
 
     @patch.object(release, "call_command", side_effect=CommandError("migration failed"))
     def test_migration_failure_and_new_release_cannot_reopen_or_steal_pause(self, migration):
         with self.assertRaisesRegex(CommandError, "migration failed"):
-            release.prepare(TAG)
+            release.prepare(self.tag)
         self.assertFalse(status()["accepting"])
-        with self.assertRaisesRegex(CommandError, "Another local release"):
-            release.prepare("govbiz-local/v1.101.1")
+        with self.assertRaisesRegex(CommandError, "Another Argo release"):
+            release.prepare(self.next_tag)
         with self.assertRaisesRegex(CommandError, "No admission pause"):
-            release.resume("govbiz-local/v1.101.1")
+            release.resume(self.next_tag)
         self.operator_change(False)
         with self.assertRaisesRegex(CommandError, "Admission changed"):
-            release.resume(TAG)
+            release.resume(self.tag)
+
+
+class EksReleaseUnitTests(LocalReleaseUnitTests):
+    tag = "govbiz-eks/v1.100.1"
+
+
+class EksReleaseDatabaseTests(LocalReleaseDatabaseTests):
+    tag = "govbiz-eks/v1.100.1"
+    next_tag = "govbiz-eks/v1.101.1"
+
+    @patch.object(release, "call_command")
+    def test_eks_release_has_separate_audit_identity(self, migration):
+        release.prepare(self.tag)
+        self.assertEqual(EvaluationAdmissionChange.objects.get().actor, "eks-argo-release")
+        with self.assertRaisesRegex(CommandError, "Another Argo release"):
+            release.prepare(TAG)
+        release.resume(self.tag)
+        self.assertTrue(status()["accepting"])

@@ -183,7 +183,7 @@ def merge(base, override):
     return result
 
 
-def deployment_hooks(migration, tag):
+def deployment_hooks(migration, tag, command="local_release"):
     hooks = []
     for phase, hook in (("prepare", "PreSync"), ("resume", "PostSync")):
         job = copy.deepcopy(migration)
@@ -191,14 +191,14 @@ def deployment_hooks(migration, tag):
         job["metadata"]["annotations"]["argocd.argoproj.io/hook"] = hook
         job["spec"]["activeDeadlineSeconds"] = 600
         if phase == "resume":
-            # Evaluation ingress permits Ops. Without an instance label this is not an HTTP endpoint.
+            # Evaluation ingress permits Ops; omit instance labels to avoid API traffic.
             job["spec"]["template"]["metadata"]["labels"] = {
                 "app.kubernetes.io/name": "ops-service"
             }
         job["spec"]["template"]["spec"]["containers"][0]["command"] = [
             "python",
             "manage.py",
-            "local_release",
+            command,
             phase,
             "--release",
             tag,
@@ -278,7 +278,7 @@ def bundle(root, fork, sha, tag, receipts, helm="helm"):
             for name in ("prefect", RUNNER, "ops-artifacts")
         }
         runner_image = receipts[RUNNER]["repository"] + "@" + receipts[RUNNER]["digest"]
-        for name, value in evaluation.items():
+        for value in evaluation.values():
             value["replicas"] = 1
             value["storage"]["node"] = "govbiz-local-control-plane"
         evaluation[RUNNER]["image"] = runner_image
@@ -320,19 +320,19 @@ def bundle(root, fork, sha, tag, receipts, helm="helm"):
     return files
 
 
-def runtime_patches(runtime):
+def runtime_patches(runtime, workloads=WORKLOADS, *, preserve_placement=False):
     """Keep installed environment/Secret references and results PVC, never images."""
     deployments = [
         row
         for row in runtime["items"]
         if row.get("kind") == "Deployment"
-        and row.get("metadata", {}).get("name") in WORKLOADS
+        and row.get("metadata", {}).get("name") in workloads
     ]
     by_name = {row["metadata"]["name"]: row for row in deployments}
-    if len(deployments) != len(WORKLOADS) or set(by_name) != set(WORKLOADS):
-        raise ValueError("Export all seven installed application Deployments")
+    if len(deployments) != len(workloads) or set(by_name) != set(workloads):
+        raise ValueError("Export all installed application Deployments")
     patches = []
-    for name in WORKLOADS:
+    for name in workloads:
         row = by_name[name]
         namespace = (
             "govbiz-evaluation" if name in (RUNNER, "ops-artifacts") else "govbiz-msa"
@@ -382,6 +382,14 @@ def runtime_patches(runtime):
                         "op": "add",
                         "path": f"/spec/template/spec/containers/{index}/env",
                         "value": container.get("env", []),
+                    }
+                )
+            if preserve_placement:
+                ops.append(
+                    {
+                        "op": "add",
+                        "path": "/spec/template/spec/nodeSelector",
+                        "value": pod["nodeSelector"],
                     }
                 )
         else:
@@ -497,10 +505,12 @@ def application(fork, runtime):
     ]
 
 
-def publish_tag(root, fork, sha, tag, files, recheck):
+def publish_tag(root, fork, sha, tag, files, recheck, *, tag_prefix=TAG_PREFIX):
     """Create an immutable tag, never a deployment branch, PR or force push."""
     ref = "refs/tags/" + tag
-    if not re.fullmatch(r"govbiz-local/v1\.[1-9][0-9]*\.[1-9][0-9]*", tag):
+    if tag_prefix not in (TAG_PREFIX, "govbiz-eks/") or not re.fullmatch(
+        re.escape(tag_prefix) + r"v1\.[1-9][0-9]*\.[1-9][0-9]*", tag
+    ):
         raise ValueError("Invalid local release tag")
     existing = git_bytes(root, "ls-remote", "--refs", fork.url, ref).decode().strip()
     if existing:

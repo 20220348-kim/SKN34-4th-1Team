@@ -1,4 +1,4 @@
-# main 병합 후 EKS·Vercel 자동 배포
+# main 병합 후 Argo CD·EKS·Vercel 자동 배포
 
 대상은 **개인 저장소 `ilil1/SKN34-4th-1Team`의 `main`**이다. 개인 포크의
 기존 GHCR 발행·로컬 Argo 경로는 변경하지 않는다. 아래 구성은 코드로 준비한 것이며,
@@ -20,7 +20,8 @@ AWS 스택·GitHub environment·Vercel 프로젝트 설정과 최초 EKS 데이�
 후속 자동 배포는 **CodeConnections + CodeBuild 임시 GitHub Actions 실행기**로 전환한다.
 GitHub의 AWS OIDC·장기 AWS 키·계정 플랜 변경 없이 CodeBuild 서비스 역할로 AWS에 접근한다.
 이는 3차의 AWS 내부 CodeBuild 인증 방식을 EKS에 적용한 구성이다. GitHub Actions가 CI 완료와
-웹 배포를 조율하고, 이미지 빌드·EKS 배포 작업은 VPC 안의 CodeBuild에서 실행한다.
+웹 배포를 조율하고, CodeBuild는 VPC 안에서 이미지 빌드·ECR 발행·Git 배포 태그 발행과 상태 조회를 수행한다.
+EKS 앱 적용은 Argo CD가 담당한다. `release.py rollout`과 기존 직접 배포 실행은 차단한다.
 
 연결·스택 생성만으로 자동 배포가 완료되지는 않는다. 아래 최초 연결, 새 코드의 main 반영,
 해당 커밋의 필수 CI, 실제 자동 실행을 확인하기 전까지 `EKS_RELEASE_ENABLED=false`를 유지한다.
@@ -42,13 +43,16 @@ GitHub의 AWS OIDC·장기 AWS 키·계정 플랜 변경 없이 CodeBuild 서비
 
 ```mermaid
 flowchart LR
-    A[main 병합] --> B[5개 필수 CI 확인]
-    B --> C[CodeConnections가 CodeBuild 임시 실행기 기동]
-    C --> D[검증된 SHA 이미지 빌드·ECR 발행·EKS 접속]
-    D --> E[평가 접수 잠시 중지·실행 중 여부 확인]
-    E --> F[Ops migration·서비스 교체·Ready 확인]
-    F --> G[Vercel Production 빌드]
-    G --> H[동일 SHA CI 재확인 후 운영 주소 전환]
+    A[main · 동일 SHA 필수 CI] --> B[CodeConnections · CodeBuild]
+    B --> C[ECR 이미지 5개 · 고정 digest]
+    C --> D[Helm 렌더링 · CI/ECR 재확인]
+    D --> E[불변 Git 배포 태그]
+    E --> F[Argo CD 자동 동기화]
+    F --> G[PreSync 접수 중지 · 진행 평가 확인 · migration]
+    G --> H[EKS 앱 6개 갱신]
+    H --> I[PostSync 평가 연결 확인 · 접수 복구]
+    I --> J[정확한 Git revision · hook · 이미지 확인]
+    J --> K[Vercel 빌드 · CI 재확인 · promote]
 ```
 
 [`eks-release.yml`](../../.github/workflows/eks-release.yml)은 기존 CI 5개의 완료 이벤트를 받는다.
@@ -62,7 +66,9 @@ flowchart LR
   지정한 CodeBuild 프로젝트가 이 job 하나를 실행하고 종료한다. CI 대기 중에는 CodeBuild를 기동하지 않는다.
 - CodeConnections: 개인 저장소의 GitHub App 연결이다. AWS 콘솔에서 GitHub 설치를 승인해
   `Available` 상태로 만들어야 한다. 새 연결의 `Pending`은 승인 완료가 아니다.
-- CodeBuild: 기존 EKS private subnet에서 AWS 서비스 역할로 이미지 빌드와 배포를 수행한다.
+- CodeBuild: 기존 EKS private subnet에서 AWS 서비스 역할로 이미지를 빌드·발행한다.
+  클러스터에는 지정한 Application·Deployment의 조회 권한만 가진다.
+  `gitops.py preflight`는 기존 앱 교체 권한이 남아 있거나 앱이 정지된 경우 발행을 차단한다.
   Docker 빌드 때문에 privileged 모드를 사용하며 동시 실행은 1개, 실행 상한은 120분이다.
   상시 실행하는 EC2 GitHub runner나 두 번째 배포용 CodeBuild, S3 소스 ZIP은 만들지 않는다.
   GitHub runner를 위해 EKS API를 `0.0.0.0/0`에 열지 않는다.
@@ -73,7 +79,13 @@ flowchart LR
 - ECR: Core·Catalog·AI·Ops·evaluation-runner를 `git-<전체 SHA>` immutable 태그로 발행한다.
   같은 태그가 있으면 digest를 재사용하며, Kubernetes에는 태그가 아닌 digest를 전달한다.
   `git archive`로 추적된 지정 경로만 빌드해 로컬 `.env`·데이터를 제외한다.
-- CI 재확인: CodeBuild 내부에서도 GitHub Actions가 제공한 수명이 짧은 읽기 토큰으로
+- Git 배포 설정: `gitops.py publish`가 검증된 소스 SHA의 Helm Chart와 `gitops-values.yaml`을 렌더링해
+  `govbiz-eks/v1.RUN.ATTEMPT` 불변 태그를 발행한다. 기존 태그 덮어쓰기·배포 브랜치 갱신은 하지 않는다.
+  원본 SHA·ECR digest·CI run/attempt 근거를 보관하며 운영 환경변수 값은 태그에 넣지 않는다.
+- Argo CD: `govbiz-eks` Application이 태그를 추적한다. 자동 sync는 켜고 prune·selfHeal은 끈다.
+  초기 환경·Secret 참조·결과 PVC·노드 배치를 비공개 Application patch로 보존한다.
+  앱 이미지·실행 명령을 patch로 덮어쓰지 않으므로 이후 Git 변경이 적용된다.
+- CI 재확인: CodeBuild 내부에서도 GitHub Actions가 제공한 수명이 짧은 토큰으로
   동일 SHA·최신 main·필수 CI를 다시 확인한다. 토큰은 로그·이미지·AWS Secret으로 저장하지 않는다.
   CI 실패·재실행·누락·API 오류는 발행·배포를 중단한다.
 - 배포 대상: Core·Catalog·AI·Ops(ops-sync 포함), 평가 실행기, 보고서 서비스다. 보고서 서비스는
@@ -83,10 +95,13 @@ flowchart LR
   [`vercel.json`](../../frontend/web/vercel.json)의 `git.deploymentEnabled.main=false`는
   CI를 기다리지 않는 기본 Git 자동 배포와 중복 실행을 막는다. 다른 브랜치 Preview 설정은 유지한다.
 
-전체 workflow와 CodeBuild를 각각 직렬화하며 migration 중인 실행을 새 push로 취소하지 않는다.
-뒤에 대기 중인 오래된 커밋은 실행 시점의 main 확인에서 거절된다. 같은 SHA의 CI 완료 이벤트가
-여러 번 도착해도 ECR 이미지는 재사용하고, 완료 표시와 모든 image digest·Ready가 일치하는
-EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflow에서 같은 소스로 재빌드될 수 있다.
+전체 workflow와 CodeBuild를 각각 직렬화하며 새 push로 실행 중인 workflow를 취소하지 않는다.
+오래된 SHA는 이미지·태그 발행 및 Vercel 전환 전에 거절한다. 같은 SHA의 이미지는 재사용하지만,
+새 workflow 실행·attempt는 새 배포 태그와 hook 감사 이력을 만든다. 기존 태그의 성공을 새 배포 성공으로 사용하지 않는다.
+`gitops.py wait`는 정확한 Git revision의 Synced/Healthy, PreSync·PostSync 성공,
+6개 Deployment의 관측 generation·Ready·모든 컨테이너 이미지 및 자료 초기화 이미지를 확인한다.
+실패·시간 초과·main 변경 시 Vercel 전환을 차단한다. 이미 발행한 태그의 Argo 실행은
+workflow 종료만으로 취소되지 않으므로 실패 시 Argo operation과 Ops 접수 상태를 함께 확인한다.
 
 ## 최초 연결 순서
 
@@ -100,10 +115,10 @@ EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflo
    `GitHubConnectionArn`, `GitHubActorId`, `EnableWebhook`이다.
    최초에는 `EnableWebhook=false`로 ECR 5개·CodeBuild·로그·전용 IAM 역할·SG·EKS access entry만 준비한다.
    새 VPC·노드·DB·OIDC provider는 만들지 않는다. 기존 동명 ECR 저장소를 삭제해서 맞추지 않는다.
-4. 관리자 kubeconfig로 [`release-rbac.yaml`](release-rbac.yaml)을 새 EKS에 적용한다.
-   CodeBuild access entry의 `govbiz-eks-release` 그룹을 두 namespace의 배포 권한에 연결한다.
-   클러스터 관리자 역할이나 DB/PVC 삭제 권한은 부여하지 않는다. 단, Ops Pod exec와 migration
-   Job 생성은 애플리케이션 자격 증명으로 코드를 실행할 수 있으므로 전용 배포 역할로만 사용한다.
+4. [Argo CD 최초 인계](argo-cd.md)에 따라 고정 버전의 Argo CD와 AppProject·Application을 준비한다.
+   관리자 kubeconfig로 [`release-rbac.yaml`](release-rbac.yaml)을 적용해 CodeBuild 권한을
+   지정한 6개 Deployment와 `argocd/govbiz-eks` Application의 `get`만으로 축소한다.
+   기존 patch·scale·Pod exec·Job 생성 권한을 제거하고 실제 CodeBuild 역할로 거절 여부를 확인한다.
 5. 개인 GitHub 저장소 `ilil1/SKN34-4th-1Team`의 **Settings → Environments → `eks-production`**을 만들고
    deployment branch를 **`main`만** 허용한다. CodeBuild 프로젝트와 GitHub App도 이 저장소로 제한한다.
    main 보호 규칙의 필수 CI를 유지한다. 운영자 ID 필터를 통과하는 사용자만 배포를 시작한다.
@@ -122,7 +137,7 @@ EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflo
    새 workflow·배포 코드가 main에 병합되고 필수 CI가 모두 통과한 뒤에만
    repository variable `EKS_RELEASE_ENABLED=true`로 활성화한다.
 9. main에서 첫 workflow dispatch를 실행한다. CodeBuild job 기동 → 고정 digest ECR 발행 →
-   Ops migration·전체 rollout 성공 → Vercel Ready·promote를 확인해야 첫 자동 배포가 완료된다.
+   Helm 렌더링·Git 태그 발행 → Argo 동기화·두 hook·실제 이미지 검증 → Vercel Ready·promote까지 확인한다.
    이후 main 병합의 CI 완료 이벤트가 같은 경로를 실행한다. 오래된 SHA는 배포하지 않는다.
 
 `workflow_run`의 실행 주체가 허용한 GitHub ID와 다르면 CodeBuild가 시작되지 않을 수 있다.
@@ -210,29 +225,27 @@ Vercel 도메인 전환은 개인 사용자 조회가 필요한 CLI `promote` �
 
 ## 배포 실패와 데이터 보호
 
-- 시작 전에 6개 Deployment가 실행 중인지 확인한다. 운영자가 정지시킨 서비스를 자동으로 켜지 않는다.
-- 기존 Ops 접수 제어로 새 접수를 잠시 닫고 감사 이력을 남긴다. 접수·대기·실행·취소 중인 평가가
-  있으면 새로 닫은 접수를 복구하고 실패로 끝낸다. 실행을 취소하거나 예산을 환급하지 않는다.
-  평가 종료 후 workflow를 다시 실행한다. 별도 재시도 스케줄은 만들지 않는다.
-- 평가가 없으면 실행기와 Ops(동일 Pod의 sync 포함)를 멈춘다. 새 Ops 이미지의
-  `migrate_deployment`를 별도 Job에서 실행한 뒤 서비스별 이미지를 바꾸고 rollout을 기다린다.
-  Core·Catalog의 Flyway는 기존 기동 경로를 따른다. **일시적인 Ops 중단이 있는 단일 replica 시연 구성**이다.
-- 모든 rollout이 완료되면 이번 배포가 닫았던 접수만 같은 버전 조건으로 복구한다.
-  사람이 먼저 닫아 둔 접수는 열지 않는다. 중간에 사람이 변경한 접수 버전도 덮어쓰지 않는다.
-- migration·rollout이 실패하면 후속 이미지 교체와 Vercel 전환을 중단한다. 이미 적용된 DB migration을
-  되돌리거나 전체 서비스를 자동 rollback하지 않는다. 일부 서비스가 새 버전일 수 있다.
-  스키마·API 변경은 앞뒤 버전이 함께 동작할 수 있도록 설계해야 하며 파괴적 변경은 별도 승인 대상이다.
-- `ops-service` metadata의 `govbiz.io/release-in-progress`가 남으면 다음 자동 배포도 중단한다.
-  CodeBuild 로그의 접수 버전, migration Job 상태, 각 서비스 이미지와 Ready, 평가 실행 여부를 확인하고
-  필요한 서비스를 검토한 버전으로 복구한 뒤 접수 상태를 복구한다. 그 다음 관리자가 이 표시를 지우고 재실행한다.
-  표시만 지워서 실패 원인을 숨기지 않는다. 성공 시 `govbiz.io/release-complete`에 SHA를 남긴다.
-- GitHub/CodeBuild 시간 초과나 취소는 성공이 아니다. CodeBuild가 아직 동작 중일 수 있으므로
-  출력된 build ID의 실제 종료 상태를 확인한다. Vercel 빌드 실패 시 기존 운영 도메인은 유지된다.
+- 최초 인계는 기존 데이터·Secret·PVC·서비스 selector를 보존한다. 현재 무료 평가 프로필을 검사하며
+  유료·RAG·정기 실행을 임의로 활성화하지 않는다. DB·PVC·Secret은 Application 소유 대상이 아니다.
+- PreSync의 `manage.py argo_release prepare`가 접수를 중지하고 감사 이력을 커밋한다.
+  접수·대기·실행·취소 중 평가가 있으면 migration과 앱 교체를 막고 종료 후 재시도를 기다린다.
+- 평가가 모두 끝난 뒤 기존 MySQL 잠금 기반 `migrate_deployment`를 실행한다. 앱 갱신 전에
+  migration이 완료돼야 하며, 기존 앱과 공존할 수 있는 스키마 변경만 이 경로에 포함한다.
+  파괴적 migration·DB 역방향 rollback은 자동 실행하지 않는다.
+- Argo가 앱 갱신과 Healthy를 확인하면 PostSync가 새 자료·Prefect·보고서 연결을 검사한다.
+  이후 해당 태그가 만든 접수 중지 버전만 이전 상태로 복구한다. 운영자의 기존 중지와 이후 변경은 유지한다.
+- migration·동기화·평가 연결 검사가 실패하면 접수 중지를 유지하고 Vercel 전환을 막는다.
+  다른 태그가 실패한 태그의 접수 중지를 인수하지 않는다. 같은 태그를 재시도하거나,
+  원인을 복구한 운영자가 기존 접수 관리 명령으로 상태를 정리한 뒤 새 태그를 발행한다.
+- 자동 prune·selfHeal은 비활성이다. 리소스 삭제·설치된 기반 도구 업그레이드·데이터 이전은 별도 절차다.
 
 ## 검증 범위
 
-`test_eks_release.py`는 허용 저장소·브랜치·CI, 변경 도중 main 이동, ECR 명세, migration·배포 실패,
-기존 접수 중단 보존, 중복 이벤트, 이전 배포 실패 표시, 소스 archive, workflow와 IAM 연결을 무료로 검사한다.
+`test_eks_release.py`는 허용 저장소·브랜치·CI·ECR·소스 archive·workflow/IAM과 직접 배포 차단을 검사한다.
+`test_eks_gitops.py`는 실제 Helm·Kustomize 렌더링, 기존 env/PVC 보존, 잘못된 배포 대상·이미지 override 차단,
+정확한 Argo revision·hook·이미지·시간 초과 및 Vercel 차단 조건을 검사한다.
+Ops의 `test_local_release.py`는 local·EKS 두 태그에 대해 접수 보호·재시도·관리자 중지 보존을 검증한다.
+실제 MySQL 8.4 감사 이력·트랜잭션 검증은 Ops CI에서 실행한다.
 기존 Infra CI의 `test_*.py` 탐색에 포함되며, 공통 CI gate의 회귀 테스트는 기존 GovBiz CI에서도 수행한다.
 Infra CI는 `cfn-lint==1.46.0`으로 CloudFormation 타입·참조·IAM 구문도 오프라인 검사한다.
 CloudFormation 구문 검사·단위 테스트는 실제 AWS 역할 인수, ECR push, 사설망 접속, MySQL migration,

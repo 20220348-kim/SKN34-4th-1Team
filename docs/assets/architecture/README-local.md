@@ -1,5 +1,7 @@
 # GovBiz 로컬 시스템 아키텍처 — LLMOps Kubernetes 통합
 
+[Docker Compose 로컬 구성](README-compose.md) · [아키텍처 이미지 목록](README.md)
+
 **2026-10-12 기준, LLMOps Kubernetes 통합과 검증 태그 기반 자동 배포 구성**입니다.
 업무 서비스·평가 실행·관측 저장소를 같은 kind 클러스터 안에 배치하고 namespace로 구분했습니다.
 기존 그림의 Compose 평가 영역과 외부 HTTP 브리지를 Kubernetes Service·PVC로 교체했습니다.
