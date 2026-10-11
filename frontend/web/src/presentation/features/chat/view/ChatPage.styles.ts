@@ -81,6 +81,29 @@ export const chatPageStyles = {
     'border-[#b4ddc7] text-ink-muted hover:border-brand-primary hover:bg-[#eef8f2] hover:text-[#115b3c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
     'disabled:cursor-not-allowed disabled:opacity-50',
   ),
+  /** Gov 선택 공고 막대입니다. 첫 줄은 제목 · 원문 질문 남은 횟수 · 해제(✕), 둘째 줄은 작업 칩입니다. */
+  // 격자 칸과 첫 줄이 긴 제목 폭만큼 넓어지지 않도록 최소 폭을 0으로 둡니다. 그래야 제목이 줄고 남은 횟수·✕가 보입니다.
+  govProgramBar: 'grid grid-cols-[minmax(0,1fr)] gap-2 rounded-xl bg-brand-soft py-2 pr-1.5 pl-3',
+  govProgramHeader: 'flex min-w-0 items-center gap-3',
+  /** 제목이 길면 한 줄로 줄여 막대를 두 줄로 지킵니다. 전체 제목은 마우스를 올리면 보입니다. */
+  govProgramTitle: 'min-w-0 flex-1 truncate',
+  govProgramUsage: 'shrink-0 text-xs',
+  /** 고른 공고의 원문 질문 기본 질문 칩입니다(공고를 고른 때·근거 답변 뒤 이어 묻기). 누르면 바로 보내고 처리 중에는 흐리게 막습니다. */
+  govQuickQuestionButton: classes(
+    'cursor-pointer rounded-full border border-brand-line bg-white px-3 py-1 text-[0.78rem] font-semibold whitespace-nowrap text-brand-hover',
+    'hover:border-brand-primary hover:bg-[#eef8f2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+    'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-brand-line disabled:hover:bg-white',
+  ),
+  /** 선택 공고로 일을 시작하는 작업 칩(신청서 쓰기·중복 검토)입니다. 질문 칩과 달리 채운 초록입니다. */
+  govToolButton: classes(
+    'cursor-pointer rounded-full border border-brand-primary bg-brand-primary px-3 py-1 text-[0.78rem] font-semibold whitespace-nowrap text-white',
+    'hover:border-brand-hover hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+    'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-brand-primary disabled:hover:bg-brand-primary',
+  ),
+  govProgramClearButton: classes(
+    'grid size-8 shrink-0 cursor-pointer place-items-center rounded-full text-ink-muted hover:bg-white hover:text-ink',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-50',
+  ),
   programList: 'mt-[0.9rem] grid gap-[0.8rem]',
   eligibilityReview: 'mt-3 grid gap-2 rounded-lg border border-line bg-[#f6f7f8] p-3',
   eligibilityAxisTitle: 'm-0 text-sm font-bold text-ink',

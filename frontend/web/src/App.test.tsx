@@ -596,12 +596,20 @@ describe('App navigation', () => {
       question: '신청 대상은 누구인가요?',
     })
 
-    const citationLink = screen.getByRole('link', { name: '근거 1 · 기업마당 상세 본문 ↗' })
+    const citationLink = screen.getByRole('link', { name: '기업마당 상세 본문 ↗' })
     expect(citationLink.getAttribute('href')).toBe(detail.sourceUrl)
     expect(citationLink.getAttribute('target')).toBe('_blank')
     expect(citationLink.getAttribute('rel')).toBe('noreferrer')
-    expect(citationLink.closest('li')?.querySelector('blockquote')?.textContent)
-      .toBe(evidenceAnswer.citations[0].excerpt)
+    // 근거 원문은 접혀 있고, 펼치면 긴 원문은 앞부분만 보이다 [전체 보기]로 다 봅니다.
+    const toggle = screen.getByRole('button', { name: '근거 원문 1건 보기' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: '근거 원문 접기' }).getAttribute('aria-expanded')).toBe('true')
+    const excerpt = document.getElementById(toggle.getAttribute('aria-controls')!)?.querySelector('blockquote p')
+    expect(excerpt?.textContent).toBe(evidenceAnswer.citations[0].excerpt)
+    expect(excerpt?.className).toContain('line-clamp-5')
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    expect(excerpt?.className).not.toContain('line-clamp-5')
   })
 
   it('원문 질문 미지원 제공처(과기정통부) 상세에서는 원문 링크를 유지하고 질문 입력이나 근거 답변 HTTP 요청을 만들지 않는다', async () => {

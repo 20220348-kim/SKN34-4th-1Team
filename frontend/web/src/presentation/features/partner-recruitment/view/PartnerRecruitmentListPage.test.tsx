@@ -11,7 +11,8 @@ import { partnerRecruitmentPage } from '../../../../data/fixtures/partnerRecruit
 import { defaultPartnerRecruitmentQuery } from '../../../../domain/entities/PartnerRecruitmentQuery'
 import { chooseOption } from '../../../../test/selectField'
 import { sessionRestored } from '../../../shared/auth/state/authSlice'
-import { PartnerRecruitmentPanel } from './PartnerRecruitmentListPage'
+import { appPaths } from '../../../shared/routes/appPaths'
+import { PartnerRecruitmentListPage } from './PartnerRecruitmentListPage'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
@@ -24,21 +25,19 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderPanel() {
+function renderPage() {
   const store = createAppStore()
   store.dispatch(sessionRestored({
     email: 'member@govbiz.local', role: 'USER', tier: 'COMPANY', emailVerified: true,
     hasPassword: true, accountType: 'BUSINESS', onboarded: true,
     company: { companyName: '테스트 기업', businessNumber: '1234567890', businessStatusCode: '01' },
   }))
-  return render(<Provider store={store}><MemoryRouter><PartnerRecruitmentPanel /></MemoryRouter></Provider>)
+  return render(<Provider store={store}><MemoryRouter><PartnerRecruitmentListPage /></MemoryRouter></Provider>)
 }
 
-describe('Gov 파트너 모집글 조회 패널', () => {
-  it('전체 모집글 안내·로딩·상세 링크를 표시하고 전역 머리글이나 작성 동작을 넣지 않는다', async () => {
-    const { container } = renderPanel()
-    const panel = screen.getByRole('region', { name: '파트너 모집글 조회' })
-    expect(within(panel).getByText('전체 모집글을 조회합니다. 검색어·찾는 역할·지역 조건으로 좁혀 보세요.')).toBeTruthy()
+describe('파트너 모집글 목록', () => {
+  it('로딩·상세 링크를 표시하고 기본 조건으로 조회한다', async () => {
+    renderPage()
     expect(screen.getByRole('heading', { name: '검색 결과 —건' })).toBeTruthy()
     expect(screen.getByRole('status').textContent).toContain('모집글을 불러오는 중입니다.')
 
@@ -50,20 +49,14 @@ describe('Gov 파트너 모집글 조회 패널', () => {
         .toBe(`/app/partners/detail?recruitmentId=${recruitment.id}`)
     }
     expect(screen.getByRole('heading', { name: '검색 결과 4건' })).toBeTruthy()
-    expect(container.querySelector('header, main')).toBeNull()
-    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
-    expect(screen.queryByRole('navigation')).toBeNull()
-    expect(screen.queryByRole('link', { name: /모집글 작성|기업 등록/ })).toBeNull()
-    expect(screen.queryByRole('form', { name: '참여 제안' })).toBeNull()
     expect(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute)
       .toHaveBeenCalledWith(defaultPartnerRecruitmentQuery, expect.any(AbortSignal))
-    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('검색어·역할·지역은 조회할 때 적용하고 페이지 이동과 정렬에도 같은 조건을 유지한다', async () => {
     const browse = vi.mocked(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute)
     browse.mockResolvedValue({ ...partnerRecruitmentPage, total: 24, totalPages: 2 })
-    renderPanel()
+    renderPage()
     await screen.findAllByRole('article')
 
     const filters = screen.getByRole('form', { name: '모집글 검색과 필터' })
@@ -97,7 +90,7 @@ describe('Gov 파트너 모집글 조회 패널', () => {
   it('조회 실패를 빈 결과로 숨기지 않고 같은 조건으로 다시 시도한다', async () => {
     const browse = vi.mocked(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute)
     browse.mockRejectedValueOnce(new Error('unavailable'))
-    renderPanel()
+    renderPage()
 
     const failure = await screen.findByRole('region', { name: '모집글 불러오기 실패' })
     expect(screen.queryByRole('heading', { name: '아직 모집 중인 글이 없어요' })).toBeNull()
@@ -108,15 +101,14 @@ describe('Gov 파트너 모집글 조회 패널', () => {
     expect(screen.queryByRole('region', { name: '모집글 불러오기 실패' })).toBeNull()
   })
 
-  it('전체 빈 결과에는 작성 버튼을 두지 않고 필터로 빈 결과는 초기화할 수 있다', async () => {
+  it('전체 빈 결과에는 첫 모집글 작성을 안내하고 필터로 빈 결과는 초기화할 수 있다', async () => {
     const browse = vi.mocked(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute)
     const empty = { ...partnerRecruitmentPage, recruitments: [], total: 0, totalPages: 0 }
     browse.mockResolvedValueOnce(empty).mockResolvedValueOnce(empty)
-    renderPanel()
+    renderPage()
 
     const noRecruitments = await screen.findByRole('region', { name: '아직 모집 중인 글이 없어요' })
-    expect(within(noRecruitments).getByText('새 모집글이 등록되면 이곳에서 확인할 수 있어요.')).toBeTruthy()
-    expect(screen.queryByRole('link')).toBeNull()
+    expect(within(noRecruitments).getByRole('link', { name: '모집글 작성하기' }).getAttribute('href')).toBe(appPaths.partnerNew)
     fireEvent.change(screen.getByRole('searchbox', { name: '모집글 검색' }), { target: { value: '없는 글' } })
     fireEvent.click(screen.getByRole('button', { name: '조회' }))
 

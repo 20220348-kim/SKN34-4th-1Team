@@ -106,26 +106,14 @@ export function PartnerRecruitmentListPage() {
       <PartnerManagementHeader active="recruitments" />
       <div className={workspacePageStyles.content}>
         <div className={workspacePageStyles.column}>
-          <PartnerRecruitmentListContent showCreatePrompt />
+          <PartnerRecruitmentListContent />
         </div>
       </div>
     </>
   )
 }
 
-/** Gov 작업 화면 안에서 전체 모집글을 직접 검색하는 패널입니다. */
-export function PartnerRecruitmentPanel() {
-  return (
-    <section className={workspacePageStyles.column} aria-label="파트너 모집글 조회">
-      <p className={partnerRecruitmentStyles.noticeText}>
-        전체 모집글을 조회합니다. 검색어·찾는 역할·지역 조건으로 좁혀 보세요.
-      </p>
-      <PartnerRecruitmentListContent />
-    </section>
-  )
-}
-
-function PartnerRecruitmentListContent({ showCreatePrompt = false }: { showCreatePrompt?: boolean }) {
+function PartnerRecruitmentListContent() {
   const {
     hasCompany,
     phase,
@@ -216,18 +204,15 @@ function PartnerRecruitmentListContent({ showCreatePrompt = false }: { showCreat
       ) : phase === 'loading' && recruitments.length === 0 ? (
         <RecruitmentCardSkeleton label="모집글 불러오는 중" text="모집글을 불러오는 중입니다." />
       ) : recruitments.length === 0 ? (
-        // 검색·필터로 비었으면 초기화를, 독립 목록에서만 첫 모집글 작성을 안내합니다.
+        // 검색·필터로 비었으면 초기화를, 아니면 첫 모집글 작성을 안내합니다.
         hasActiveNarrowing ? (
           <EmptyState icon={<SearchIcon />} title="조건에 맞는 모집글이 없어요"
             description="검색어나 찾는 역할·지역을 바꾸거나 초기화해 보세요."
             action={{ label: '검색·필터 초기화', onClick: clearNarrowing }} />
-        ) : showCreatePrompt ? (
+        ) : (
           <EmptyState icon={<PeopleIcon />} title="아직 모집 중인 글이 없어요"
             description={hasCompany ? '함께 신청할 기업을 찾고 있다면 첫 모집글을 올려 보세요.' : '기업을 등록하면 모집글을 올려 함께 신청할 기업을 찾을 수 있어요.'}
             action={hasCompany ? { label: '모집글 작성하기', to: appPaths.partnerNew } : { label: '기업 등록하기', to: appPaths.profile }} />
-        ) : (
-          <EmptyState icon={<PeopleIcon />} title="아직 모집 중인 글이 없어요"
-            description="새 모집글이 등록되면 이곳에서 확인할 수 있어요." />
         )
       ) : (
         <>

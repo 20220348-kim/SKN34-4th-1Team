@@ -8,6 +8,7 @@ import { appPaths } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, unknownRelation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewProgram, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
 import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
 import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
+import { reviewAutoTitle } from './reviewTitle'
 import { useReviewScope } from './useReviewScope'
 
 // 자동 조회보다 늦게 도착한 과거 응답이 완료 상태를 대기/분석 중으로 되돌리지 않게 한다.
@@ -116,6 +117,21 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
   }, [preselected, detailUseCase])
   /** 사업 칸입니다. 비운 칸은 null이고, 채운 칸의 순서가 저장할 사업 순서입니다. */
   const slots = toSlots(draft.programs, gap)
+  // 새 검토는 두 공고가 정해지면 "사업 1 짧은 이름 X 사업 2 짧은 이름 검토"로 제목을 채웁니다.
+  // 비어 있거나 직접 고치지 않은(지난번에 자동으로 채운) 제목만 바꾸고, 사용자가 쓴 제목은 덮지 않습니다.
+  const autoTitle = useRef('')
+  const [firstSlot, secondSlot] = slots
+  const firstInfo = firstSlot ? programInfo[reviewProgramKey(firstSlot)] : undefined
+  const secondInfo = secondSlot ? programInfo[reviewProgramKey(secondSlot)] : undefined
+  const nextAutoTitle = id === null && firstInfo?.status === 'ready' && secondInfo?.status === 'ready'
+    ? reviewAutoTitle(firstInfo.program.title, secondInfo.program.title) : null
+  useEffect(() => {
+    if (nextAutoTitle === null) return
+    const previous = autoTitle.current
+    autoTitle.current = nextAutoTitle
+    setDraft((current) => (current.title.trim() === '' || current.title === previous) && current.title !== nextAutoTitle
+      ? { ...current, title: nextAutoTitle } : current)
+  }, [nextAutoTitle])
   const placeSlots = (next: (ReviewProgram | null)[]) => {
     const programs = next.filter((program): program is ReviewProgram => program !== null)
     setDraft({ ...draft, programs })

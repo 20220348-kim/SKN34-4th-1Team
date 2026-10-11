@@ -42,11 +42,19 @@ export const supportProgramEvidenceQuestionStyles = {
   evidenceAnswer: 'mt-5 rounded-[1.4rem] border border-line bg-white p-5',
   evidenceAnswerEyebrow: 'mt-0 mb-2 text-[0.7rem] font-extrabold tracking-[0.1em] text-brand-primary uppercase',
   evidenceAnswerText: 'm-0 whitespace-pre-wrap leading-[1.7] text-ink',
-  evidenceCitationTitle: 'mt-5 mb-3 text-[0.86rem] font-extrabold text-ink',
-  evidenceCitationList: 'm-0 grid list-decimal gap-3 pl-5',
+  // 답 아래 한 줄: [근거 원문 N건 보기] 토글과 출처 링크입니다. 근거 원문은 펼쳤을 때만 보입니다.
+  evidenceFooter: 'mt-3 flex flex-wrap items-center gap-x-4 gap-y-2',
+  evidenceToggle: classes(
+    'cursor-pointer rounded-full border border-line bg-white px-3 py-1 text-[0.75rem] font-bold text-ink',
+    'hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  ),
+  evidenceCitationList: 'mt-3 mb-0 grid list-decimal gap-3 pl-5 marker:text-[0.75rem] marker:text-ink-muted',
   evidenceCitation: 'pl-1 text-ink',
-  evidenceExcerpt: 'm-0 whitespace-pre-wrap rounded-[1rem] bg-white px-4 py-3 text-[0.82rem] leading-[1.6] text-ink-muted',
-  evidenceSourceLink: 'mt-2 inline-block rounded-full text-[0.75rem] font-extrabold text-brand-primary no-underline hover:text-brand-hover hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  evidenceExcerpt: 'm-0 rounded-[0.75rem] bg-surface-muted px-3.5 py-2.5 text-[0.8rem] leading-[1.6] text-ink-muted',
+  evidenceExcerptText: 'm-0 whitespace-pre-wrap',
+  evidenceExcerptPreview: 'm-0 line-clamp-5 whitespace-pre-wrap',
+  evidenceMoreButton: 'mt-1 cursor-pointer text-[0.75rem] font-bold text-brand-primary underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  evidenceSourceLink: 'inline-block rounded-full text-[0.75rem] font-extrabold text-brand-primary no-underline hover:text-brand-hover hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   // 공고 상세 안 질문 패널입니다. 답·안내는 패널 폭에 맞춘 촘촘한 판을 씁니다.
   evidenceFeedbackCompact: 'm-0 rounded-[0.85rem] bg-surface-muted px-3.5 py-2.5 text-[0.8125rem] leading-[1.55] text-ink',
   evidenceErrorCompact: 'm-0 rounded-[0.85rem] border border-danger-line bg-danger-soft px-3.5 py-2.5 text-[0.8125rem] leading-[1.55] text-danger',

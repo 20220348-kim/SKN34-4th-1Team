@@ -118,33 +118,67 @@ describe('embedded combination review', () => {
     expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
   })
 
-  it('saves changed input, starts once, and opens completed and older results locally', async () => {
-    vi.useFakeTimers()
+  it('fills the title as "사업 1 X 사업 2 검토" once both programs are chosen, without overwriting a typed title', async () => {
+    const first = catalogProgram('PBLN_100', { title: '청년창업 사업화 지원 공고' })
+    const second = catalogProgram('PBLN_200', { title: '딥테크 성장 지원 공고' })
+    const third = catalogProgram('PBLN_300', { title: '2026년 수출 바우처 모집 공고' })
+    browseSavedPrograms.mockResolvedValue(savedEntries(first, second, third))
+    mountPanel(null)
+    const title = () => screen.getByLabelText('검토 제목') as HTMLInputElement
+    const choose = async (index: number, program: SupportProgram) => {
+      fireEvent.click(within(slot(index)).getByRole('button', { name: new RegExp(`사업 ${index} 공고 (고르기|바꾸기)`) }))
+      const picker = screen.getByRole('dialog', { name: '공고 고르기' })
+      fireEvent.click(await within(picker).findByRole('radio', { name: new RegExp(program.title) }))
+      fireEvent.click(within(picker).getByRole('button', { name: `사업 ${index}로 선택` }))
+    }
+    await choose(1, first)
+    expect(title().value).toBe('')
+    await choose(2, second)
+    expect(title().value).toBe('청년창업 사업화 지원 X 딥테크 성장 지원 검토')
+    // 자동으로 채운 제목은 사업을 바꾸면 따라 바뀌고, 직접 고친 제목은 그대로 둡니다.
+    await choose(2, third)
+    expect(title().value).toBe('청년창업 사업화 지원 X 수출 바우처 검토')
+    fireEvent.change(title(), { target: { value: '내가 정한 제목' } })
+    await choose(2, second)
+    expect(title().value).toBe('내가 정한 제목')
+  })
+
+  it('answers "can I apply to both" in chat with the verdict chips and conclusion, and opens the full result on the result page', async () => {
+    repository.runs.mockResolvedValue({ items: [structuredClone(answerRunFixture)], nextBeforeId: null })
+    repository.run.mockResolvedValue(structuredClone(answerRunFixture))
+    mountPanel()
+    const conclusion = await screen.findByRole('region', { name: '검토 결론' })
+    expect(within(conclusion).getByText('신청 · 조건부')).toBeTruthy()
+    expect(within(conclusion).getByText('함께 수행 · 기관 확인')).toBeTruthy()
+    expect(within(conclusion).getByText('같은 과제·비용 · 불가')).toBeTruthy()
+    expect(within(conclusion).getByRole('heading', { name: '같은 과제·비용으로 두 번 받을 수 없어요' })).toBeTruthy()
+    // 조건부 답은 조건과 결과를 함께 보여 주고, 기관에 물어볼 것·근거 원문은 결과 화면으로 미룹니다.
+    expect(within(conclusion).getByRole('list', { name: '조건별 결과' })).toBeTruthy()
+    expect(within(conclusion).queryByText('기관에 물어볼 것')).toBeNull()
+    // 결과 자세히는 대화에 펼치지 않고 검토 결과 화면으로 옮깁니다.
+    await act(async () => { fireEvent.click(within(conclusion).getByRole('button', { name: /결과 자세히/ })) })
+    expect(currentLocation()).toBe('/app/combination-reviews/12/runs/31')
+    expect(screen.queryByRole('region', { name: '실행 31 결과' })).toBeNull()
+  })
+
+  it('folds the optional situation and the run history in chat', async () => {
+    await act(async () => { mountPanel() })
+    expect(screen.getByText('내 상황 (선택) · 고르면 조건에 따라 갈리는 답을 좁혀요').closest('details')?.open).toBe(false)
+    expect(screen.getByText(/^실행 기록 \d+건$/).closest('details')?.open).toBe(false)
+  })
+
+  it('saves changed input, starts once, and moves to the result page of the accepted run', async () => {
     const queued = { ...runFixture, inputRevision: 3, status: 'QUEUED', analysis: null, evidence: null, finishedAt: null }
-    const complete = { ...runFixture, inputRevision: 3 }
-    const older = { ...runFixture, id: 29 }
     repository.replace.mockResolvedValue(undefined)
     repository.start.mockImplementation(async (_id, request) => ({ ...queued, requestKey: request.requestKey }))
-    repository.run.mockImplementation(async (_id, runId) => runId === 29 ? older : complete)
     await act(async () => { mountPanel() })
     chooseOption(screen.getByLabelText('사업 1 지금 상태'), 'UNKNOWN')
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '검토 실행' })) })
     expect(repository.replace).toHaveBeenCalledTimes(1)
     expect(repository.start).toHaveBeenCalledTimes(1)
     expect(repository.start.mock.calls[0][1].expectedRevision).toBe(3)
-    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
-    expect(repository.run).toHaveBeenCalledTimes(1)
-    repository.get.mockResolvedValue({ ...reviewFixture, inputRevision: 3 })
-    repository.runs.mockResolvedValue({ items: [complete, older], nextBeforeId: null })
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '결과 보기 →' })) })
-    expect(screen.getByRole('region', { name: '실행 30 결과' })).toBeTruthy()
-    chooseOption(screen.getByLabelText('실행 결과 선택'), '29')
-    await act(async () => {})
-    expect(screen.getByRole('region', { name: '실행 29 결과' })).toBeTruthy()
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '내 상황 입력하고 다시 보기' })) })
-    expect(screen.getByLabelText('분석에 참고할 추가 설명 (선택)')).toHaveProperty('value', older.input.additionalFacts)
-    expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
-    expect(repository.start).toHaveBeenCalledTimes(1)
+    // 분석을 접수하면 대화에서 진행을 지켜보지 않고 검토 결과 화면에서 진행 상태와 결과를 봅니다.
+    expect(currentLocation()).toBe(`/app/combination-reviews/12/runs/${queued.id}`)
     expect(screen.queryByRole('main')).toBeNull()
   })
 
@@ -165,36 +199,15 @@ describe('embedded combination review', () => {
     expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
   })
 
-  it('returns failed results to analysis without starting or changing the URL', async () => {
+  it('opens a failed run on the result page without starting a new analysis', async () => {
     const failed = { ...runFixture, status: 'FAILED', analysis: null, failureCode: 'SOURCE_UNSUPPORTED' }
     repository.runs.mockResolvedValue({ items: [failed], nextBeforeId: null })
     repository.run.mockResolvedValue(failed)
     mountPanel()
     fireEvent.click(await screen.findByRole('button', { name: /자세히 보기: 실행 #30/ }))
-    await screen.findByRole('region', { name: '실행 30 결과' })
-    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
-    await screen.findByRole('region', { name: '분석 실행' })
+    expect(currentLocation()).toBe('/app/combination-reviews/12/runs/30')
+    expect(screen.queryByRole('region', { name: '실행 30 결과' })).toBeNull()
     expect(repository.start).not.toHaveBeenCalled()
-    expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
-  })
-
-  it('starts an explicitly requested narrowing and shows its accepted result locally', async () => {
-    const queued = { ...answerRunFixture, id: 32, inputRevision: 3, status: 'QUEUED', analysis: null }
-    repository.runs.mockResolvedValue({ items: [answerRunFixture], nextBeforeId: null })
-    repository.run.mockImplementation(async (_id, runId) => runId === 32 ? queued : structuredClone(answerRunFixture))
-    repository.replace.mockResolvedValue(undefined)
-    repository.start.mockImplementation(async (_id, request) => ({ ...queued, requestKey: request.requestKey }))
-    mountPanel()
-    fireEvent.click(await screen.findByRole('button', { name: '결과 보기 →' }))
-    const narrowing = await screen.findByRole('region', { name: '내 상황으로 좁히기' })
-    expect(repository.start).not.toHaveBeenCalled()
-    chooseOption(within(narrowing).getByLabelText('사업 1 지금 상태'), 'UNKNOWN')
-    fireEvent.click(within(narrowing).getByRole('button', { name: '저장하고 다시 분석' }))
-    await waitFor(() => expect(repository.start).toHaveBeenCalledTimes(1))
-    expect(repository.start.mock.calls[0][1].additionalFacts).toBe(answerRunFixture.input.additionalFacts)
-    await screen.findByRole('region', { name: '실행 32 결과' })
-    expect(repository.run).toHaveBeenCalledWith(12, 32, expect.any(AbortSignal))
-    expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
   })
 
   it('does not attach a late created review after the account changes', async () => {
@@ -465,8 +478,9 @@ describe('review screens and execution safety', () => {
     expect(within(slot(2)).getByText('접수 마감')).toBeTruthy()
     expect(within(programs).getByText('2/2')).toBeTruthy()
 
-    // 제목과 두 칸이 모두 있어야 넘어갈 수 있습니다.
-    expect(nextButton().disabled).toBe(true)
+    // 두 칸을 고르면 제목이 "사업 1 X 사업 2 검토"로 채워져 바로 넘어갈 수 있고, 직접 고쳐도 됩니다.
+    expect((screen.getByLabelText('검토 제목') as HTMLInputElement).value).toMatch(/ X .+ 검토$/)
+    expect(nextButton().disabled).toBe(false)
     fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '두 공고 검토' } })
     expect(nextButton().disabled).toBe(false)
     fireEvent.click(nextButton())
