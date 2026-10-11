@@ -40,38 +40,49 @@ jobs:
   backend:
     needs: gate
     if: needs.gate.outputs.ready == 'true'
-    runs-on: ubuntu-24.04
+    # CodeBuild supplies a short-lived AWS service role. No GitHub AWS OIDC/key.
+    runs-on: codebuild-${{ vars.EKS_DEPLOY_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}
     timeout-minutes: 120
     environment: eks-production
     permissions:
       contents: read
       actions: read
-      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ needs.gate.outputs.sha }}
       AWS_REGION: ap-southeast-2
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
-      EKS_RELEASE_BUCKET: ${{ vars.EKS_RELEASE_BUCKET }}
-      EKS_DEPLOY_PROJECT: ${{ vars.EKS_DEPLOY_PROJECT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
-      - name: Recheck the exact main commit before acquiring AWS credentials
-        run: python3 -B infrastructure/eks/release.py check --sha "$SOURCE_SHA"
-      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+      - name: Set up Python for safe tracked-source archives
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          role-to-assume: ${{ vars.EKS_RELEASE_ROLE_ARN }}
-          aws-region: ap-southeast-2
-          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
-          role-duration-seconds: 7200
+          python-version: '3.13'
+      - name: Install checksum-verified kubectl and verify runner tools
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/eks-tools"
+          mkdir -p "$tool_dir"
+          curl -fsSL https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl -o "$tool_dir/kubectl"
+          curl -fsSL https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl.sha256 -o "$tool_dir/kubectl.sha256"
+          (cd "$tool_dir" && echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check)
+          chmod +x "$tool_dir/kubectl"
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          aws --version
+          gh --version
+          docker info >/dev/null
+      - name: Recheck the exact main commit before publication
+        run: python3 -B infrastructure/eks/release.py check --sha "$SOURCE_SHA"
       - name: Publish five immutable ECR images from the tested Git source
         run: python3 -B infrastructure/eks/release.py publish --sha "$SOURCE_SHA" --output "$RUNNER_TEMP/release.json"
-      - name: Deploy through CodeBuild inside the EKS VPC and wait for rollout
-        run: python3 -B infrastructure/eks/release.py dispatch --sha "$SOURCE_SHA" --output "$RUNNER_TEMP/release.json"
+      - name: Deploy inside the EKS VPC and wait for rollout
+        env:
+          KUBECONFIG: ${{ runner.temp }}/govbiz-eks-kubeconfig
+        run: python3 -B infrastructure/eks/release.py rollout --sha "$SOURCE_SHA" --output "$RUNNER_TEMP/release.json"
       - name: Save source and image evidence, without secrets or data
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

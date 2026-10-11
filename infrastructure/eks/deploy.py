@@ -110,8 +110,8 @@ def current(sha):
 
 
 def check_ci(sha):
-    # The selected repository is public. Keep tokens out of CodeBuild and fail
-    # closed on GitHub API errors/rate limits instead of skipping CI.
+    # Actions provides its short-lived read-only token to the CodeBuild runner.
+    # Manual execution may use public API access; API errors always block rollout.
     def get(path):
         request = Request(
             "https://api.github.com/" + path,
@@ -123,7 +123,8 @@ def check_ci(sha):
         with urlopen(request, timeout=30) as response:
             return json.load(response)
 
-    reason = gate.ci_blocked_reason(sha, Fork(SOURCE, "main"), get)
+    api = gate.api if os.environ.get("GH_TOKEN") else get
+    reason = gate.ci_blocked_reason(sha, Fork(SOURCE, "main"), api)
     require(reason is None, "CI changed before rollout: " + str(reason))
     current(sha)
 

@@ -9,7 +9,8 @@ Core·Ops의 웹 주소를 설정한다. 2026-10-12 활성 PVC 13개를 복원�
 개인 저장소 `ilil1/SKN34-4th-1Team` main의 필수 CI 통과 후 ECR·EKS·Vercel을 갱신하는 코드와
 [Vercel 최초 설정·자동 배포 연결 절차](continuous-deployment.md)를 준비했다.
 [CloudFront·내부 ALB·Core/Ops 프록시](api-entrypoint.md)는 실제 AWS에 적용했다.
-GitHub OIDC가 관리형 조직 정책에 막혀 **현재는 수동 배포이며 자동 배포는 비활성 상태**다.
+GitHub OIDC 제한에 대응해 자동 배포 코드를 **CodeConnections·CodeBuild 임시 Actions 실행기**로
+전환했다. 연결 승인·main 반영·최초 자동 실행 검증이 끝나기 전까지 운영은 수동 배포 상태다.
 
 아래는 **다른 원본 클러스터의 기존 Argo CD 이전 절차와 기록**이다. 아래의 PVC 14개·Argo 앱
 9개·`work/eks-handoff-20261011-final` 기록을 현재 Mac의 백업 완료 증거로 사용하지 않는다.

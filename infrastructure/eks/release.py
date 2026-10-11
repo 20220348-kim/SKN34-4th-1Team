@@ -1,4 +1,4 @@
-"""CI-gated ECR publication and dispatch to the private EKS deployment runner."""
+"""CI-gated ECR publication and rollout on the private CodeBuild Actions runner."""
 
 import argparse
 import io
@@ -9,8 +9,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
-import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -220,80 +218,15 @@ def publish(sha, output):
     output.write_text(json.dumps(record, indent=2) + "\n")
 
 
-def dispatch(sha, receipt):
+def rollout(sha, receipt):
+    # One runner builds and deploys: no mutable S3 bundle or second build job.
     check(sha)
-    account, region, cluster = settings()
     record = json.loads(receipt.read_text())
-    require(
-        record.get("sourceSha") == sha
-        and record.get("repository") == SOURCE
-        and record.get("account") == account
-        and record.get("cluster") == cluster
-        and record.get("region") == region,
-        "Release receipt does not match this deployment",
-    )
-    bucket, project = (
-        os.environ.get(k, "") for k in ("EKS_RELEASE_BUCKET", "EKS_DEPLOY_PROJECT")
-    )
-    require(re.fullmatch(r"[a-z0-9][a-z0-9.-]{2,62}", bucket), "Missing release bucket")
-    require(
-        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,254}", project),
-        "Missing CodeBuild project",
-    )
-    run_id = os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]
-    require(re.fullmatch(r"[0-9]+-[0-9]+", run_id), "Invalid Actions run ID")
-    with tempfile.TemporaryDirectory() as temp:
-        bundle = Path(temp) / "release.zip"
-        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("release.json", json.dumps(record))
-            for path in (
-                "infrastructure/eks/deploy.py",
-                "infrastructure/release/gate.py",
-                "infrastructure/release/ci_policy.py",
-                "infrastructure/release/repository.py",
-            ):
-                data = subprocess.check_output(
-                    ["git", "show", sha + ":" + path], cwd=ROOT
-                )
-                z.writestr(path, data)
-        key = f"releases/{sha}/{run_id}.zip"
-        version = aws(
-            "s3api",
-            "put-object",
-            "--bucket",
-            bucket,
-            "--key",
-            key,
-            "--body",
-            str(bundle),
-            "--server-side-encryption",
-            "AES256",
-        ).get("VersionId")
-        require(version and version != "null", "Versioned release bucket is required")
-    check(sha)
-    build = aws(
-        "codebuild",
-        "start-build",
-        "--project-name",
-        project,
-        "--source-location-override",
-        f"{bucket}/{key}",
-        "--source-version",
-        version,
-        "--idempotency-token",
-        run_id,
-    )["build"]["id"]
-    print("CODEBUILD_ID=" + build, flush=True)
-    # Include CodeBuild's 10-minute queue and 35-minute build limits.
-    for _ in range(300):
-        state = aws("codebuild", "batch-get-builds", "--ids", build)["builds"][0][
-            "buildStatus"
-        ]
-        if state == "SUCCEEDED":
-            return
-        require(state == "IN_PROGRESS", "EKS deployment failed: " + state)
-        time.sleep(10)
-    raise ValueError("CodeBuild result timed out; inspect the build before retrying")
+    require(record.get("sourceSha") == sha, "Release receipt does not match this SHA")
+    sys.path.insert(0, str(ROOT / "infrastructure/eks"))
+    import deploy
+
+    deploy.deploy(record)
 
 
 def web_source(sha, destination):
@@ -305,7 +238,7 @@ def web_source(sha, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("gate", "check", "publish", "dispatch", "web-source")
+        "command", choices=("gate", "check", "publish", "rollout", "web-source")
     )
     parser.add_argument("--sha")
     parser.add_argument("--output", type=Path)
@@ -316,8 +249,8 @@ def main():
         check(args.sha)
     elif args.command == "publish":
         publish(args.sha, args.output)
-    elif args.command == "dispatch":
-        dispatch(args.sha, args.output)
+    elif args.command == "rollout":
+        rollout(args.sha, args.output)
     else:
         web_source(args.sha, args.output)
 
