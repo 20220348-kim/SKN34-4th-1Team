@@ -805,13 +805,33 @@ def manifest_inventory(config):
     }
 
 
-def manifest_destination(config, image_map):
+def manifest_destination(config, image_map, vercel_origin=None):
     """Produce stopped bootstrap manifests for the Sydney two-pool demo."""
     inventory = manifest_inventory(config)
+    captured_sources = {i["source"] for i in inventory["images"]}
+    if vercel_origin is not None:
+        require(
+            re.fullmatch(r"https://[a-z0-9-]+\.vercel\.app", vercel_origin),
+            "Supply the canonical HTTPS Vercel origin without a path or trailing slash",
+        )
+        # Keep the original capture and all PVCs for backup/restore. Only omit
+        # the frontend workload and its Service from the destination.
+        config = {
+            **config,
+            "resources": [
+                r
+                for r in config["resources"]
+                if not (
+                    identity(r) == ("govbiz-msa", "web")
+                    and r["kind"] in {"Deployment", "Service"}
+                )
+            ],
+        }
+        inventory = manifest_inventory(config)
     sources = {i["source"] for i in inventory["images"]}
     require(
-        set(image_map) == sources,
-        "Image map must cover every captured image, including init containers",
+        sources <= set(image_map) <= captured_sources,
+        "Image map must cover every captured image needed at the destination, including init containers",
     )
     for target in image_map.values():
         require(
@@ -945,10 +965,27 @@ def manifest_destination(config, image_map):
                 if name == "core-service":
                     overrides = {
                         "ACCOUNT_DEV_LOGIN_ENABLED": "false",
-                        "APP_CORS_ALLOWED_ORIGIN": "http://localhost:18173",
+                        "APP_CORS_ALLOWED_ORIGIN": vercel_origin
+                        or "http://localhost:18173",
                     }
+                    if vercel_origin:
+                        overrides.update(
+                            {
+                                "ACCOUNT_COOKIE_SECURE": "true",
+                                "ACCOUNT_OAUTH_CALLBACK_BASE_URL": vercel_origin,
+                                "ACCOUNT_OAUTH_FRONTEND_BASE_URL": vercel_origin,
+                                "DAILY_REPORT_FRONTEND_BASE_URL": vercel_origin,
+                            }
+                        )
                 if name == "ops-service":
-                    overrides["OPS_WEB_URL"] = "http://localhost:18173"
+                    overrides["OPS_WEB_URL"] = vercel_origin or "http://localhost:18173"
+                    if vercel_origin:
+                        overrides.update(
+                            {
+                                "DJANGO_COOKIE_SECURE": "true",
+                                "DJANGO_CSRF_TRUSTED_ORIGINS": vercel_origin,
+                            }
+                        )
                 if name in {"ops-service", "evaluation-runner"}:
                     overrides.update(
                         {
@@ -981,6 +1018,10 @@ def manifest_destination(config, image_map):
         "50-workloads-stopped.json": items(apps),
         "startup-plan.json": {
             "sourceMode": "manifests",
+            "frontend": {
+                "hosting": "vercel" if vercel_origin else "kubernetes",
+                "origin": vercel_origin or "http://localhost:18173",
+            },
             "workloads": replicas,
             "automaticStart": False,
         },
@@ -998,13 +1039,16 @@ def prepare(args):
             not args.node and not args.elasticsearch_image,
             "Manifest placement uses node-pool labels and a complete image map",
         )
-        manifests = manifest_destination(config, json.loads(args.image_map.read_text()))
+        manifests = manifest_destination(
+            config, json.loads(args.image_map.read_text()), args.vercel_origin
+        )
     else:
         require(
             args.node
             and args.elasticsearch_image
             and not args.pool_placement
-            and not args.image_map,
+            and not args.image_map
+            and not args.vercel_origin,
             "Argo bundles require --node and --elasticsearch-image",
         )
         manifests = destination(config, args.node, args.elasticsearch_image)
@@ -1040,6 +1084,10 @@ def main():
         if name == "prepare":
             p.add_argument("--elasticsearch-image")
             p.add_argument("--image-map", type=Path)
+            p.add_argument(
+                "--vercel-origin",
+                help="Host the web frontend on this HTTPS *.vercel.app origin; omit its EKS Pod/Service",
+            )
     args = parser.parse_args()
     if args.command == "capture":
         capture(args)

@@ -1,0 +1,46 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: govbiz-eks-release, namespace: govbiz-msa}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [core-service, catalog-service, ai-service, ops-service]
+    verbs: [get, watch, patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [ops-service]
+    verbs: [get, patch, update]
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [pods/exec]
+    verbs: [get, create]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: govbiz-eks-release, namespace: govbiz-msa}
+subjects: [{kind: Group, name: govbiz-eks-release, apiGroup: rbac.authorization.k8s.io}]
+roleRef: {kind: Role, name: govbiz-eks-release, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: govbiz-eks-release, namespace: govbiz-evaluation}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [evaluation-runner, ops-artifacts]
+    verbs: [get, watch, patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [evaluation-runner]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: govbiz-eks-release, namespace: govbiz-evaluation}
+subjects: [{kind: Group, name: govbiz-eks-release, apiGroup: rbac.authorization.k8s.io}]
+roleRef: {kind: Role, name: govbiz-eks-release, apiGroup: rbac.authorization.k8s.io}

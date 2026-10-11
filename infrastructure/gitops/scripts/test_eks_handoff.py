@@ -472,6 +472,146 @@ class HandoffTests(unittest.TestCase):
         ):
             handoff.manifest_inventory(config)
 
+    def test_vercel_export_omits_web_but_preserves_data_and_backend_auth_settings(self):
+        config = manifest_configuration()
+        origin = "https://govbiz-demo.vercel.app"
+        for name in ("core-service", "ops-service"):
+            row = copy.deepcopy(
+                next(
+                    r
+                    for r in config["resources"]
+                    if r["metadata"]["name"] == "ai-service"
+                )
+            )
+            row["metadata"]["name"] = name
+            container = row["spec"]["template"]["spec"]["containers"][0]
+            container["env"] += [
+                {"name": key, "value": "http://localhost:5173"}
+                for key in (
+                    "APP_CORS_ALLOWED_ORIGIN",
+                    "ACCOUNT_OAUTH_CALLBACK_BASE_URL",
+                    "ACCOUNT_OAUTH_FRONTEND_BASE_URL",
+                    "DAILY_REPORT_FRONTEND_BASE_URL",
+                    "OPS_WEB_URL",
+                    "DJANGO_CSRF_TRUSTED_ORIGINS",
+                )
+            ]
+            config["resources"].append(row)
+        original = copy.deepcopy(config)
+        image_map = published_images(config)
+        baseline = handoff.manifest_destination(config, image_map)
+        out = handoff.manifest_destination(config, image_map, origin)
+        self.assertEqual(config, original)
+        for filename in (
+            "10-claims.json",
+            "20-private-dependencies.json",
+            "30-data-stopped.json",
+        ):
+            self.assertEqual(out[filename], baseline[filename])
+        apps = {
+            a["metadata"]["name"]: a for a in out["50-workloads-stopped.json"]["items"]
+        }
+        self.assertNotIn("web", apps)
+        self.assertIn("langfuse-web", apps)
+        self.assertFalse(
+            any(
+                r["kind"] == "Service" and r["metadata"]["name"] == "web"
+                for r in out["25-services-and-policies.json"]["items"]
+            )
+        )
+        self.assertIn(
+            "NetworkPolicy",
+            [r["kind"] for r in out["25-services-and-policies.json"]["items"]],
+        )
+        self.assertFalse(
+            any(w["name"] == "web" for w in out["startup-plan.json"]["workloads"])
+        )
+        self.assertEqual(
+            out["startup-plan.json"]["frontend"],
+            {"hosting": "vercel", "origin": origin},
+        )
+        for name, required in (
+            (
+                "core-service",
+                {
+                    "APP_CORS_ALLOWED_ORIGIN": origin,
+                    "ACCOUNT_OAUTH_CALLBACK_BASE_URL": origin,
+                    "ACCOUNT_OAUTH_FRONTEND_BASE_URL": origin,
+                    "DAILY_REPORT_FRONTEND_BASE_URL": origin,
+                    "ACCOUNT_COOKIE_SECURE": "true",
+                    "ACCOUNT_DEV_LOGIN_ENABLED": "false",
+                },
+            ),
+            (
+                "ops-service",
+                {
+                    "OPS_WEB_URL": origin,
+                    "DJANGO_CSRF_TRUSTED_ORIGINS": origin,
+                    "DJANGO_COOKIE_SECURE": "true",
+                    "LLMOPS_LIVE_ENABLED": "false",
+                    "LLMOPS_RAG_LIVE_ENABLED": "false",
+                    "LLMOPS_SCHEDULES_ENABLED": "false",
+                },
+            ),
+        ):
+            env = apps[name]["spec"]["template"]["spec"]["containers"][0]["env"]
+            for key, value in required.items():
+                self.assertEqual(
+                    [e.get("value") for e in env if e["name"] == key], [value]
+                )
+
+    def test_vercel_export_accepts_only_the_canonical_https_origin(self):
+        config = manifest_configuration()
+        for origin in (
+            "",
+            "http://govbiz.vercel.app",
+            "https://govbiz.vercel.app/",
+            "https://govbiz.vercel.app/api",
+            "https://govbiz.vercel.app.evil.com",
+            "https://user@govbiz.vercel.app",
+            "https://govbiz.vercel.app?x=1",
+            "https://govbiz.vercel.app:443",
+            "http://localhost:5173",
+        ):
+            with (
+                self.subTest(origin=origin),
+                self.assertRaisesRegex(
+                    handoff.snapshot.SnapshotError, "canonical HTTPS"
+                ),
+            ):
+                handoff.manifest_destination(config, published_images(config), origin)
+
+    def test_vercel_image_map_may_omit_only_images_exclusive_to_web(self):
+        config = manifest_configuration()
+        web = next(
+            r
+            for r in config["resources"]
+            if r["kind"] == "Deployment" and r["metadata"]["name"] == "web"
+        )
+        image = "docker.io/govbiz-migration/web@sha256:" + "d" * 64
+        web["spec"]["template"]["spec"]["containers"][0]["image"] = image
+        image_map = published_images(config)
+        origin = "https://govbiz-demo.vercel.app"
+        full = handoff.manifest_destination(config, image_map, origin)
+        del image_map[image]
+        self.assertEqual(full, handoff.manifest_destination(config, image_map, origin))
+        with self.assertRaisesRegex(
+            handoff.snapshot.SnapshotError, "every captured image"
+        ):
+            handoff.manifest_destination(config, image_map)
+        # Shared backend/init images remain required even when the web uses them.
+        init_image = config["resources"][1]["spec"]["template"]["spec"][
+            "initContainers"
+        ][0]["image"]
+        web["spec"]["template"]["spec"]["initContainers"] = [
+            {"name": "shared", "image": init_image}
+        ]
+        del image_map[init_image]
+        with self.assertRaisesRegex(
+            handoff.snapshot.SnapshotError, "every captured image"
+        ):
+            handoff.manifest_destination(config, image_map, origin)
+
     def test_pool_restore_helper_uses_same_pool_as_volume_consumers(self):
         for ns in handoff.NAMESPACES:
             pool = handoff.workload_pool(ns, "")

@@ -1,15 +1,60 @@
-# Mac에서 시드니 EKS로 이전하는 시연 구성
+# Vercel 웹 + 시드니 EKS 백엔드 시연 구성
 
 `cluster.sydney-demo.yaml`은 `ap-southeast-2`, Kubernetes 1.36, `m7i-flex.large` 2대를
 사용하는 7일 시연용 입력이다. 적용 전 지원 버전·quota·계정·비용을 다시 확인한다.
 `cluster.example.yaml`은 별도 Argo CD 원본을 위한 기존 서울 1노드 예제로 유지한다.
+
+## 웹 배포와 API 연결
+
+운영 웹 주소는 **`https://govbiz.vercel.app`**, Vercel 프로젝트는 `geonwoo4/govbiz`다.
+개인 저장소 `ilil1/SKN34-4th-1Team`의 main, Root Directory `frontend/web`에 연결했다.
+2026-10-11 확인 시 웹은 HTTP 200이며, Core health와 Ops session API는 설정 미완료로 503이다.
+이 기록은 웹 배포 확인이며 EKS·API 연동 완료를 의미하지 않는다.
+
+**웹은 기존처럼 Vercel에 배포한다.** 현재 Mac의 웹 Pod는 로컬 검증용으로 유지하고,
+EKS 목적지에서는 `govbiz-msa/web` Deployment와 Service를 제외한다. 백엔드·저장소·평가 도구는
+EKS로 이전하며 MySQL을 RDS로 바꾸는 작업은 이번 선택에 포함하지 않는다.
+
+목표 요청 경로는 다음과 같다. AWS의 HTTPS 진입점과 Ops 프록시 연결은 아직 구성하지 않았다.
+
+```text
+사용자 → Vercel React 웹 (일반 화면·/ops/evaluations)
+       → 같은 주소의 /api 요청 → Vercel 서버 미들웨어
+       → AWS HTTPS 진입점
+          ├─ /api/v1/ops/* → EKS ops-service → core-service에서 관리자 권한 확인
+          └─ 나머지 /api/* → EKS core-service → AI·Catalog·DB
+```
+
+- 기존 [Vercel 설정](../../frontend/web/vercel.json)을 사용한다. Root Directory `frontend/web`,
+  외부 workspace 소스 포함, Node 24.x/pnpm 11.22.x, 출력 `dist`를 유지한다.
+- 브라우저 API 주소는 `VITE_CORE_API_BASE_URL=/`이다. Vercel Production의
+  `GOVBIZ_FRONTEND_ORIGIN`과 아래 `--vercel-origin`에는 **`https://govbiz.vercel.app`**을 지정한다.
+  Preview 주소를 운영 주소로 사용하지 않는다.
+- 현재 [미들웨어](../../frontend/web/middleware.ts)는 `GOVBIZ_API_ORIGIN`으로 HTTPS
+  `*.cloudfront.net`만 허용한다. 기존 CloudFront 경로를 EKS의 안정적인 진입점에 연결하거나,
+  다른 HTTPS 진입점을 선택할 때 미들웨어 허용 규칙과 테스트를 함께 수정해야 한다.
+  EKS의 ClusterIP·사설 DNS·로컬 port-forward 주소를 넣어서는 Vercel이 접속할 수 없다.
+- `/api/v1/ops/*`는 현재 미들웨어에서 **503으로 차단**한다. 외부 진입점의 Core/Ops 분기,
+  프록시 비밀값·신뢰 IP 처리, 쿠키·Origin·CSRF 헤더 전달, NetworkPolicy·허용 Host를 검증한 뒤
+  이 차단을 해제해야 한다. 웹 배포만으로 관리자 API 연결이 완료되지는 않는다.
+- Core의 OAuth 공급자에도 같은 Vercel 주소의 callback을 등록한다. 외부 API
+  진입점 생성, 로그인·Ops 검증은 후속 배포 단계이며 이 문서의 변환 명령은 이를 실행하지 않는다.
+
+기존 EC2·RDS 구성 기록은 [Vercel 배포 안내](../../docs/deployment-aws-vercel.md)를 참고하되,
+Compose의 고정 프록시 IP나 EC2 배포 명령을 EKS에 그대로 적용하지 않는다.
+Vercel 프로젝트 생성과 개인 저장소 `ilil1/SKN34-4th-1Team` main의 필수 CI 통과 후 자동 배포 연결은
+[EKS·Vercel 자동 배포](continuous-deployment.md)를 따른다. 이 흐름은 최초 클러스터 생성·데이터 복원과
+외부 API 연결이 끝난 뒤 활성화한다.
 
 ## 노드와 디스크 배치
 
 | 노드 풀 | 배치할 서비스 | 현재 요청 CPU / 메모리 |
 | --- | --- | --- |
 | `application` | 업무 저장소 7개, Core·Catalog·Ops, 평가 실행기·보고서·Prefect | 1.4 vCPU / 2.75GiB, 13개 workload |
-| `observability` | Langfuse와 저장소 4개, AI·웹 | 0.825 vCPU / 1.84GiB, 8개 workload |
+| `observability` | Langfuse와 저장소 4개, AI | 0.8 vCPU / 1.81GiB, 7개 workload |
+
+원본 21개 workload 중 웹 1개를 제외해 목적지는 20개다. 웹의 요청량 25m CPU·32Mi 메모리를
+제외한 수치이며, 두 워커 노드와 데이터 PVC 용량은 유지한다.
 
 요청량은 현재 Mac 구성의 값이며 실제 최대 사용량이나 성능 보장이 아니다. EKS 시스템 Pod의
 요청량·노드 allocatable·실행 중 최대 메모리를 추가 확인한다. 서비스의 메모리 limit 합계가
@@ -25,11 +70,13 @@
 - 현재 사용 중인 PVC 13개는 20GiB씩 요청한다. 이전 시 ClickHouse·MinIO는 최소 30GiB를
   확보하므로 데이터 280GiB, 노드 루트 80GiB씩을 합해 총 440GiB를 계획한다.
   실제 데이터 크기와 할당·청구 용량은 다르다.
-- private 노드와 NAT Gateway 1개를 사용한다. 첫 접속은 loopback port-forward이며 ALB를 만들지 않는다.
+- private 노드와 NAT Gateway 1개를 사용한다. 초기 백엔드 확인은 loopback port-forward로 수행한다.
+  Vercel 운영 연결에 필요한 AWS HTTPS 진입점은 별도 준비하며 이 클러스터 파일은 ALB를 만들지 않는다.
 
 2026-10-11 조회 가격으로 EKS 표준 지원·EC2 2대·gp3 440GiB·NAT 1개·공인 IPv4 1개의
 168시간 고정비는 약 **$77.5**다. gp3 월 요금을 730시간으로 환산한 추정이며 로그·전송·세금·
-노드 교체 중 추가 인스턴스 등은 별도다. Free Plan 대상 인스턴스라는 뜻이 사용료 0원이라는 뜻은 아니다.
+노드 교체 중 추가 인스턴스 등은 별도다. Vercel·외부 API 진입점 비용도 포함하지 않으므로 공개 배포 전
+다시 합산한다. Free Plan 대상 인스턴스라는 뜻이 사용료 0원이라는 뜻은 아니다.
 
 ## 현재 Mac의 구성 수집
 
@@ -54,6 +101,9 @@ python3 "$tool" capture --source-mode manifests \
 Argo 경로를 사용한다. custom service account/RBAC, 복수 replica, hostPath, 별도 affinity 등
 자동 변환하지 않는 구성은 명시적으로 거절한다.
 
+원본 수집에는 로컬 웹도 남긴다. Vercel 선택은 목적지 변환에만 적용하므로 원본 복구 기록과
+13개 데이터 PVC의 백업·복원 범위는 바뀌지 않는다.
+
 **`configuration.enc`만 있으면 구성 수집만 완료한 것이다. 데이터 백업 완료는
 `backup.enc`와 `backup-completed.json`이 모두 있어야 한다.** 최종 냉간 백업은 이전 실행 직전에
 새 bundle로 만들고, [기존 중단·재개 절차](README.md#현재-pc-구성-수집과-냉간-백업)를 따른다.
@@ -77,6 +127,8 @@ tar는 Linux 백업 Pod 안에서 실행하므로 Mac의 BSD tar 옵션 차이�
 Docker의 이미지 index ID, platform manifest digest, config digest를 같은 값으로 취급하지 않는다.
 로컬 수입 기록을 대조하고 파일 레이어·실행 설정·linux/amd64 일치를 확인한다. ECR에서 다시
 조회한 digest로 다음 JSON 매핑을 작성한다. 초기화 컨테이너도 빠짐없이 포함한다.
+`image-inventory.json`에서 사용처가 `govbiz-msa/web/*`뿐인 이미지는 Vercel 배포 시 발행·매핑을
+생략할 수 있다. 다른 서비스나 초기화 컨테이너도 사용하는 이미지는 반드시 유지한다.
 
 ```json
 {
@@ -88,14 +140,22 @@ Docker의 이미지 index ID, platform manifest digest, config digest를 같은 
 ```sh
 python3 "$tool" prepare --bundle "$bundle" --key-file "$key" \
   --pool-placement --image-map .data/eks-image-map.json \
+  --vercel-origin 'https://govbiz.vercel.app' \
   --output .data/eks-rendered
 ```
 
 이 명령은 AWS 호출·적용·앱 기동을 하지 않는다. 이미지 매핑이 부족하거나 digest가 없으면 거절한다.
+`--vercel-origin`은 실제 HTTPS `*.vercel.app` origin만 받으며 경로·끝 `/`를 붙이지 않는다.
+다른 Vercel 프로젝트를 사용할 때는 실제 발급된 주소로 바꾼다. 옵션 없이 만들었던 이전 출력은 웹 Pod를 포함하므로
+새 출력 디렉터리로 다시 변환한다. 기존 Kubernetes 웹 배포를 사용하는 별도 환경은 옵션을 생략한다.
 출력은 모두 비공개로 다룬다. 이전 replica는 `startup-plan.json`에 기록하고 workload는 0개로
 멈춘 상태로 내보낸다. Service 이름·내부 연결·NetworkPolicy·DB 설정·복원 검사·probe를 보존하며,
 개발 로그인 및 Ops 유료·정기 평가 실행은 비활성화한다. 기존 AI 키를 사용하는 실제 호출은
 이전 확인 과정에서 실행하지 않는다.
+
+Vercel 모드에서는 Core의 CORS·OAuth callback/완료 화면·일일 리포트 링크와 Ops 화면·CSRF
+신뢰 origin을 해당 주소로 바꾸고 Core·Django의 Secure 쿠키를 켠다. `startup-plan.json`에
+`frontend.hosting=vercel`과 origin을 기록하며 웹 Pod·Service는 출력하지 않는다.
 
 | 출력 | 적용 시점 |
 | --- | --- |
@@ -124,10 +184,14 @@ python3 "$tool" restore --kubeconfig .data/eks-kubeconfig \
 ```
 
 5. Secret·ConfigMap·Service·NetworkPolicy와 정지 workload를 적용한다. 저장소부터 원래 replica로
-   기동해 Ready를 확인한 뒤 Prefect·보고서 → AI·Catalog·Core·Ops → 실행기·웹 순서로 재개한다.
+   기동해 Ready를 확인한 뒤 Prefect·보고서 → AI·Catalog·Core·Ops → 실행기 순서로 재개한다.
    모든 replica를 일괄 1로 바꾸지 말고 `startup-plan.json`과 원래 접수 상태를 따른다.
-6. `18173:8080` 웹과 `13000:3000` Langfuse를 port-forward한다. 기존 관리자 로그인, 공고·평가
-   이력·보고서 해시, 무료 평가, 로그아웃 후 접근 차단을 확인한다. 기존 모델의 유료 호출을 새로 하지 않는다.
+6. Core·Ops의 health와 데이터·보고서 보존을 내부 연결 또는 port-forward로 확인한다.
+   Langfuse 자체 UI는 `13000:3000` port-forward로 별도 확인한다. EKS에 웹 Service가 없으므로
+   기존 `service/web 18173:8080` 명령을 실행하지 않는다.
+7. 위의 외부 API 경로·Ops 프록시를 연결하고 Vercel Production에 배포한 뒤, 실제 HTTPS 웹 주소에서
+   기존 관리자 로그인, OAuth, 공고·평가 이력·보고서, 무료 평가, 로그아웃 후 접근 차단을 확인한다.
+   기존 모델의 유료 호출을 새로 하지 않는다. port-forward 검증만으로 이 단계를 완료로 표시하지 않는다.
 
 이 경로는 현재 직접 배포 구성을 유지하는 첫 이전이다. Argo CD나 새 DB 스키마를 함께 도입하지 않는다.
 시연 종료 후 원격 백업 확인 → 앱 중지 → 클러스터 정리 → Retain EBS·NAT·공인 IP·ECR·로그의
@@ -137,6 +201,8 @@ python3 "$tool" restore --kubeconfig .data/eks-kubeconfig \
 
 `infrastructure/gitops/scripts/test_eks_handoff.py`는 기존 암호화·손상 차단·원본 복원 거절과 함께
 직접 배포 수집, 이미지 누락, PVC 보존, 두 풀 배치, RWO 공동 배치, 시드니 설정을 검사한다.
+Vercel 선택 시 웹만 제외하고 Langfuse 웹·공유 이미지·데이터를 보존하는지, 잘못된 origin을
+거절하고 Core·Ops 주소·Secure 쿠키 설정을 반영하는지도 검사한다.
 Linux Python 환경의 PyYAML·OpenSSL·GNU tar가 필요하며 기존 Infra CI의 테스트 탐색에 포함된다.
 Mac에서는 GNU tar가 있는 격리 Linux 환경으로 파일 복원 테스트를 실행한다.
 
