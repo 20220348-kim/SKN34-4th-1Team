@@ -454,14 +454,14 @@ class RuntimeTests(unittest.TestCase):
         )
         checks = [
             step
-            for step in workflow["jobs"]["integration"]["steps"]
+            for step in workflow["jobs"]["kubernetes"]["steps"]
             if "--evaluation-runtime" in step.get("run", "")
         ]
         self.assertEqual(len(checks), 1)
         self.assertNotIn("if", checks[0])
         self.assertNotIn("continue-on-error", checks[0])
         self.assertIn("--evaluate ", checks[0]["run"])
-        self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["changes", "integration"])
+        self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["changes", "integration", "cancellation", "kubernetes"])
 
     def deployment_failure(
         self, *, at_rollout=False, network_result=None, authentication_error=False

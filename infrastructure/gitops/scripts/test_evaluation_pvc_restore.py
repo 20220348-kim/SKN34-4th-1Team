@@ -1003,7 +1003,7 @@ class ArchiveTests(unittest.TestCase):
                 restore.fork_cluster.REPOSITORY_ROOT / ".github/workflows/llmops-ci.yml"
             ).read_text(encoding="utf-8")
         )
-        steps = workflow["jobs"]["integration"]["steps"]
+        steps = workflow["jobs"]["kubernetes"]["steps"]
         checks = [
             step
             for step in steps
@@ -1012,7 +1012,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(len(checks), 1)
         self.assertNotIn("if", checks[0])
         self.assertNotIn("continue-on-error", checks[0])
-        self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["changes", "integration"])
+        self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["changes", "integration", "cancellation", "kubernetes"])
 
     def test_only_store_data_and_db_verified_links_reach_kubernetes(self):
         events = []

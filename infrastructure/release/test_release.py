@@ -114,7 +114,8 @@ class ReleaseGateTests(unittest.TestCase):
     def scoped_responses(self, paths, *, scope_state="success", summary_state="success", prior_state="success"):
         filename = "llmops-ci.yml"
         def scoped_jobs(response):
-            response["jobs"][0]["conclusion"] = "skipped"
+            for job in response["jobs"][:-1]:
+                job["conclusion"] = "skipped"
             response["jobs"][-1]["conclusion"] = summary_state
             response["jobs"].append({**response["jobs"][-1],
                                      "name": gate.SCOPE_NAMES[filename], "conclusion": scope_state})

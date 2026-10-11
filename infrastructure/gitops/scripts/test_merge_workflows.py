@@ -222,6 +222,31 @@ class WorkflowPolicyTests(unittest.TestCase):
                     self.assertNotIn("continue-on-error", job)
                 self.assertEqual(tuple(names) + (summary["name"],), WORKFLOWS[filename])
 
+    def test_llmops_suites_keep_isolated_setup_and_all_scenarios(self):
+        jobs = yaml.safe_load((ROOT / ".github/workflows/llmops-ci.yml").read_text())["jobs"]
+        scripts = {
+            "integration": ("infrastructure/llmops/ops_smoke.py", "infrastructure/llmops/register_core_rag.py"),
+            "cancellation": ("infrastructure/llmops/cancellation_smoke.py",),
+            "kubernetes": ("scripts/smoke_evaluation_pvc.py", "scripts/smoke_ops_bridge.py --evaluate --evaluation-runtime"),
+        }
+        for identity, commands in scripts.items():
+            steps = jobs[identity]["steps"]
+            self.assertEqual(jobs[identity]["needs"], "changes")
+            self.assertTrue(steps[0]["uses"].startswith("actions/checkout@"))
+            self.assertTrue(any(step.get("run") == "uv sync --locked --extra dev --group evaluation" for step in steps))
+            for command in commands:
+                matched = [step for step in steps if command in step.get("run", "")]
+                self.assertTrue(matched, (identity, command))
+                for step in matched:
+                    self.assertNotIn("if", step)
+                    self.assertNotIn("continue-on-error", step)
+            self.assertFalse(any(step.get("uses", "").startswith("actions/download-artifact@") for step in steps))
+        k8s = "\n".join(step.get("run", "") for step in jobs["kubernetes"]["steps"])
+        self.assertIn("pnpm install --frozen-lockfile", k8s)
+        self.assertIn("playwright-core install --with-deps --only-shell chromium", k8s)
+        for tool in ("kind", "kubectl", "helm"):
+            self.assertIn(tool, k8s)
+
     def test_scope_planner_is_read_only_and_exposes_selection_to_existing_jobs(self):
         names = {
             "ci.yml": "GovBiz",
@@ -230,12 +255,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             "infra-ci.yml": "Infra",
             "llmops-ci.yml": "LLMOps",
         }
-        # Keep the existing execution prerequisites as well as the scope job.
-        prerequisites = {
-            ("ci.yml", "container-integration"): {"frontend", "core-service", "ai-service"},
-            ("catalog-ci.yml", "catalog-integration"): {"catalog-service"},
-            ("ops-ci.yml", "docker"): {"checks"},
-        }
+        # Self-contained jobs run in parallel after scope selection.
         for filename, expected in WORKFLOW_JOBS.items():
             with self.subTest(filename=filename):
                 workflow = yaml.load(
@@ -278,7 +298,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                             needs = [needs]
                         self.assertEqual(
                             set(needs),
-                            {"changes"} | prerequisites.get((filename, identity), set()),
+                            {"changes"},
                         )
                         self.assertEqual(
                             job["if"],

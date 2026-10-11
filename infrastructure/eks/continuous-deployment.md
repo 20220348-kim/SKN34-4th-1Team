@@ -201,6 +201,13 @@ Vercel 프로젝트 생성·요금제 선택은 개인 계정에서 진행한다
 리전은 이 시연의 `ap-southeast-2`로 고정한다. CodeBuild·ECR·로그와 Vercel 이용량은
 기존 EKS 노드 비용 외에 발생할 수 있으므로 시연 예산에 추가한다.
 
+Vercel 도메인 전환은 개인 사용자 조회가 필요한 CLI `promote` 대신
+[공식 REST API](https://vercel.com/docs/rest-api)에 팀·프로젝트 ID를 명시해 요청한다.
+먼저 대상 배포의 소유 프로젝트·커밋 SHA·Production 빌드 완료 상태와 최신 main CI를 확인하고,
+프로젝트 조회에 `rollbackInfo=true`를 포함해 전환 작업 상태를 받아야 한다.
+실제 도메인 전환 작업 성공 및 운영 배포 ID 일치까지 확인한다. 요청 접수만으로 성공 처리하지 않는다.
+개인 계정 전체 권한 토큰으로 교체할 필요는 없으며, 성공 기록은 `vercel-release` artifact에 남긴다.
+
 ## 배포 실패와 데이터 보호
 
 - 시작 전에 6개 Deployment가 실행 중인지 확인한다. 운영자가 정지시킨 서비스를 자동으로 켜지 않는다.

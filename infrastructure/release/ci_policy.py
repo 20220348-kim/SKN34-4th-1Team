@@ -36,7 +36,11 @@ WORKFLOW_JOBS = {
         "kubernetes-manifests": ("kubernetes-manifests",),
         "helm-gitops": ("helm-gitops",),
     },
-    "llmops-ci.yml": {"integration": ("Saved capture pipeline with local servers",)},
+    "llmops-ci.yml": {
+        "integration": ("Saved capture pipeline with local servers",),
+        "cancellation": ("Offline cancellation and budget recovery",),
+        "kubernetes": ("Kubernetes evaluation and restore",),
+    },
 }
 SUMMARY_NAMES = dict(
     zip(
