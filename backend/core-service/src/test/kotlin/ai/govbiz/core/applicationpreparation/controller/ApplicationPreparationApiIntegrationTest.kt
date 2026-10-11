@@ -1789,7 +1789,7 @@ class ApplicationPreparationApiIntegrationTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = ["APPLICATION_DOCUMENT_MCP_NOT_READY", "APPLICATION_DOCUMENT_MCP_FAILED", "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"])
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["APPLICATION_DOCUMENT_MCP_NOT_READY", "APPLICATION_DOCUMENT_MCP_UNAVAILABLE", "APPLICATION_DOCUMENT_MCP_FAILED", "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"])
     fun migrationConfigurationFailureRetainsPublicErrorAndDoesNotWrite(code: String) {
         val fixture = changedMappingFixture()
         val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)

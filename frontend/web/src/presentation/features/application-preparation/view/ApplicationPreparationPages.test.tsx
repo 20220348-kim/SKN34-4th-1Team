@@ -550,6 +550,17 @@ it.each([
   expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
 })
 
+it('offers a retry when the document service could not be reached before the draft started', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockResolvedValueOnce(generationJob({ status: 'FAILED', stage: 'MAPPING', fileIds: [],
+    failureCode: 'APPLICATION_DOCUMENT_MCP_UNAVAILABLE', failureMessage: '문서 편집 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' }))
+  mount('/app/application-preparations/12/documents?generate=3')
+  const alert = await screen.findByRole('alert')
+  expect(alert.querySelector('strong')?.textContent).toBe('일시적인 문제로 초안을 만들지 못했어요')
+  expect(alert.textContent).toContain('문서 편집 서비스에 연결하지 못했습니다.')
+  expect(within(alert).getByRole('button', { name: '다시 시도' })).toBeTruthy()
+})
+
 it('treats an unknown failure code as a temporary problem that can be retried', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.submitDocumentJob.mockResolvedValueOnce(generationJob({ status: 'FAILED', stage: 'WRITING', fileIds: [],

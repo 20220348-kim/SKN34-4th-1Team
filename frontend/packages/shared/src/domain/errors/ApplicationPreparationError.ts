@@ -48,6 +48,7 @@ function messageFor(code: string, status: number): string {
   if (code === 'APPLICATION_DOCUMENT_SOURCE_CHANGED') return '공식 첨부가 변경되었거나 없어졌습니다. 양식을 다시 찾아 새 작성을 시작해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_MAPPING_FAILED') return '공식 양식의 입력 위치를 확인하지 못해 작업을 중단했습니다. 양식 분석 결과를 확인해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_MCP_NOT_READY') return '문서 생성 서비스를 사용할 수 없습니다. 관리자에게 문의해 주세요.'
+  if (code === 'APPLICATION_DOCUMENT_MCP_UNAVAILABLE') return '문서 생성 서비스에 잠시 연결하지 못했습니다. 저장된 답변은 그대로이니 잠시 후 다시 시도해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_PLAN_TIMEOUT') return '문서 위치·작성 계획 분석 시간이 초과되었습니다. 저장된 답변을 유지한 채 다시 시도할 수 있습니다.'
   if (code === 'APPLICATION_DOCUMENT_PLAN_FAILED') return '문서 위치·작성 계획을 확인하지 못했습니다. 저장된 답변은 유지됩니다.'
   if (code === 'APPLICATION_DOCUMENT_MCP_FAILED') return '문서 편집 도구가 작업을 완료하지 못했습니다. 관리자에게 문의해 주세요.'

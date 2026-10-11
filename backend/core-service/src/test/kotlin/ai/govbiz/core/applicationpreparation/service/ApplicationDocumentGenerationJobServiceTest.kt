@@ -150,6 +150,17 @@ class ApplicationDocumentGenerationJobServiceTest {
     }
 
     @Test
+    fun unreachableDocumentServiceFailsBeforeAiStartWithoutHoldingTheSlotOrLock() {
+        `when`(client.configuration()).thenThrow(ApplicationDocumentMcpException("APPLICATION_DOCUMENT_MCP_UNAVAILABLE", "safe detail",
+            java.net.ConnectException("Connection refused")))
+        assertTrue(service.execute(job.id))
+        verify(jobs, never()).beginAi(job.id)
+        verify(jobs).fail(job.id, "APPLICATION_DOCUMENT_MCP_UNAVAILABLE", "safe detail", null, false)
+        verify(redis, never()).expire("application-document-run:9", Duration.ofHours(24))
+        verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)
+    }
+
+    @Test
     fun lostJobLeasePreventsBothMappingAndWritingCalls() {
         `when`(jobs.beginAi(job.id)).thenReturn(false)
         assertTrue(service.execute(job.id))

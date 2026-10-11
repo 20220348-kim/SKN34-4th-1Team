@@ -41,6 +41,8 @@ const failureGroups: Record<string, FailureGroup> = {
   MAPPING_FAILED: 'reanalysis', SOURCE_CHANGED: 'reanalysis', FORM_REANALYSIS_REQUIRED: 'reanalysis',
   INPUT_REQUIRED: 'userFix', OVERFLOW: 'userFix', APPLICATION_PREPARATION_REVISION_CONFLICT: 'userFix',
   MCP_NOT_READY: 'serviceDown',
+  // 요청을 보내기 전에 연결하지 못한 경우라 결과 불명이 아니며, 다시 시도로 풀릴 수 있습니다.
+  MCP_UNAVAILABLE: 'temporary',
   OUTCOME_UNKNOWN: 'outcomeUnknown', RUN_OUTCOME_UNKNOWN: 'outcomeUnknown',
 }
 
