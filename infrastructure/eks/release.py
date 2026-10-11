@@ -9,8 +9,11 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "infrastructure/release"))
@@ -235,13 +238,115 @@ def web_source(sha, destination):
     archive(sha, WEB_PATHS, destination)
 
 
+def vercel_api(path, team, token, method="GET"):
+    # Project-scoped requests do not require the CLI's personal /v2/user lookup.
+    request = Request(
+        "https://api.vercel.com" + path + "?teamId=" + quote(team, safe=""),
+        data=b"{}" if method == "POST" else None,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            body = response.read()
+            return json.loads(body) if body else {}
+    except HTTPError as error:
+        # Response bodies may contain private project details. Do not print them.
+        raise ValueError(
+            f"Vercel {method} request failed (HTTP {error.code})"
+        ) from None
+
+
+def promote_web(sha, deployment_url):
+    team = os.environ.get("VERCEL_ORG_ID", "")
+    project_id = os.environ.get("VERCEL_PROJECT_ID", "")
+    token = os.environ.get("VERCEL_TOKEN", "")
+    require(re.fullmatch(r"team_[A-Za-z0-9]+", team), "Missing Vercel team ID")
+    require(re.fullmatch(r"prj_[A-Za-z0-9]+", project_id), "Missing Vercel project ID")
+    require(
+        bool(token) and "\r" not in token and "\n" not in token, "Missing Vercel token"
+    )
+    url = urlsplit(deployment_url)
+    require(
+        url.scheme == "https"
+        and re.fullmatch(r"[a-z0-9-]+\.vercel\.app", url.netloc)
+        and url.path in ("", "/")
+        and not url.query
+        and not url.fragment,
+        "Expected one Vercel deployment URL",
+    )
+    check(sha)
+    deployment = vercel_api(
+        "/v13/deployments/" + quote(url.netloc, safe=""), team, token
+    )
+    project_path = "/v9/projects/" + project_id
+    project = vercel_api(project_path, team, token)
+    require(
+        project.get("id") == project_id and project.get("accountId") == team,
+        "Vercel project does not belong to the configured team",
+    )
+    require(
+        deployment.get("projectId") == project_id, "Vercel deployment project mismatch"
+    )
+    require(deployment.get("url") == url.netloc, "Vercel deployment URL mismatch")
+    require(
+        deployment.get("meta", {}).get("githubCommitSha") == sha,
+        "Vercel deployment source SHA mismatch",
+    )
+    require(
+        deployment.get("readyState") == "READY"
+        and deployment.get("target") == "production",
+        "Only a ready staged production deployment can be promoted",
+    )
+    deployment_id = deployment.get("id", "")
+    require(
+        re.fullmatch(r"dpl_[A-Za-z0-9]+", deployment_id), "Invalid Vercel deployment ID"
+    )
+    check(sha)  # Main or required CI may change during the Vercel reads.
+    vercel_api(
+        f"/v10/projects/{project_id}/promote/{deployment_id}", team, token, "POST"
+    )
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        project = vercel_api(project_path, team, token)
+        require(
+            project.get("id") == project_id and project.get("accountId") == team,
+            "Vercel promotion project mismatch",
+        )
+        job = project.get("lastAliasRequest") or {}
+        if job.get("toDeploymentId") == deployment_id:
+            require(
+                job.get("jobStatus") not in ("failed", "skipped"),
+                "Vercel domain promotion failed",
+            )
+            production = project.get("targets", {}).get("production") or {}
+            if (
+                job.get("jobStatus") == "succeeded"
+                and production.get("id") == deployment_id
+            ):
+                check(sha)
+                return {
+                    "sourceSha": sha,
+                    "projectId": project_id,
+                    "deploymentId": deployment_id,
+                    "url": deployment_url,
+                }
+        time.sleep(5)
+    raise ValueError("Vercel domain promotion did not complete within 180 seconds")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("gate", "check", "publish", "rollout", "web-source")
+        "command",
+        choices=("gate", "check", "publish", "rollout", "web-source", "web-promote"),
     )
     parser.add_argument("--sha")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--deployment-url-file", type=Path)
     args = parser.parse_args()
     if args.command == "gate":
         select()
@@ -251,8 +356,15 @@ def main():
         publish(args.sha, args.output)
     elif args.command == "rollout":
         rollout(args.sha, args.output)
-    else:
+    elif args.command == "web-source":
         web_source(args.sha, args.output)
+    else:
+        require(
+            args.deployment_url_file and args.output,
+            "Deployment URL file and output are required",
+        )
+        record = promote_web(args.sha, args.deployment_url_file.read_text().strip())
+        args.output.write_text(json.dumps(record, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -10,6 +11,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 import yaml
 
@@ -465,7 +467,17 @@ class EksReleaseTests(unittest.TestCase):
         self.assertIn("backend", web["needs"])
         steps = "\n".join(s.get("run", "") for s in web["steps"])
         self.assertIn("--prod --skip-domain", steps)
-        self.assertLess(steps.rfind("release.py check"), steps.index("vercel promote"))
+        self.assertNotIn("vercel promote", steps)
+        self.assertLess(
+            steps.index("vercel deploy"), steps.index("release.py web-promote")
+        )
+        self.assertIn('--deployment-url-file "$RUNNER_TEMP/vercel-url.txt"', steps)
+        self.assertTrue(
+            any(
+                step.get("with", {}).get("name") == "vercel-release"
+                for step in web["steps"]
+            )
+        )
         for job in w["jobs"].values():
             self.assertNotIn("continue-on-error", job)
             for step in job["steps"]:
@@ -542,6 +554,184 @@ class EksReleaseTests(unittest.TestCase):
                     & set(rule["resources"])
                 )
                 self.assertNotIn("delete", rule["verbs"])
+
+
+class VercelPromotionTests(unittest.TestCase):
+    url = "https://govbiz-test-team.vercel.app"
+
+    def setUp(self):
+        self.project = {"id": "prj_Test", "accountId": "team_Test"}
+        self.deployment = {
+            "id": "dpl_Test",
+            "projectId": "prj_Test",
+            "url": "govbiz-test-team.vercel.app",
+            "meta": {"githubCommitSha": SHA},
+            "readyState": "READY",
+            "target": "production",
+        }
+        for patcher in (
+            patch.dict(
+                os.environ,
+                {
+                    "VERCEL_ORG_ID": "team_Test",
+                    "VERCEL_PROJECT_ID": "prj_Test",
+                    "VERCEL_TOKEN": "test-token",
+                },
+            ),
+            patch.object(release.time, "sleep"),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        checker = patch.object(release, "check")
+        self.check = checker.start()
+        self.addCleanup(checker.stop)
+
+    def promoted(self, status="succeeded"):
+        return {
+            **self.project,
+            "lastAliasRequest": {"toDeploymentId": "dpl_Test", "jobStatus": status},
+            "targets": {"production": {"id": "dpl_Test"}},
+        }
+
+    def test_team_scoped_api_and_actual_domain_completion_without_user_lookup(self):
+        responses = [
+            self.deployment,
+            self.project,
+            {},
+            self.promoted("pending"),
+            self.promoted(),
+        ]
+        with patch.object(release, "vercel_api", side_effect=responses) as api:
+            record = release.promote_web(SHA, self.url)
+        self.assertEqual(record["sourceSha"], SHA)
+        self.assertEqual(record["deploymentId"], "dpl_Test")
+        self.assertEqual(self.check.call_count, 3)
+        self.assertEqual(
+            api.call_args_list[2].args,
+            (
+                "/v10/projects/prj_Test/promote/dpl_Test",
+                "team_Test",
+                "test-token",
+                "POST",
+            ),
+        )
+        self.assertTrue(all("user" not in call.args[0] for call in api.call_args_list))
+        self.assertTrue(all(call.args[1] == "team_Test" for call in api.call_args_list))
+
+    def test_unready_preview_wrong_project_sha_and_url_never_promote(self):
+        for change in (
+            {"readyState": "BUILDING"},
+            {"target": "preview"},
+            {"projectId": "prj_Other"},
+            {"meta": {"githubCommitSha": "b" * 40}},
+            {"url": "other.vercel.app"},
+            {"id": "bad/id"},
+        ):
+            with (
+                self.subTest(change=change),
+                patch.object(
+                    release,
+                    "vercel_api",
+                    side_effect=[{**self.deployment, **change}, self.project],
+                ) as api,
+            ):
+                with self.assertRaises(ValueError):
+                    release.promote_web(SHA, self.url)
+                self.assertFalse(
+                    any(len(call.args) == 4 for call in api.call_args_list)
+                )
+
+    def test_wrong_team_and_changed_main_reject_before_post(self):
+        with patch.object(
+            release,
+            "vercel_api",
+            side_effect=[self.deployment, {**self.project, "accountId": "team_Other"}],
+        ) as api:
+            with self.assertRaisesRegex(ValueError, "configured team"):
+                release.promote_web(SHA, self.url)
+            self.assertEqual(api.call_count, 2)
+        self.check.side_effect = [None, ValueError("Source superseded")]
+        with patch.object(
+            release, "vercel_api", side_effect=[self.deployment, self.project]
+        ) as api:
+            with self.assertRaisesRegex(ValueError, "superseded"):
+                release.promote_web(SHA, self.url)
+            self.assertEqual(api.call_count, 2)
+
+    def test_failed_or_skipped_alias_job_is_not_success(self):
+        for status in ("failed", "skipped"):
+            with (
+                self.subTest(status=status),
+                patch.object(
+                    release,
+                    "vercel_api",
+                    side_effect=[
+                        self.deployment,
+                        self.project,
+                        {},
+                        self.promoted(status),
+                    ],
+                ),
+                self.assertRaisesRegex(ValueError, "promotion failed"),
+            ):
+                release.promote_web(SHA, self.url)
+
+    def test_accepted_request_and_different_production_id_are_not_completion(self):
+        incomplete = self.promoted()
+        incomplete["targets"]["production"]["id"] = "dpl_Other"
+        for last in (self.project, incomplete):
+            with (
+                self.subTest(last=last),
+                patch.object(
+                    release,
+                    "vercel_api",
+                    side_effect=[self.deployment, self.project, {}, last],
+                ),
+                patch.object(release.time, "monotonic", side_effect=[0, 0, 181]),
+                self.assertRaisesRegex(ValueError, "did not complete"),
+            ):
+                release.promote_web(SHA, self.url)
+
+    def test_invalid_output_or_missing_credentials_never_call_external_api(self):
+        with patch.object(release, "vercel_api") as api:
+            for url in (
+                "http://govbiz-test.vercel.app",
+                "https://evil.example",
+                self.url + "?token=x",
+                self.url + "\n" + self.url,
+            ):
+                with self.subTest(url=url), self.assertRaises(ValueError):
+                    release.promote_web(SHA, url)
+            with (
+                patch.dict(os.environ, {"VERCEL_TOKEN": ""}),
+                self.assertRaises(ValueError),
+            ):
+                release.promote_web(SHA, self.url)
+            api.assert_not_called()
+            self.check.assert_not_called()
+
+    def test_http_client_scopes_every_request_and_keeps_token_out_of_error(self):
+        with patch.object(
+            release, "urlopen", return_value=io.BytesIO(b"{}")
+        ) as open_url:
+            release.vercel_api("/v9/projects/prj_Test", "team_Test", "secret")
+        request = open_url.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://api.vercel.com/v9/projects/prj_Test?teamId=team_Test",
+        )
+        self.assertEqual(request.get_header("Authorization"), "Bearer secret")
+        error = HTTPError(
+            "https://api.vercel.com", 403, "secret", {}, io.BytesIO(b"secret")
+        )
+        with (
+            patch.object(release, "urlopen", side_effect=error),
+            self.assertRaises(ValueError) as raised,
+        ):
+            release.vercel_api(
+                "/v10/projects/prj_Test/promote/dpl_Test", "team_Test", "secret", "POST"
+            )
+        self.assertEqual(str(raised.exception), "Vercel POST request failed (HTTP 403)")
 
 
 if __name__ == "__main__":
