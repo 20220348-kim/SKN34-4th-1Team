@@ -9,6 +9,7 @@ import { businessStatusNotes, canRegisterBusiness, companyRegistrationMessages }
 import { ApiError, errorMessage } from '../api/client'
 import { getCompany, lookupCompanyBusiness, saveCompanyProfile } from '../api/company'
 import { useAuth } from '../auth/session'
+import { CompanyPartnerProfileSection } from '../components/CompanyPartnerProfileSection'
 import { Page, Button, Field, Notice, Card, Title, colors, styles } from '../ui'
 
 type CompanyState = { token: string | null; company: Company | null; loading: boolean; loadError: string | null }
@@ -126,6 +127,7 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
     {notice && <Notice>{notice}</Notice>}
     <Button label={state.company ? '기업 정보 저장' : '기업 등록'} onPress={() => void saveCompany()} busy={busy}
       disabled={!state.company && !(lookup && canRegisterBusiness(lookup))} />
+    {state.company && <CompanyPartnerProfileSection key={`${token}:${state.company.businessNumber}`} token={token} disabled={busy} onRefreshCompany={() => setRevision(value => value + 1)} />}
   </Page>
 }
 
