@@ -73,6 +73,8 @@ class ApplicationFormAvailabilityIntegrationTest {
     }
     private fun hash(value: ByteArray) = MessageDigest.getInstance("SHA-256").digest(value).joinToString("") { "%02x".format(it) }
     private fun state() = requireNotNull(availability.find("BIZINFO", id))
+    /** 화면에 나가는 경고에 "(NON_APPLICANT_ROLE)" 같은 내부 분류 이름이 남았는지 봅니다. */
+    private val internalCode = Regex("""\([A-Z][A-Z_]{5,}\)""")
     private fun due() { jdbc.update("UPDATE application_form_availability SET next_retry_at=NOW()-INTERVAL 1 DAY") }
     private fun configureFiles(two: Boolean = false, content: ByteArray = bytes) {
         `when`(attachments.collect("BIZINFO", id)).thenReturn(SupportProgramAttachments(program.title,
@@ -211,6 +213,25 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertEquals(ApplicationFormAvailabilityStatus.STALE, state().status)
         assertEquals(emptyList<String>(), state().warnings)
     }
+    @Test fun noticeAndUnreadableAttachmentsAreExcludedWithReadableReasons() {
+        `when`(attachments.collect("BIZINFO", id)).thenReturn(SupportProgramAttachments(program.title, listOf(
+            SupportProgramAttachment(url, "신청서.hwpx", "HWPX", bytes),
+            SupportProgramAttachment(url + "2", "모집 공고문.hwpx", "HWPX", "notice".toByteArray()),
+            SupportProgramAttachment(url + "3", "스캔 서약서.pdf", "PDF", "scan".toByteArray())), emptyList()))
+        `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenAnswer { invocation ->
+            when (String(invocation.getArgument<ByteArray>(0))) {
+                "scan" -> throw SupportProgramDocumentException(SupportProgramDocumentException.Reason.UNSUPPORTED)
+                // 공고문 안의 별지 서식은 서식 신호지만, 신청서가 따로 있으면 공고문은 분석하지 않습니다.
+                "notice" -> listOf(SupportProgramDocumentBlock("문단 1", "[별지 제1호서식] 참가 신청서"))
+                else -> listOf(SupportProgramDocumentBlock("문단 1", "업체명"))
+            }
+        }
+        availability.register("BIZINFO", id, "a".repeat(64)); worker.runNext()
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertTrue(state().warnings.contains("자동 분석 제외 첨부(공고문·안내문처럼 신청자가 작성하지 않는 문서): 모집 공고문.hwpx"))
+        assertTrue(state().warnings.contains("자동 분석 제외 첨부(글자를 읽을 수 없는 문서(스캔·암호 PDF 등)): 스캔 서약서.pdf"))
+        assertTrue(state().warnings.none { internalCode.containsMatchIn(it) })
+    }
     @Test fun noticeWithoutAnyFormSignalIsNotSentToTheModel() {
         `when`(attachments.collect("BIZINFO", id)).thenReturn(SupportProgramAttachments(program.title,
             listOf(SupportProgramAttachment(url, "모집 공고문.hwpx", "HWPX", bytes)), emptyList()))
@@ -281,6 +302,9 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertTrue(worker.runNext())
         assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+        // 제외 이유는 내부 분류 이름 대신 사용자 문장으로 남깁니다.
+        assertTrue(state().warnings.any { it == "자동 분석 제외 첨부(서식 여러 개가 묶여 입력칸이 자동 처리 한도를 넘는 파일): 신청서.hwpx" })
+        assertTrue(state().warnings.none { internalCode.containsMatchIn(it) })
 
         configureFiles()
         `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList())))

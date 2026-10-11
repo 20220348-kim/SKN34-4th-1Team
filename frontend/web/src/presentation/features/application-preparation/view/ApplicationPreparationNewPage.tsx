@@ -17,6 +17,7 @@ import {
   noFormNotice,
   storedForms,
   useApplicationPreparationNewViewModel,
+  writableFieldCount,
   type AvailabilityLookup,
 } from '../viewmodel/useApplicationPreparationNewViewModel'
 import {
@@ -89,9 +90,10 @@ function PickAvailability({ lookup, onRetry }: { lookup: AvailabilityLookup; onR
     <button type="button" className={n.secondarySm} onClick={onRetry}>다시 시도</button>
   </div>
   const count = storedForms(lookup.result).length
+  const notice = noFormNotice(lookup.result)
   return count > 0
     ? <p className={a.ok} role="status"><CheckIcon />양식 {count}개 · 바로 작성할 수 있어요</p>
-    : <p className={a.none} role="status">{noFormNotice(lookup.result)?.title ?? '저장된 양식이 없어요'} · 고른 뒤 입력칸별로 분석</p>
+    : <p className={a.none} role="status">{notice?.title ?? '저장된 양식이 없어요'} · {notice?.reanalysisUseful === false ? '공고 원문에서 신청 방법 확인' : '고른 뒤 입력칸별로 분석'}</p>
 }
 
 function SourceLink({ href, title }: { href: string; title: string }) {
@@ -133,7 +135,7 @@ function AvailabilitySummary({ vm }: { vm: NewViewModel }) {
     : <div className={`${n.alert} ${n.alertNeutral}`} role="status">
       <div className={n.alertText}>
         <strong className={n.alertTitle}>{vm.noForm?.title ?? '저장된 신청 양식이 없어요'}</strong>
-        <p>아래 ②에서 이유를 확인하고 입력칸별로 분석할 수 있어요.</p>
+        <p>{vm.noForm?.reanalysisUseful === false ? '아래 ②에서 이유를 확인하고 공고 원문을 봐 주세요.' : '아래 ②에서 이유를 확인하고 입력칸별로 분석할 수 있어요.'}</p>
       </div>
     </div>
 }
@@ -213,10 +215,12 @@ function FormChoice({ vm }: { vm: NewViewModel }) {
         {vm.forms.map((candidate) => <label className={n.choice} key={candidate.formVersionId}>
           <input className={n.radio} type="radio" name="application-form" disabled={vm.submitting}
             checked={candidate.formVersionId === vm.selectedFormVersionId} onChange={() => vm.selectForm(candidate.formVersionId)} />
-          <span className={n.choiceText}>{candidate.formTitle}<span>{candidate.attachmentFileName}</span></span>
+          <span className={n.choiceText}>{candidate.formTitle}<span>{candidate.attachmentFileName} · {writableLabel(candidate)}</span></span>
         </label>)}
       </div>
-      : <p className={`m-0 ${n.choiceText}`}>{form.formTitle}<span>{form.attachmentFileName}</span></p>}
+      : <p className={`m-0 ${n.choiceText}`}>{form.formTitle}<span>{form.attachmentFileName} · {writableLabel(form)}</span></p>}
+    {/* 넣을 칸을 찾지 못한 문항이 절반을 넘으면 자동 기입보다 답변을 정리해 옮겨 적는 용도라는 것을 고르기 전에 알립니다. */}
+    {mostlyManual(form) && <p className={n.muted}>이 양식은 문항 대부분을 원본에 직접 적어야 해요. 답변을 정리해 두고 원본에 옮겨 적는 용도로 쓸 수 있어요.</p>}
 
     {!generalOnly && <div className={n.field}>
       <label className={n.fieldLabel} htmlFor={fieldId}>신청 분야</label>
@@ -239,6 +243,17 @@ function FormChoice({ vm }: { vm: NewViewModel }) {
       {vm.draftUsage && <PlanUsageLine view={vm.draftUsage} className={n.usage} />}
     </section>
   </section>
+}
+
+/** 양식 고르기에 보이는 자동 기입 범위입니다. 예: "자동 기입 17/57문항". */
+function writableLabel(form: NonNullable<NewViewModel['selectedForm']>): string {
+  const { writable, total } = writableFieldCount(form)
+  return `자동 기입 ${writable}/${total}문항`
+}
+
+function mostlyManual(form: NonNullable<NewViewModel['selectedForm']>): boolean {
+  const { writable, total } = writableFieldCount(form)
+  return total > 0 && writable * 2 < total
 }
 
 /**
@@ -305,13 +320,20 @@ export function FormSectionBody({ vm }: { vm: NewViewModel }) {
           {vm.noForm?.message && <p className={n.muted}>{vm.noForm.message}</p>}
           {vm.noForm?.detail && <p className={n.muted}>{vm.noForm.detail}</p>}
           {vm.discoveryWarnings.length > 0 && <ul className={n.warningList}>{vm.discoveryWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
-          <div className={n.centeredAction}>
-            <button type="button" className={n.secondary} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />{vm.lastAnalysis && vm.lastAnalysis.kind !== 'unknown' ? '입력칸별로 다시 분석' : '입력칸별로 분석'}</button>
-            <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.</p>
-            {/* 이번 달 신청 문서 이용량입니다. 이미 센 공고를 다시 분석하면 늘지 않으므로 한도에 닿아도 버튼은 막지 않습니다. */}
-            {vm.draftUsage && <PlanUsageLine view={vm.draftUsage} className={n.usageCentered} />}
-            {program && <SourceLink href={program.sourceUrl} title={program.title} />}
-          </div>
+          {vm.noForm?.reanalysisUseful === false
+            // 다시 분석해도 같은 결과인 상태는 원문 보기를 먼저 두고, 공식 첨부가 바뀐 경우에만 쓰는 다시 확인을 작게 둡니다.
+            ? <div className={n.centeredAction}>
+              {program && <a className={n.secondary} href={program.sourceUrl} target="_blank" rel="noreferrer">공고 원문 보기 ↗<span className="sr-only">: {program.title} (새 창)</span></a>}
+              <button type="button" className={n.secondarySm} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}>첨부 다시 확인</button>
+              <p className={n.muted}>공식 첨부가 바뀌었을 때만 결과가 달라져요. 새 첨부가 있으면 유료 AI로 분석해요.</p>
+            </div>
+            : <div className={n.centeredAction}>
+              <button type="button" className={n.secondary} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />{vm.lastAnalysis && vm.lastAnalysis.kind !== 'unknown' ? '입력칸별로 다시 분석' : '입력칸별로 분석'}</button>
+              <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.</p>
+              {/* 이번 달 신청 문서 이용량입니다. 이미 센 공고를 다시 분석하면 늘지 않으므로 한도에 닿아도 버튼은 막지 않습니다. */}
+              {vm.draftUsage && <PlanUsageLine view={vm.draftUsage} className={n.usageCentered} />}
+              {program && <SourceLink href={program.sourceUrl} title={program.title} />}
+            </div>}
         </section>}
 
     {vm.capacityJobs && <CapacityAlert jobs={vm.capacityJobs} onRetry={vm.discoverForms} />}
@@ -331,6 +353,7 @@ function startBlockedReason(vm: NewViewModel): string | null {
   if (vm.discovery) return '분석이 끝나면 시작할 수 있어요'
   if (vm.availability?.status === 'failed') return '저장된 양식을 확인하면 시작할 수 있어요'
   if (vm.analysisBlocked) return '분석 결과가 확인되면 시작할 수 있어요'
+  if (vm.availability?.status === 'ready' && vm.noForm?.reanalysisUseful === false) return '자동으로 읽을 양식이 없어 원문에서 직접 작성해요'
   if (vm.availability?.status === 'ready') return '양식을 분석하면 시작할 수 있어요'
   return null
 }

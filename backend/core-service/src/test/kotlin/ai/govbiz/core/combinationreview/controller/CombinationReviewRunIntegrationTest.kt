@@ -595,9 +595,11 @@ class CombinationReviewRunIntegrationTest {
         val runId = id(start().andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SUCCEEDED")))
         val stored = requireNotNull(runs.findOwned(ownerId, reviewId, runId))
         assertEquals(2, stored.evidence!!.documents.size)
+        // 제외 이유는 내부 분류 이름(SOURCE_UNSUPPORTED) 대신 사용자 문장으로 남깁니다.
         assertTrue(stored.evidence.coverageWarnings.any {
-            it.contains("SOURCE_UNSUPPORTED") && it.contains("이미지형 붙임.pdf")
+            it.contains("자동 분석 제외 첨부(글자를 읽을 수 없는 문서(스캔·암호 PDF 등))") && it.contains("이미지형 붙임.pdf")
         })
+        assertTrue(stored.evidence.coverageWarnings.none { it.contains("SOURCE_UNSUPPORTED") })
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM combination_review_run_source WHERE run_id = ?", Int::class.java, runId))
     }
 

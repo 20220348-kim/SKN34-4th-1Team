@@ -1609,7 +1609,7 @@ class ApplicationPreparationApiIntegrationTest {
 
         val discoveryResponse = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
             .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}""")).andExpect(status().isOk()).andReturn().response
-        assertTrue(json.readTree(discoveryResponse.contentAsString).path("warnings").any { it.asString().contains("문항 1개는 넣을 칸을 찾지 못해 원본에서 직접 작성해야 해요") })
+        assertTrue(json.readTree(discoveryResponse.contentAsString).path("warnings").any { Regex("""의 문항 \d+개 중 1개는 넣을 칸을 찾지 못해 원본에서 직접 작성해야 해요""").containsMatchIn(it.asString()) })
         val version = json.readTree(discoveryResponse.contentAsString).path("items").path(0).path("formVersionId").asString()
         activateStored(version)
         val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
