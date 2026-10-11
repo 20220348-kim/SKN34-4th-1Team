@@ -11,23 +11,53 @@ import { useAppForeground } from './useAppForeground'
 
 /**
  * 요금제 이용량을 읽습니다. token이 없으면 로그인 전 체험 이용량입니다. enabled가 켜질 때, 켜진 채 앱이 다시 앞으로 올 때,
- * reload를 부를 때 새로 읽습니다. 다른 계정에서 읽은 값은 돌려주지 않고, 읽지 못하면 usage 없이 failed입니다.
+ * reload를 부르거나 플랜·사용량 기간이 끝날 때 새로 읽습니다. 다른 계정의 값과 취소된 응답은 돌려주지 않습니다.
+ * 재조회 중에는 loading과 이전 확인 값을 함께 돌려주고, 실패하면 usage 없이 failed입니다.
  */
 export function usePlanUsage(token: string | undefined, enabled: boolean) {
   const foreground = useAppForeground()
   const [revision, setRevision] = useState(0)
-  const [result, setResult] = useState<{ token: string | undefined; usage: PlanUsage | null } | null>(null)
+  const [result, setResult] = useState<{ token: string | undefined; usage: PlanUsage | null; loading: boolean; failed: boolean } | null>(null)
+  const boundaries = useRef({ token, handled: new Set<number>() })
+  if (boundaries.current.token !== token) boundaries.current = { token, handled: new Set<number>() }
   useEffect(() => {
     if (!enabled || !foreground) return
     const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const handled = boundaries.current.handled
+    function schedule(usage: PlanUsage) {
+      const dates = [usage.planEndsAt, ...usage.items.map(item => item.resetsAt)]
+        .flatMap(value => value ? [Date.parse(value)] : [])
+        .filter(value => Number.isFinite(value) && value > Date.now() && !handled.has(value))
+      if (!dates.length) return
+      const deadline = Math.min(...dates)
+      function waitForDeadline() {
+        if (controller.signal.aborted) return
+        const delay = deadline - Date.now()
+        if (delay <= 0) {
+          // 기기 시계가 서버보다 빠르거나 서버가 같은 기간을 돌려줘도 같은 시각으로 연속 조회하지 않습니다.
+          handled.add(deadline)
+          setRevision(value => value + 1)
+        } else {
+          // 30일은 JS 타이머 최대 지연보다 길 수 있어 나누어 기다립니다.
+          timer = setTimeout(waitForDeadline, Math.min(delay, 2_147_483_647))
+        }
+      }
+      waitForDeadline()
+    }
+    setResult(previous => ({ token, usage: previous && previous.token === token ? previous.usage : null, loading: true, failed: false }))
     planUsageUseCase(token).usage(controller.signal)
-      .then(usage => { if (!controller.signal.aborted) setResult({ token, usage }) })
-      .catch(() => { if (!controller.signal.aborted) setResult({ token, usage: null }) })
-    return () => controller.abort()
+      .then(usage => {
+        if (controller.signal.aborted) return
+        setResult({ token, usage, loading: false, failed: false })
+        schedule(usage)
+      })
+      .catch(() => { if (!controller.signal.aborted) setResult({ token, usage: null, loading: false, failed: true }) })
+    return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }, [enabled, foreground, token, revision])
   const reload = useCallback(() => setRevision(value => value + 1), [])
   const current = result?.token === token ? result : null
-  return { usage: current?.usage ?? null, failed: current?.usage === null, reload }
+  return { usage: current?.usage ?? null, loading: enabled && (current?.loading ?? true), failed: current?.failed ?? false, reload }
 }
 
 /**
@@ -72,13 +102,15 @@ const periodGroups: readonly { period: PlanUsagePeriod; title: string }[] = [
  * 결제·요금제 바꾸기·체험 시작 동작은 두지 않습니다(App Store 3.1.3). 무엇을 한 번으로 세는지는 요금제 탭에 둡니다.
  * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적습니다.
  */
-export function PlanUsageSection({ token }: { token: string }) {
-  const { usage, failed, reload } = usePlanUsage(token, true)
-  if (!usage && !failed) return null
+export function PlanUsageSection({ token, enabled = true }: { token: string; enabled?: boolean }) {
+  const { usage, loading, failed, reload } = usePlanUsage(token, enabled)
   const endsText = planEndsText(usage)
   const planName = usage ? planNameText(usage) : null
   return <Card>
     <Text accessibilityRole="header" style={styles.heading}>요금제와 이용량</Text>
+    {loading && <Text accessibilityLiveRegion="polite" style={styles.muted}>
+      {usage ? '이용 상태를 다시 확인하고 있어요. 아래는 이전에 확인한 정보예요.' : '이용량을 확인하고 있어요.'}
+    </Text>}
     {usage ? <>
       {planName && <View style={local.plan}><Text style={styles.muted}>현재 요금제</Text><Text style={styles.label}>{planName}</Text></View>}
       {endsText && <Text style={styles.muted}>{endsText}</Text>}
@@ -94,10 +126,10 @@ export function PlanUsageSection({ token }: { token: string }) {
         </View>
       })}
       <Text style={styles.muted}>결제는 아직 받지 않아요.</Text>
-    </> : <>
+    </> : failed ? <>
       <Text style={styles.muted}>이용량을 불러오지 못했어요.</Text>
       <Button label="이용량 다시 불러오기" variant="secondary" size="small" onPress={reload} />
-    </>}
+    </> : null}
   </Card>
 }
 
