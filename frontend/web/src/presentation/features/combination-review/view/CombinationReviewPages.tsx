@@ -1,14 +1,17 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { appContainer } from '../../../../app/appContainer'
 import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
 import { assistantLift } from '../../../shared/assistant/assistantPlacement'
 import { selectCurrentAccount, signedOut } from '../../../shared/auth/state/authSlice'
 import { appPaths, combinationReviewRunResultPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
-import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type ReviewProgram, type RunSummary } from '../../../../domain/entities/CombinationReview'
-import { reviewAnswersOf } from '@govbiz/shared/domain/entities/CombinationReviewResult'
+import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type ReviewProgram, type ReviewRun, type RunSummary } from '../../../../domain/entities/CombinationReview'
+import { reviewAnswerHeadline, reviewAnswersOf } from '@govbiz/shared/domain/entities/CombinationReviewResult'
 import { useReviewListViewModel } from '../viewmodel/useReviewListViewModel'
 import { useReviewEditorViewModel, type InitialReviewProgram, type ReviewProgramInfo } from '../viewmodel/useReviewEditorViewModel'
+import { ReviewAnswerChips, ReviewConditionResult } from './ReviewAnswerResult'
 import { ReviewRunResult } from './ReviewRunResult'
+import { displayReviewText } from './reviewText'
 import { ReviewNarrowingPanel, ReviewSituationFields } from './ReviewSituation'
 import { defaultProgramSelectionFilters } from '../../../shared/support-program/catalogSearchParams'
 import { programPickerStyles } from '../../../shared/support-program/ProgramPicker.styles'
@@ -218,16 +221,18 @@ export function CombinationReviewPanel({ id, initialProgram = null, onCreated }:
   return <ReviewPanel key={`${sessionKey(account)}:${panelKey}`} id={id} account={account.email} initialProgram={initialProgram} onCreated={onCreated} />
 }
 
+/**
+ * 대화 안에서는 공고 두 개·제목·내 상황을 고르고 [검토 실행]까지 합니다. 분석을 접수했거나 지난 결과를 열면
+ * 대화에 결과를 펼치지 않고 검토 결과 화면으로 옮겨 진행 상태와 결과를 봅니다.
+ */
 function ReviewPanel({ id, account, initialProgram, onCreated }: {
   id: number | null; account: string; initialProgram: InitialReviewProgram | null; onCreated: (id: number) => void
 }) {
-  const [runId, setRunId] = useState<number | null>(null)
   const [step, setStep] = useState<Step>(id ? 'analysis' : 'selection')
-  const [facts, setFacts] = useState('')
-  return id && runId ? <RunResultPage key={runId} reviewId={id} runId={runId} account={account}
-    embedded={{ onRun: setRunId, onEdit: (next, additionalFacts = '') => { setStep(next); setFacts(additionalFacts); setRunId(null) } }} />
-    : <ReviewEditor id={id} account={account} initialProgram={initialProgram}
-      embedded={{ step, facts, onStep: setStep, onCreated, onRun: setRunId }} />
+  const navigate = useNavigate()
+  const openRun = (runId: number) => { if (id) navigate(combinationReviewRunResultPath(id, runId)) }
+  return <ReviewEditor id={id} account={account} initialProgram={initialProgram}
+    embedded={{ step, facts: '', onStep: setStep, onCreated, onRun: openRun }} />
 }
 
 export function CombinationReviewRunResultPage() {
@@ -426,11 +431,14 @@ function ReviewEditor({ id, account, initialProgram = null, embedded }: {
         {/* 진행 중이면 진행 카드를, 끝났으면 최근 결과로 가는 카드를 맨 위에 둡니다. 상태가 바뀌면 화면 읽기 프로그램이 한 번 읽습니다. */}
         <div role="status" aria-live="polite" className="contents">
           {activeRun && <RunProgress run={activeRun} now={now} />}
-          {!activeRun && finishedRun && <LatestRunCard reviewId={id} run={finishedRun} stale={finishedRun.inputRevision !== vm.review?.inputRevision || vm.dirty} onOpen={embedded?.onRun} />}
+          {!activeRun && finishedRun && (embedded
+            ? <LatestRunConclusion reviewId={id} run={finishedRun} stale={finishedRun.inputRevision !== vm.review?.inputRevision || vm.dirty} onOpen={embedded.onRun} />
+            : <LatestRunCard reviewId={id} run={finishedRun} stale={finishedRun.inputRevision !== vm.review?.inputRevision || vm.dirty} />)}
         </div>
         <section className={`${s.card} space-y-3`} aria-label="분석 대상 공고"><h2 className="font-bold">분석 대상 공고</h2><ul className="space-y-2">{vm.draft.programs.map((program, index) => <li key={reviewProgramKey(program)} className="rounded-lg bg-slate-50 p-3"><strong>사업 {index + 1} · {vm.names[reviewProgramKey(program)] ?? '공고 정보 확인 중'}</strong></li>)}</ul></section>
         {/* 내 상황은 모두 선택입니다. 고르면 조건부 답을 좁혀 주고, [검토 실행]이나 단계 이동 때 저장합니다. */}
-        <section className={`${s.card} space-y-4`} aria-labelledby={situationHeadingId}>
+        <FoldInChat embedded={isEmbedded} label="내 상황 (선택) · 고르면 조건에 따라 갈리는 답을 좁혀요">
+        <section className={isEmbedded ? 'space-y-4' : `${s.card} space-y-4`} aria-labelledby={situationHeadingId}>
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2"><h2 className="font-bold" id={situationHeadingId}>내 상황</h2><span className={`${s.badge} ${s.badgeNeutral}`}>선택</span></div>
             <p className={s.muted}>모두 비워 둬도 분석할 수 있어요. 고르면 조건에 따라 갈리는 답을 내 상황에 맞춰 좁혀요.</p>
@@ -443,6 +451,7 @@ function ReviewEditor({ id, account, initialProgram = null, embedded }: {
           </fieldset>
           {vm.dirty && <p className={s.info}>바꾼 내 상황은 [검토 실행]을 누르면 저장한 뒤 분석해요.</p>}
         </section>
+        </FoldInChat>
         <section className={`${s.card} space-y-3`} aria-label="분석 실행"><h2 className="text-lg font-bold">공식 근거 분석</h2>
           <p className={s.muted}>PDF·HWP·HWPX 공식 첨부를 자동 수집하여 OpenAI로 분석합니다. [검토 실행]을 누르면 유료 API 호출이 발생할 수 있습니다. 원문 미확보·미지원 형식은 오류로 표시합니다.</p>
           {vm.reviewUsage && <PlanUsageLine view={vm.reviewUsage} className={s.usageLine} />}
@@ -453,11 +462,13 @@ function ReviewEditor({ id, account, initialProgram = null, embedded }: {
           {vm.pollingPaused && <p className={s.warning}>상태 자동 조회가 멈췄어요. 아래 실행 기록에서 항목을 눌러 다시 확인해 주세요. 서버 작업은 취소되지 않아요.</p>}
           {vm.pending && <div className={`${s.warning} flex flex-wrap items-center justify-between gap-3`}><div><p>응답을 확인하지 못한 분석 요청이 있어요. 같은 요청 키 · 입력 버전 · 추가 설명으로만 다시 확인해요.</p><p>요청 입력 버전 {vm.pending.expectedRevision}</p><p className="whitespace-pre-wrap">추가 설명: {vm.pending.additionalFacts || '없음'}</p></div><button className={s.secondarySm} disabled={analysisBusy} onClick={() => vm.start(true)}>다시 시도</button></div>}
         </section>
-        <section className={`${s.card} space-y-3`} aria-label="실행 기록"><h2 className="text-lg font-bold">실행 기록</h2>
+        <FoldInChat embedded={isEmbedded} label={`실행 기록 ${vm.runs?.items.length ?? 0}건`}>
+        <section className={isEmbedded ? 'space-y-3' : `${s.card} space-y-3`} aria-label="실행 기록"><h2 className={isEmbedded ? 'sr-only' : 'text-lg font-bold'}>실행 기록</h2>
           {vm.runs?.items.length === 0 && <p className={s.muted}>아직 분석을 실행하지 않았습니다.</p>}
           <ul className="space-y-2">{vm.runs?.items.map((run) => <li key={run.id}><ReviewRunLink className={`${s.button} w-full justify-start text-left`} reviewId={id} runId={run.id} onOpen={embedded?.onRun}>#{run.id} · 입력 버전 {run.inputRevision} · {runLabels[run.status]} · {formatReviewDateTime(run.startedAt)}</ReviewRunLink></li>)}</ul>
           {vm.runs?.nextBeforeId && <div className="flex justify-center"><button className={s.secondarySm} disabled={historyBusy} aria-busy={historyBusy} onClick={() => vm.history(vm.runs!.nextBeforeId!)}>{historyBusy ? <><span className={s.buttonSpinner} aria-hidden="true" />불러오는 중…</> : '이전 실행 더 보기'}</button></div>}
         </section>
+        </FoldInChat>
         <StepBar embedded={isEmbedded} note={activeRun ? '화면을 나가도 분석은 계속돼요' : '검토 실행 1회마다 유료 분석이 한 번 실행돼요'} reason={vm.pending ? null : runBlocked} reasonId={reasonId}
           back={<button className={s.secondaryPill} type="button" disabled={inputBusy || analysisBusy} onClick={() => goTo('selection')}>← 이전</button>}
           next={vm.pending ? null : <>
@@ -465,7 +476,7 @@ function ReviewEditor({ id, account, initialProgram = null, embedded }: {
             {currentResult && <ReviewRunLink className={s.primaryPill} reviewId={id} runId={currentResult.id} onOpen={embedded?.onRun}>결과 보기 →</ReviewRunLink>}
             <button className={currentResult ? s.secondaryPill : s.primaryPill} type="button" aria-busy={analysisBusy || saving || !!activeRun}
               aria-describedby={runBlocked ? reasonId : undefined}
-              disabled={analysisBusy || inputBusy || !!runBlocked} onClick={() => vm.saveAndStart(vm.facts)}>
+              disabled={analysisBusy || inputBusy || !!runBlocked} onClick={() => vm.saveAndStart(vm.facts, embedded ? (started) => embedded.onRun(started.id) : undefined)}>
               {(analysisBusy || saving || activeRun) && <span className={s.buttonSpinner} aria-hidden="true" />}
               {saving ? '저장 중…' : analysisBusy ? '접수 중…' : activeRun ? (activeRun.status === 'QUEUED' ? '차례 기다리는 중…' : '분석 중…') : currentResult || finishedRun ? '다시 실행' : '검토 실행'}
             </button>
@@ -604,6 +615,50 @@ function LatestRunCard({ reviewId, run, stale, onOpen }: { reviewId: number; run
     </div>
     <ReviewRunLink className={s.secondarySm} reviewId={reviewId} runId={run.id} onOpen={onOpen}>{succeeded ? '결과 보기' : '자세히 보기'}<span className="sr-only">: 실행 #{run.id}</span></ReviewRunLink>
   </section>
+}
+
+/**
+ * 대화 안에서 끝난 최근 실행의 결론 카드입니다. 사용자가 궁금한 "두 공고를 함께 지원해도 되나"에 답하도록 질문별 판정 칩과
+ * 판정 조합으로 정한 결론 문장만 두고, 조건부 답이면 조건과 결과를 두 개까지 붙입니다. 근거 원문 · 기관에 물어볼 것 ·
+ * 걸리면 생기는 일은 [결과 자세히]에서 봅니다. 세 질문 방식이 아닌 지난 결과, 실패한 실행, 결과를 읽지 못한 때는 최근 실행 카드를 그대로 씁니다.
+ */
+function LatestRunConclusion({ reviewId, run, stale, onOpen }: { reviewId: number; run: RunSummary; stale: boolean; onOpen: (id: number) => void }) {
+  const useCase = appContainer.resolve('combinationReviewUseCase')
+  const [detail, setDetail] = useState<ReviewRun | null>(null)
+  useEffect(() => {
+    if (run.status !== 'SUCCEEDED') return
+    const controller = new AbortController()
+    useCase.run(reviewId, run.id, controller.signal).then((value) => { if (!controller.signal.aborted) setDetail(value) }, () => undefined)
+    return () => controller.abort()
+  }, [useCase, reviewId, run.id, run.status])
+  const answers = detail?.id === run.id ? reviewAnswersOf(detail.analysis) : null
+  if (!answers) return <LatestRunCard reviewId={reviewId} run={run} stale={stale} onOpen={onOpen} />
+  const headline = reviewAnswerHeadline(answers)
+  const conditions = answers.filter((answer) => answer.verdict === 'CONDITIONAL').flatMap((answer) => answer.conditions).slice(0, 2)
+  return <section className={`${s.card} space-y-3`} aria-label="검토 결론">
+    <div className="flex flex-wrap items-center gap-1.5"><ReviewAnswerChips answers={answers} /></div>
+    <div className="space-y-1">
+      <h4 className="text-base leading-snug font-extrabold text-ink">{headline.title}</h4>
+      <p className="text-sm leading-6 text-slate-600">{headline.reason}</p>
+    </div>
+    {conditions.length > 0 && <ul className="space-y-1 text-sm" aria-label="조건별 결과">
+      {conditions.map((condition) => <li key={condition.condition} className="flex flex-wrap items-baseline gap-2">
+        <span className="min-w-0">{displayReviewText(condition.condition)}</span><span aria-hidden="true">→</span><ReviewConditionResult result={condition.result} />
+      </li>)}
+    </ul>}
+    <p className="text-xs leading-5 text-slate-600">
+      실행 #{run.id} · {formatReviewDateTime(run.finishedAt ?? run.startedAt)}{stale ? ' · 지금 입력과 다른 버전의 결과예요' : ''}<br />
+      AI가 공식 원문을 읽은 결과이고 사람이 검수하지 않았어요.
+      {/* 결론 이유가 이미 "허용을 뜻하지는 않아요"를 말하면(규정 없음) 같은 문장을 두 번 쓰지 않습니다. */}
+      {headline.reason.includes('허용을 뜻하지는') ? null : ' 제한을 못 찾은 것이 허용을 뜻하지는 않아요.'}
+    </p>
+    <div className="flex flex-wrap gap-2"><button type="button" className={s.primaryPill} onClick={() => onOpen(run.id)}>결과 자세히<span className="sr-only">: 실행 #{run.id}</span></button></div>
+  </section>
+}
+
+/** 대화 안에서는 선택 입력과 실행 기록을 접어 카드 높이를 줄입니다. 페이지에서는 지금처럼 펼친 카드로 둡니다. */
+function FoldInChat({ embedded, label, children }: { embedded: boolean; label: string; children: ReactNode }) {
+  return embedded ? <details className={s.card}><summary className="cursor-pointer font-bold">{label}</summary><div className="mt-4 space-y-4">{children}</div></details> : <>{children}</>
 }
 
 function ReviewRunLink({ reviewId, runId, onOpen, className, children }: {

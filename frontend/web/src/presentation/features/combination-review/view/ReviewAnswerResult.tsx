@@ -39,9 +39,7 @@ export function ReviewAnswerResult({ run, answers, programNames, summary, narrow
   return <>
     <section className={`${s.card} space-y-3`} aria-label="검토 결론">
       <div className="flex flex-wrap items-center gap-1.5">
-        {answers.map((answer) => <span key={answer.question} className={`${s.badge} ${toneBadges[reviewAnswerToneOf(answer.verdict)]}`}>
-          {reviewQuestionShortLabels[answer.question]} · {reviewAnswerVerdictLabels[answer.verdict]}
-        </span>)}
+        <ReviewAnswerChips answers={answers} />
         <span className="ml-auto text-xs text-slate-500 tabular-nums">질문 {answers.length}개 판단</span>
       </div>
       <div className="space-y-1">
@@ -63,6 +61,18 @@ export function ReviewAnswerResult({ run, answers, programNames, summary, narrow
     </section>
     {narrowing}
   </>
+}
+
+/** 질문별 판정 칩("신청 · 가능")입니다. 결과 화면의 결론 카드와 대화 안 결론 카드가 함께 씁니다. */
+export function ReviewAnswerChips({ answers }: { answers: readonly ReviewAnswer[] }) {
+  return <>{answers.map((answer) => <span key={answer.question} className={`${s.badge} ${toneBadges[reviewAnswerToneOf(answer.verdict)]}`}>
+    {reviewQuestionShortLabels[answer.question]} · {reviewAnswerVerdictLabels[answer.verdict]}
+  </span>)}</>
+}
+
+/** 조건 하나의 결과 칩("가능" · "불가")입니다. */
+export function ReviewConditionResult({ result }: { result: keyof typeof conditionResults }) {
+  return <span className={`${s.badge} ${conditionResults[result].badge}`}>{conditionResults[result].label}</span>
 }
 
 /** 답 하나에 쓰인 모든 인용(답 · 조건 · 조치)입니다. */

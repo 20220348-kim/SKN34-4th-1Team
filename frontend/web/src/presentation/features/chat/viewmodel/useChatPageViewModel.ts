@@ -6,15 +6,18 @@ import {
   useMemo,
   useRef,
 } from 'react'
+import type { GovAgentProgram } from '@govbiz/shared/domain/entities/GovAgent'
 
 import {
   supportProgramChatSuggestions,
   useSupportProgramChat,
 } from '../hooks/useSupportProgramChat'
+import type { SupportProgramChatMessage } from '../state/chatSlice'
 import { useSupportProgramSearchReadiness } from '../hooks/useSupportProgramSearchReadiness'
 import { formatSupportProgramEligibilityCounts } from '../supportProgramEligibility'
 import { planUsageView } from '../../../shared/plan-usage/planUsageView'
 import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
+import { evidenceQuestionSuggestions } from '../../support-program-detail/viewmodel/useEvidenceQuestionThread'
 import { createChatConversationProposal } from './chatConversationProposal'
 import { useSearchResultInterests } from './useSearchResultInterests'
 
@@ -138,6 +141,11 @@ export function useChatPageViewModel() {
     chat.selectSuggestion(suggestion)
   }
 
+  /** Gov 선택 공고의 기본 질문을 입력칸을 거치지 않고 바로 보냅니다. 직접 쓴 질문과 같은 경로라 호출 수가 늘지 않습니다. */
+  function handleAskGovQuestion(question: string) {
+    void chat.submitMessage(question)
+  }
+
   function handleRetrySearch() {
     if (!readiness.canSearch || searchLimitMessage) return
     void chat.retrySearch()
@@ -191,6 +199,18 @@ export function useChatPageViewModel() {
     attachGovPreparation: chat.attachGovPreparation,
     attachGovReview: chat.attachGovReview,
     evidenceUsage,
+    /**
+     * 고른 공고에 바로 물을 원문 질문 기본 질문(지원 대상·신청 방법·신청 기간·문의처) 중 이 대화에서 아직 묻지 않은 것입니다.
+     * 공고 상세 질문 패널과 같은 목록이며, 화면이 공고를 고른 때와 그 공고의 근거 답변 뒤에만 칩으로 둡니다.
+     * 오늘 원문 질문을 다 쓴 때는 두지 않습니다.
+     */
+    govQuickQuestions: chat.isGovAgent && chat.govProgram && !evidenceUsage?.isLimitReached
+      ? unaskedEvidenceQuestions(chat.messages, chat.govProgram) : [],
+    handleAskGovQuestion,
+    /** 선택 공고 막대 둘째 줄의 작업 칩(신청서 쓰기·중복 검토)입니다. 원문 질문 한도와 관계없고, 입력 중에는 두지 않습니다. */
+    govTools: chat.isGovAgent && chat.govProgram && chat.draft.trim().length === 0
+      ? (['APPLICATION', 'COMBINATION_REVIEW'] as const) : [],
+    handleStartGovTool: chat.startGovTool,
     isRestoredHistory: chat.isRestoredHistory,
     displayProposal,
     hasConfirmedSearch,
@@ -232,4 +252,17 @@ export function useChatPageViewModel() {
     handleInputKeyDown,
     refetchReadiness,
   }
+}
+
+/**
+ * 고른 공고의 기본 질문 중 이 대화에서 아직 묻지 않은 것입니다. 그 공고의 근거 답변 바로 앞 사용자 말이
+ * 기본 질문 문장과 같으면 물은 것으로 봅니다(직접 비슷하게 쓴 질문은 따로 가리지 않음).
+ */
+function unaskedEvidenceQuestions(messages: readonly SupportProgramChatMessage[], program: GovAgentProgram) {
+  const asked = new Set(messages.flatMap((message, index) => {
+    const answered = message.govEvidence?.program
+    return answered?.sourceCode === program.sourceCode && answered.sourceProgramId === program.sourceProgramId
+      ? [messages[index - 1]?.text] : []
+  }))
+  return evidenceQuestionSuggestions.filter((suggestion) => !asked.has(suggestion.question))
 }

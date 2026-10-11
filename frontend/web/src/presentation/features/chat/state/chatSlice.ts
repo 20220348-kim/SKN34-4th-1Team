@@ -16,6 +16,20 @@ export type SupportProgramChatMessage = ChatMessage
 
 type ChatSearchStatus = 'idle' | 'pending' | 'failed'
 
+/** 선택 공고 막대의 작업 칩으로 바로 시작하는 Gov 작업입니다. */
+export type GovAgentTool = 'APPLICATION' | 'COMBINATION_REVIEW'
+
+/**
+ * 작업 칩이 만드는 사용자 말풍선과 안내 문구입니다. 중복 검토 안내는 같은 요청을 말로 했을 때 Core가 돌려주는 문구와 같고,
+ * 신청서 쓰기는 칩을 누르면 저장된 양식이 없을 때 입력칸 분석을 바로 시작하므로 그 사실을 알립니다(말로 요청하면 버튼으로 시작).
+ */
+export const govToolTexts: Record<GovAgentTool, { label: string; request: string; message: string }> = {
+  APPLICATION: { label: '신청서 쓰기', request: '이 공고 신청서 쓰기',
+    message: '저장된 신청 양식을 확인하고, 없으면 입력칸 분석을 바로 시작할게요. 분석은 보통 1~2분 걸려요.' },
+  COMBINATION_REVIEW: { label: '중복 검토', request: '이 공고 중복 검토',
+    message: '함께 지원할 두 공고를 선택하고 참여 상태와 사업 관계를 확인한 뒤 중복 검토를 실행해 주세요.' },
+}
+
 /** 화면이 보지 않은 사이에 도착한 결과입니다. 채팅 화면이 열리면 `outcomeSeen`으로 지웁니다. */
 export type ChatOutcome =
   | 'search-succeeded' | 'search-failed'
@@ -145,6 +159,23 @@ const chatSlice = createSlice({
         ...(action.payload.partners ? { govPartners: action.payload.partners } : {}) })
       state.interpretation = { status: 'idle' }
       state.unseenOutcome = 'interpretation-answered'
+    },
+    /**
+     * 선택 공고 막대의 작업 칩으로 신청 문서·중복 검토를 시작합니다. 두 작업은 Core가 고정 문구만 돌려주는 경로라
+     * 경로 선택(OpenAI)을 부르지 않고 사용자 말풍선과 작업 메시지를 바로 만듭니다. 처리 중이거나 고른 공고가 없으면 하지 않습니다.
+     */
+    govToolStarted: {
+      reducer(state, action: PayloadAction<{ id: string; tool: GovAgentTool }>) {
+        if (isBusy(state) || !state.govProgram) return
+        const { id, tool } = action.payload
+        const program = state.govProgram
+        state.messages.push({ id, role: 'user', text: govToolTexts[tool].request })
+        const message = govToolTexts[tool].message
+        state.messages.push({ id: `${id}-answer`, role: 'assistant', text: message,
+          ...(tool === 'APPLICATION' ? { govApplication: { program, message } } : { govReview: { program, message } }) })
+        state.unseenOutcome = null
+      },
+      prepare(tool: GovAgentTool) { return { payload: { id: nanoid(), tool } } },
     },
     govApplicationPrepared(state, action: PayloadAction<{ accountEmail: string; messageId: string; preparationId: number }>) {
       const { accountEmail, messageId, preparationId } = action.payload
@@ -367,6 +398,7 @@ export const {
   searchResultRestoreFailed,
   draftChanged,
   govProgramSelected,
+  govToolStarted,
   govMessageSucceeded,
   govApplicationPrepared,
   govReviewCreated,

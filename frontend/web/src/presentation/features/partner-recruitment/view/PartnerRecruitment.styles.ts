@@ -48,7 +48,6 @@ export const partnerRecruitmentStyles = {
   sideItemTitle: 'text-[0.8rem] font-bold leading-[1.4] text-ink',
   noticeCard:
     'flex flex-col gap-[0.6rem] rounded-[1.4rem] border border-line bg-[#f6f7f8] p-[1.2rem]',
-  noticeText: 'm-0 text-[0.75rem] leading-[1.6] text-ink-muted',
 
   detailTitle:
     'm-0 text-[1.5rem] font-bold leading-[1.35] tracking-[-0.03em] text-ink [overflow-wrap:anywhere]',

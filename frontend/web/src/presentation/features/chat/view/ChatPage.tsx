@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Link } from 'react-router'
 
@@ -8,14 +8,14 @@ import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { ApplicationPreparationInline } from '../../application-preparation/view/ApplicationPreparationInline'
 import { CombinationReviewPanel } from '../../combination-review/view/CombinationReviewPages'
-import { PartnerRecruitmentPanel } from '../../partner-recruitment/view/PartnerRecruitmentListPage'
 import { useChatPageViewModel } from '../viewmodel/useChatPageViewModel'
 import { companyConditionFields } from '../viewmodel/chatConversationProposal'
 import { ConversationProposal } from './ConversationProposal'
 import { ProgramResults } from './ProgramResults'
+import { GovApplicationCard, GovPartnerBrief, GovReviewCard, GovWorkInline } from './GovWork'
 import { EvidenceQuestionFeedback } from '../../support-program-detail/view/EvidenceQuestionFeedback'
 import { SearchIntroTitle } from './SearchIntroTitle'
-import type { ChatSearchOptions } from '../state/chatSlice'
+import { govToolTexts, type ChatSearchOptions } from '../state/chatSlice'
 import {
   chatMessageBubbleClassName,
   chatMessageRowClassName,
@@ -31,9 +31,12 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     isGovAgent,
     govProgram,
     selectGovProgram,
-    attachGovPreparation,
     attachGovReview,
     evidenceUsage,
+    govQuickQuestions,
+    handleAskGovQuestion,
+    govTools,
+    handleStartGovTool,
     isRestoredHistory,
     displayProposal,
     interpretationError,
@@ -76,6 +79,49 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const isGuest = layout === 'landing'
   // 가장 최근 업무 카드만 활성화합니다. 이전 기록은 저장된 결과를 여는 링크로 남깁니다.
   const latestToolMessageId = messages.findLast((message) => message.govApplication || message.govReview || message.govPartners)?.id
+  // 작업 카드의 입력칸 분석 · 검토 입력을 그 카드 자리에서 대화 안에 펼칩니다(그다음은 카드·편집기가 신청 문서·중복 검토 화면으로 옮김).
+  // 펼칠 수 있는 카드는 지금처럼 가장 최근 업무 카드뿐이고,
+  // 신청 준비는 그 공고를 고르고 있을 때만 엽니다(공고 선택이 바뀌면 늦게 온 요청을 끊는 기존 규칙을 그대로 따름).
+  const [openWorkId, setOpenWorkId] = useState<string | null>(null)
+  const [workRefresh, setWorkRefresh] = useState(0)
+  const isLiveWork = (message: (typeof messages)[number]) => isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
+    && (!message.govApplication || (govProgram?.sourceCode === message.govApplication.program.sourceCode
+      && govProgram.sourceProgramId === message.govApplication.program.sourceProgramId))
+  const openWork = messages.find((message) => message.id === openWorkId && (message.govApplication || message.govReview))
+  const liveOpenWork = openWork && isLiveWork(openWork) ? openWork : null
+  const closeWork = useCallback(() => { setOpenWorkId(null); setWorkRefresh((value) => value + 1) }, [])
+  // [신청서 쓰기] 칩으로 펼친 신청 문서는 저장된 양식이 없으면 입력칸 분석을 바로 시작합니다.
+  // 말로 요청한 카드·카드 버튼·지난 기록으로 펼친 것은 열기만 하고 분석은 버튼으로 시작합니다. 판단은 펼친 분석 화면이 한 번 하고 표시를 지웁니다.
+  const [autoAnalyzeId, setAutoAnalyzeId] = useState<string | null>(null)
+  const clearAutoAnalyze = useCallback(() => setAutoAnalyzeId(null), [])
+  const applicationChipAt = useRef(0)
+  // 같은 대화에서 새 업무 카드가 생기면(작업 칩·말로 요청) 바로 펼칩니다. 저장된 대화를 열거나 새 대화로 바뀌면 펼치지 않습니다.
+  // 대화는 첫 메시지(환영 인사, 대화마다 새 ID)로 구분합니다. 저장된 대화에 이어 쓴 새 카드도 바로 열립니다.
+  const conversationKey = messages[0]?.id
+  // 원문 질문 기본 질문 칩은 공고를 고른 때의 마지막 메시지와 그 공고의 근거 답변 아래에만 둡니다(이어 묻기).
+  // 다음 메시지가 오면 아래로 따라 내려가지 않고 사라져 대화에 지난 칩이 쌓이지 않습니다.
+  const govProgramKey = govProgram ? `${govProgram.sourceCode}:${govProgram.sourceProgramId}` : null
+  const latestMessageId = messages.at(-1)?.id
+  const [askAnchor, setAskAnchor] = useState({ programKey: govProgramKey, messageId: latestMessageId })
+  if (askAnchor.programKey !== govProgramKey) setAskAnchor({ programKey: govProgramKey, messageId: latestMessageId })
+  const seenWork = useRef({ conversationKey, latestToolMessageId })
+  useEffect(() => {
+    const seen = seenWork.current
+    if (seen.conversationKey === conversationKey && seen.latestToolMessageId === latestToolMessageId) return
+    seenWork.current = { conversationKey, latestToolMessageId }
+    const latest = messages.find((message) => message.id === latestToolMessageId)
+    const opens = seen.conversationKey === conversationKey && latest && (latest.govApplication || latest.govReview)
+    setOpenWorkId(opens ? latest.id : null)
+    // 방금 누른 [신청서 쓰기] 칩이 만든 카드일 때만 자동 분석 표시를 붙입니다(칩이 거절돼 카드가 없으면 잠시 뒤 무효).
+    const fromChip = Date.now() - applicationChipAt.current < 2000
+    applicationChipAt.current = 0
+    setAutoAnalyzeId(opens && latest.govApplication && fromChip ? latest.id : null)
+  }, [conversationKey, latestToolMessageId, messages])
+  // 펼친 작업은 대화 아래로 늘어나므로, 그 메시지 머리가 화면 위에 오도록 맞춰 처음부터 보이게 합니다.
+  const openedWorkId = liveOpenWork?.id
+  useEffect(() => {
+    if (openedWorkId) document.querySelector(`[data-message-id="${openedWorkId}"]`)?.scrollIntoView?.({ block: 'start' })
+  }, [openedWorkId])
 
   /**
    * 공개 첫 화면의 첫 전송은 소개가 사라지고 입력창이 아래로 내려가는 큰 전환이라 View Transition으로 잇습니다.
@@ -219,10 +265,16 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
         )
         const retrySearch = isLatest && !isBusy && message.failure === 'search' && canRetrySearch
         const retryInterpretation = isLatest && !isBusy && message.failure === 'interpretation' && canRetryInterpretation
+        const answeredSelected = Boolean(govProgram && message.govEvidence
+          && message.govEvidence.program.sourceCode === govProgram.sourceCode
+          && message.govEvidence.program.sourceProgramId === govProgram.sourceProgramId)
+        const showQuickQuestions = isGovAgent && layout === 'workspace' && isLatest && !isUser && govQuickQuestions.length > 0
+          && (message.id === askAnchor.messageId || answeredSelected)
 
         return (
           <article
             key={message.id}
+            data-message-id={message.id}
             className={isGuest ? `${chatPageStyles.guestMessageRow} ${isUser ? 'justify-end' : ''}` : chatMessageRowClassName(isUser)}
           >
             {!isUser && !isGuest ? (
@@ -250,33 +302,25 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                   </div>
                 ) : null}
               </div>
-              {message.govApplication ? (isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
-                && govProgram?.sourceCode === message.govApplication.program.sourceCode
-                && govProgram.sourceProgramId === message.govApplication.program.sourceProgramId
-                ? <ApplicationPreparationInline key={`${accountEmail}:${message.id}:${message.govApplication.preparationId ?? 'new'}`} program={message.govApplication.program}
-                  preparationId={message.govApplication.preparationId} onPrepared={(id) => attachGovPreparation(message.id, id)} />
-                : <div className="mt-3 rounded-xl border border-line p-4 text-sm">
-                  <p className="mb-2 font-semibold">신청 준비 · {message.govApplication.program.title}</p>
-                  <Link className="text-brand-primary underline" to={message.govApplication.preparationId
-                    ? `${appPaths.applicationPreparations}/${message.govApplication.preparationId}`
-                    : `${appPaths.applicationPreparationNew}?${new URLSearchParams({
-                    sourceCode: message.govApplication.program.sourceCode, sourceProgramId: message.govApplication.program.sourceProgramId,
-                  })}`}>신청 준비 화면에서 이어서 보기</Link>
-                </div>) : null}
-              {message.govReview ? (isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
-                ? <div className="mt-3 min-w-0" key={`${accountEmail}:${message.id}:${message.govReview.reviewId ?? 'new'}`}>
-                  <CombinationReviewPanel id={message.govReview.reviewId ?? null} initialProgram={message.govReview.program}
-                    onCreated={(id) => attachGovReview(message.id, id)} />
-                </div>
-                : <div className="mt-3 rounded-xl border border-line p-4 text-sm">
-                  <Link className="text-brand-primary underline" to={message.govReview.reviewId
-                    ? `${appPaths.combinationReviews}/${message.govReview.reviewId}`
-                    : `${appPaths.combinationReviewNew}${message.govReview.program ? `?${new URLSearchParams({
-                      sourceCode: message.govReview.program.sourceCode, sourceProgramId: message.govReview.program.sourceProgramId,
-                    })}` : ''}`}>중복 검토 화면에서 이어서 보기</Link>
-                </div>) : null}
+              {/* 신청 문서 · 중복 검토는 대화에 작업 카드만 두고, 입력칸 분석 · 검토 입력은 카드 자리에서 펼치며 그다음은 화면으로 옮깁니다. */}
+              {message.govApplication ? (liveOpenWork?.id === message.id && message.govApplication.preparationId === undefined
+                ? <GovWorkInline kind="신청 문서" title={message.govApplication.program.title} onClose={closeWork}>
+                  <ApplicationPreparationInline key={`${accountEmail}:${message.id}`} program={message.govApplication.program}
+                    autoAnalyze={message.id === autoAnalyzeId} onAutoAnalyzeHandled={clearAutoAnalyze} />
+                </GovWorkInline>
+                : <GovApplicationCard application={message.govApplication} refresh={workRefresh}
+                  live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
+              {message.govReview ? (liveOpenWork?.id === message.id
+                ? <GovWorkInline kind="중복 검토" title={message.govReview.program?.title ?? '공고 두 개 고르기'} onClose={closeWork}>
+                  <div className="mt-3 min-w-0" key={`${accountEmail}:${message.id}:${message.govReview.reviewId ?? 'new'}`}>
+                    <CombinationReviewPanel id={message.govReview.reviewId ?? null} initialProgram={message.govReview.program}
+                      onCreated={(id) => attachGovReview(message.id, id)} />
+                  </div>
+                </GovWorkInline>
+                : <GovReviewCard review={message.govReview} refresh={workRefresh}
+                  live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
               {message.govPartners ? (isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
-                ? <div className="mt-3 min-w-0" key={`${accountEmail}:${message.id}`}><PartnerRecruitmentPanel /></div>
+                ? <GovPartnerBrief key={`${accountEmail}:${message.id}`} />
                 : <div className="mt-3 rounded-xl border border-line p-4 text-sm">
                   <Link className="text-brand-primary underline" to={appPaths.partners}>파트너 모집글 보기</Link>
                 </div>) : null}
@@ -297,6 +341,17 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                       disabled={isBusy}
                     >
                       {suggestion}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {showQuickQuestions ? (
+                <div className={chatPageStyles.suggestedQuestions} role="group" aria-label={answeredSelected ? '이어서 묻기' : '이 공고에 바로 묻기'}>
+                  <span className="self-center text-xs text-ink-muted">{answeredSelected ? '이어서 묻기' : '이 공고에 바로 묻기'}</span>
+                  {govQuickQuestions.map((suggestion) => (
+                    <button key={suggestion.label} type="button" className={chatPageStyles.govQuickQuestionButton} disabled={isBusy}
+                      onClick={() => handleAskGovQuestion(suggestion.question)}>
+                      {suggestion.label}
                     </button>
                   ))}
                 </div>
@@ -360,11 +415,34 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           {timeline}
           <form className={chatPageStyles.composerWorkspace} onSubmit={handleSubmit}>
             {isGovAgent ? <div className="px-3 py-2 text-sm text-ink-muted">
-              {govProgram ? <div className="flex items-center justify-between gap-3 rounded-xl bg-brand-soft p-3">
-                <span>선택한 공고: <strong className="text-ink">{govProgram.title}</strong></span>
-                <button type="button" disabled={isBusy} className="shrink-0 underline" onClick={() => selectGovProgram(null)}>선택 해제</button>
-              </div> : <p>검색 결과에서 ‘이 공고 선택’을 누르면 원문 질문과 신청 준비를 이어갈 수 있습니다.</p>}
-              {evidenceUsage ? <PlanUsageLine view={evidenceUsage} className="mt-2" /> : null}
+              {/* 선택 공고 막대는 두 줄입니다. 첫 줄: 제목(길면 줄이고 마우스를 올리면 전체) · 원문 질문 남은 횟수 · 해제(✕). 둘째 줄: 작업 칩. */}
+              {govProgram ? <div className={chatPageStyles.govProgramBar} role="region" aria-label="선택한 공고">
+                <div className={chatPageStyles.govProgramHeader}>
+                  <span className={chatPageStyles.govProgramTitle}>선택한 공고: <strong className="text-ink" title={govProgram.title}>{govProgram.title}</strong></span>
+                  {evidenceUsage ? <PlanUsageLine view={evidenceUsage} className={chatPageStyles.govProgramUsage} /> : null}
+                  <button type="button" disabled={isBusy} className={chatPageStyles.govProgramClearButton} aria-label="선택 해제" title="선택 해제"
+                    onClick={() => selectGovProgram(null)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                {/* 둘째 줄은 작업 칩 [신청서 쓰기] · [중복 검토]입니다. 원문 질문 기본 질문은 대화 안 이어 묻기 칩으로 둡니다.
+                    작업 칩은 질문 칩과 색을 달리해 누르면 일이 시작된다는 것을 구분하고, 경로 선택 없이 작업 카드를 만들어 대화 안에 펼칩니다.
+                    처리 중에는 줄을 그대로 두고 누를 수 없게만 해 막대 높이가 줄었다 늘지 않게 합니다. */}
+                {govTools.length > 0 ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label="이 공고로 작업하기">
+                  {govTools.map((tool) => (
+                    <button key={tool} type="button" className={chatPageStyles.govToolButton} disabled={isBusy}
+                      title={tool === 'APPLICATION' ? '저장된 양식이 없으면 입력칸 분석(유료 AI)을 바로 시작해요' : undefined}
+                      onClick={() => { if (tool === 'APPLICATION') applicationChipAt.current = Date.now(); handleStartGovTool(tool) }}>
+                      {govToolTexts[tool].label}
+                    </button>
+                  ))}
+                </div> : null}
+              </div> : <>
+                <p>검색 결과에서 ‘이 공고 선택’을 누르면 원문 질문과 신청 준비를 이어갈 수 있습니다.</p>
+                {evidenceUsage ? <PlanUsageLine view={evidenceUsage} className="mt-2" /> : null}
+              </>}
             </div> : null}
             {readinessNotice}
             {composerInputGroup}

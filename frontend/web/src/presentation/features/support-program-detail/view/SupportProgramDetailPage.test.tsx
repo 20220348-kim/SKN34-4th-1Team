@@ -69,7 +69,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     fireEvent.click(within(panel).getByRole('button', { name: '질문 보내기' }))
     expect(await within(panel).findByText('중소기업이 대상입니다.')).toBeTruthy()
     // 근거 링크는 서버가 준 원문 이름으로 어느 제공처 본문인지 밝힙니다.
-    expect(within(panel).getByRole('link', { name: '근거 1 · K-Startup 상세 본문 ↗' }).getAttribute('href')).toBe('https://example.com/1')
+    expect(within(panel).getByRole('link', { name: 'K-Startup 상세 본문 ↗' }).getAttribute('href')).toBe('https://example.com/1')
     expect(ask).toHaveBeenCalledWith({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, question: '지원 대상이 어떻게 되나요?' }, expect.any(AbortSignal))
     // 답이 오면 입력이 비고 자주 묻는 질문은 사라집니다. 두 번째 질문은 첫 답 아래에 쌓입니다.
     expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('')

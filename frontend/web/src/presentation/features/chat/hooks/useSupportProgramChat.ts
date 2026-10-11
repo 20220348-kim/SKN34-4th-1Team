@@ -23,6 +23,8 @@ import {
   conversationReset,
   draftChanged,
   govProgramSelected,
+  govToolStarted,
+  type GovAgentTool,
   govMessageSucceeded,
   govApplicationPrepared,
   govReviewCreated,
@@ -312,10 +314,11 @@ export function useSupportProgramChat(
     })
   }
 
-  function submitMessage() {
+  /** 입력칸의 글을 보냅니다. Gov 기본 질문처럼 [text]를 주면 입력칸 대신 그 문장을 보냅니다. */
+  function submitMessage(text?: string) {
     return dispatchToStore((_dispatch: AppDispatch, getState: () => RootState): Promise<void> => {
       const state = getState()
-      const message = state.chat.draft
+      const message = text ?? state.chat.draft
       if (!message.trim() || state.chat.searchStatus === 'pending' || state.chat.interpretation.status === 'pending') return Promise.resolve()
       if (message.length > maximumSupportProgramSearchQueryLength) {
         dispatchToStore(searchValidationFailed({ queryLength: message.length }))
@@ -361,6 +364,8 @@ export function useSupportProgramChat(
     isGovAgent,
     govProgram,
     selectGovProgram: (program: GovAgentProgram | null) => { if (isGovAgent) dispatchToStore(govProgramSelected(program)) },
+    /** 선택 공고로 신청 문서·중복 검토를 바로 시작합니다(경로 선택 OpenAI 호출 없음). */
+    startGovTool: (tool: GovAgentTool) => { if (isGovAgent) dispatchToStore(govToolStarted(tool)) },
     attachGovPreparation: (messageId: string, preparationId: number) => {
       if (isGovAgent && accountEmail) dispatchToStore(govApplicationPrepared({ accountEmail, messageId, preparationId }))
     },
