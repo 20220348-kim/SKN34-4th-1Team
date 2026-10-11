@@ -1,4 +1,13 @@
-# 다른 PC에서 EKS 배포 이어가기
+# EKS 이전 준비
+
+현재 **Mac의 직접 배포 Kubernetes → 시드니 EKS 2노드** 경로는
+[시드니 시연 배포](sydney-demo.md)를 따른다. 이 경로는 Argo CD 설치를 전제로 하지 않으며,
+`cluster.sydney-demo.yaml`과 `capture --source-mode manifests`를 사용한다.
+
+아래는 **다른 원본 클러스터의 기존 Argo CD 이전 절차와 기록**이다. 아래의 PVC 14개·Argo 앱
+9개·`work/eks-handoff-20261011-final` 기록을 현재 Mac의 백업 완료 증거로 사용하지 않는다.
+
+## 기존 Argo CD 환경에서 다른 PC로 전달
 
 2026-10-11 결정: **현재 PC에서는 이전 준비까지 마치고 AWS 생성·배포는 다른 PC에서 한다.**
 현재 계정·지원사업·평가 이력/보고서·Langfuse 데이터를 보존한다. 빈 데이터로 초기화하지 않는다.
@@ -24,7 +33,7 @@ AWS 인증·Argo 자격 증명은 포함하지 않는다. 복호화 결과 전�
 백업은 한 시점의 사본이다. 로컬 재개 이후의 변경도 AWS로 옮기려면 최종 전환 직전에 같은
 절차로 새 백업을 만들고 새 빈 PVC에 복원한다. 원본 Compose 볼륨과 로컬 PVC는 유지한다.
 
-## 2026-10-11 현재 PC 준비 완료 기록
+## 2026-10-11 기존 Argo CD 원본의 준비 완료 기록
 
 - 완료본: `work/eks-handoff-20261011-final/`. 키는 별도
   `work/eks-handoff-keys-20261011-final/key`에 있고 완료본에 포함하지 않았다.
@@ -115,7 +124,8 @@ $key = '<별도 비공개 경로>/key'
 aws sts get-caller-identity --profile govbiz-eks
 aws eks describe-cluster-versions --region ap-northeast-2 --profile govbiz-eks
 # 지원 버전·계정·비용을 확정한 private 작업 파일 사용:
-eksctl create cluster --config-file infrastructure/gitops/.local/eks/cluster.yaml --profile govbiz-eks --dry-run
+$env:AWS_PROFILE = 'govbiz-eks'
+eksctl create cluster --config-file infrastructure/gitops/.local/eks/cluster.yaml --dry-run
 eksctl create cluster --config-file infrastructure/gitops/.local/eks/cluster.yaml --profile govbiz-eks --kubeconfig infrastructure/gitops/.local/eks/kubeconfig
 ```
 

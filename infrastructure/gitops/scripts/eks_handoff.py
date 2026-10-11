@@ -29,6 +29,7 @@ HELPER_IMAGE = (
 CHUNK_SIZE = 16 * 1024 * 1024
 LABEL = "govbiz.io/handoff"
 FORMAT = "govbiz-eks-handoff-v1"
+POOL_LABEL = "govbiz.io/workload-pool"
 
 
 def require(condition, message):
@@ -110,7 +111,12 @@ def referenced_claims(resources):
                 if "persistentVolumeClaim" in v
             )
     # Retain historical collection receipts even when their completed Job is gone.
-    selected.add(("govbiz-msa", "catalog-sync-receipts"))
+    if any(
+        r["kind"] == "PersistentVolumeClaim"
+        and identity(r) == ("govbiz-msa", "catalog-sync-receipts")
+        for r in resources
+    ):
+        selected.add(("govbiz-msa", "catalog-sync-receipts"))
     return sorted(selected)
 
 
@@ -122,7 +128,7 @@ def get(kube, *args):
     return json.loads(snapshot.run(kube + list(args) + ["-o", "json"]))
 
 
-def collect(kube):
+def collect(kube, source_mode="argocd"):
     resources = []
     namespaces = {}
     for ns in NAMESPACES:
@@ -163,7 +169,25 @@ def collect(kube):
         needed == {identity(r) for r in resources if r["kind"] == "Secret"},
         "A required application Secret is missing",
     )
-    apps = get(kube, "-n", "argocd", "get", "applications")["items"]
+    require(source_mode in {"argocd", "manifests"}, "Unknown source mode")
+    if source_mode == "manifests":
+        api = snapshot.run(
+            kube + ["api-resources", "--api-group=argoproj.io", "-o", "name"]
+        )
+        apps = (
+            get(kube, "get", "applications", "-A")["items"]
+            if b"applications.argoproj.io" in api.splitlines()
+            else []
+        )
+        require(
+            not any(
+                a["spec"]["destination"].get("namespace") in NAMESPACES for a in apps
+            ),
+            "Use argocd source mode for Argo-managed workloads",
+        )
+        apps = []
+    else:
+        apps = get(kube, "-n", "argocd", "get", "applications")["items"]
     apps = [a for a in apps if a["spec"]["destination"]["namespace"] in NAMESPACES]
     for a in apps:
         require(
@@ -179,7 +203,9 @@ def collect(kube):
     project_names = {a["spec"]["project"] for a in apps}
     projects = [
         p
-        for p in get(kube, "-n", "argocd", "get", "appprojects")["items"]
+        for p in (
+            get(kube, "-n", "argocd", "get", "appprojects")["items"] if apps else []
+        )
         if p["metadata"]["name"] in project_names
     ]
     claims = referenced_claims(resources)
@@ -190,6 +216,7 @@ def collect(kube):
     )
     return {
         "format": FORMAT,
+        "sourceMode": source_mode,
         "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "namespaces": namespaces,
         "resources": resources,
@@ -200,7 +227,9 @@ def collect(kube):
 
 
 def capture(args):
-    config = collect(kubectl(args))
+    config = collect(kubectl(args), args.source_mode)
+    if args.source_mode == "manifests":
+        manifest_inventory(config)
     require(not args.key_file.exists(), "Choose a new key path")
     require(not args.output.exists(), "Choose a new bundle directory")
     require(
@@ -218,6 +247,7 @@ def capture(args):
             "format": FORMAT,
             "capturedAt": config["capturedAt"],
             "scope": "configuration-only",
+            "sourceMode": config["sourceMode"],
             "claims": config["claims"],
             "revisions": {
                 a["metadata"]["name"]: a["spec"]["source"]["targetRevision"]
@@ -225,6 +255,8 @@ def capture(args):
             },
         },
     )
+    if args.source_mode == "manifests":
+        write_json(args.output / "image-inventory.json", manifest_inventory(config))
     emit(
         "CAPTURED",
         claims=len(config["claims"]),
@@ -262,7 +294,7 @@ def stopped(kube, config, *, source):
         )
 
 
-def helper(ns, claims, node, name, *, readonly):
+def helper(ns, claims, node, name, *, readonly, pool=None):
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -272,7 +304,9 @@ def helper(ns, claims, node, name, *, readonly):
             "activeDeadlineSeconds": 7200,
             "automountServiceAccountToken": False,
             "terminationGracePeriodSeconds": 5,
-            "nodeSelector": {"kubernetes.io/hostname": node},
+            "nodeSelector": {POOL_LABEL: pool}
+            if pool
+            else {"kubernetes.io/hostname": node},
             "securityContext": {
                 "runAsUser": 0,
                 "runAsGroup": 0,
@@ -412,6 +446,14 @@ def restore_stream(command, directory, manifest, key):
 def cold_copy(args, *, restore):
     key = key_at(args.key_file)
     config = read_config(args.bundle, key)
+    use_pools = getattr(args, "pool_placement", False)
+    require(
+        not use_pools or (restore and config.get("sourceMode") == "manifests"),
+        "Pool restore requires a manifests source bundle",
+    )
+    require(use_pools or args.node, "Supply --node or use --pool-placement for restore")
+    if use_pools:
+        manifest_inventory(config)
     kube = kubectl(args)
     stopped(kube, config, source=not restore)
     if restore:
@@ -439,7 +481,10 @@ def cold_copy(args, *, restore):
     for ns in NAMESPACES:
         claims = [c for n, c in config["claims"] if n == ns]
         name = "govbiz-handoff-" + secrets.token_hex(4)
-        pod = helper(ns, claims, args.node, name, readonly=not restore)
+        if not claims:
+            continue
+        pool = workload_pool(ns, "") if use_pools else None
+        pod = helper(ns, claims, args.node, name, readonly=not restore, pool=pool)
         created = None
         try:
             created = json.loads(
@@ -685,9 +730,284 @@ def destination(config, node, elasticsearch_image):
     }
 
 
+def workload_pool(namespace, name):
+    # One node per pool; keep all namespace PVCs and their consumers together.
+    # AI/web have no PVCs and leave more CPU headroom on the application node.
+    return (
+        "observability"
+        if namespace == "govbiz-observability"
+        or (namespace == "govbiz-msa" and name in {"ai-service", "web"})
+        else "application"
+    )
+
+
+def manifest_inventory(config):
+    """Validate the current single-replica deployment and list every image to mirror."""
+    require(
+        config.get("sourceMode") == "manifests", "A manifests source bundle is required"
+    )
+    require(
+        not config["applications"], "Argo applications cannot use manifest placement"
+    )
+    images = {}
+    claims = {tuple(c) for c in config["claims"]}
+    for r in config["resources"]:
+        if r["kind"] not in {"Deployment", "StatefulSet"}:
+            continue
+        ns, name = identity(r)
+        require(
+            r["spec"].get("replicas", 1) in {0, 1},
+            "Review multi-replica workloads before handoff",
+        )
+        pod = r["spec"]["template"]["spec"]
+        require(
+            pod.get("serviceAccountName", "default") == "default",
+            "Export custom service account/RBAC before handoff",
+        )
+        require(
+            not pod.get("affinity") and not pod.get("topologySpreadConstraints"),
+            "Review custom scheduling constraints before handoff",
+        )
+        require(
+            not pod.get("hostNetwork")
+            and not any("hostPath" in v for v in pod.get("volumes", [])),
+            "Host-bound workloads are not portable",
+        )
+        mounted = [
+            v["persistentVolumeClaim"]["claimName"]
+            for v in pod.get("volumes", [])
+            if "persistentVolumeClaim" in v
+        ]
+        mounted += [
+            t["metadata"]["name"] + "-" + name + "-0"
+            for t in r["spec"].get("volumeClaimTemplates", [])
+        ]
+        require(
+            all((ns, c) in claims for c in mounted),
+            "A workload PVC is missing from the bundle",
+        )
+        require(
+            not mounted or workload_pool(ns, name) == workload_pool(ns, ""),
+            "PVC consumers must use the namespace restore pool",
+        )
+        for c in pod.get("containers", []) + pod.get("initContainers", []):
+            image = c["image"]
+            require(
+                re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", image),
+                "Pin all workload and init images before capture",
+            )
+            images.setdefault(image, []).append(f"{ns}/{name}/{c['name']}")
+    require(images, "No workload images were captured")
+    return {
+        "images": [
+            {"source": i, "consumers": sorted(v)} for i, v in sorted(images.items())
+        ]
+    }
+
+
+def manifest_destination(config, image_map):
+    """Produce stopped bootstrap manifests for the Sydney two-pool demo."""
+    inventory = manifest_inventory(config)
+    sources = {i["source"] for i in inventory["images"]}
+    require(
+        set(image_map) == sources,
+        "Image map must cover every captured image, including init containers",
+    )
+    for target in image_map.values():
+        require(
+            re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", target),
+            "Every destination image needs a published digest",
+        )
+        require(
+            "govbiz-migration/" not in target,
+            "Publish local migration images to a pullable registry",
+        )
+    dependencies, storage, apps, services, policies, pvcs, replicas = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
+    claims = {tuple(c) for c in config["claims"]}
+    for r in config["resources"]:
+        kind, (ns, name) = r["kind"], identity(r)
+        if kind == "PersistentVolumeClaim" and (ns, name) in claims:
+            original = r["spec"]["resources"]["requests"]["storage"]
+            require(
+                re.fullmatch(r"[0-9]+Gi", original),
+                "Review non-Gi storage requests manually",
+            )
+            minimum = 30 if name.startswith(("clickhouse", "minio")) else 10
+            pvcs.append(
+                {
+                    "apiVersion": "v1",
+                    "kind": kind,
+                    "metadata": {"name": name, "namespace": ns},
+                    "spec": {
+                        "storageClassName": "govbiz-ebs-gp3",
+                        "accessModes": ["ReadWriteOnce"],
+                        "resources": {
+                            "requests": {
+                                "storage": f"{max(minimum, int(original[:-2]))}Gi"
+                            }
+                        },
+                    },
+                }
+            )
+        elif kind == "Secret" or (kind == "ConfigMap" and name != "kube-root-ca.crt"):
+            dependencies.append(clean(r))
+        elif kind == "Service":
+            row = clean(r)
+            require(
+                row["spec"].get("type", "ClusterIP") == "ClusterIP",
+                "Review externally exposed Services before handoff",
+            )
+            for field in (
+                "clusterIP",
+                "clusterIPs",
+                "ipFamilies",
+                "ipFamilyPolicy",
+                "healthCheckNodePort",
+            ):
+                if row["spec"].get(field) != "None":
+                    row["spec"].pop(field, None)
+            services.append(row)
+        elif kind == "NetworkPolicy":
+            policies.append(clean(r))
+        elif kind in {"StatefulSet", "Deployment"}:
+            row = clean(r)
+            spec = row["spec"]
+            pool = workload_pool(ns, name)
+            replicas.append(
+                {
+                    "namespace": ns,
+                    "kind": kind,
+                    "name": name,
+                    "replicas": spec.get("replicas", 1),
+                    "pool": pool,
+                }
+            )
+            spec["replicas"] = 0
+            pod = spec["template"]["spec"]
+            pod.pop("nodeName", None)
+            selector = pod.setdefault("nodeSelector", {})
+            selector.pop("kubernetes.io/hostname", None)
+            selector[POOL_LABEL] = pool
+            if kind == "StatefulSet":
+                spec["persistentVolumeClaimRetentionPolicy"] = {
+                    "whenDeleted": "Retain",
+                    "whenScaled": "Retain",
+                }
+                for t in spec.pop("volumeClaimTemplates", []):
+                    pod.setdefault("volumes", []).append(
+                        {
+                            "name": t["metadata"]["name"],
+                            "persistentVolumeClaim": {
+                                "claimName": t["metadata"]["name"] + "-" + name + "-0"
+                            },
+                        }
+                    )
+            # RWO consumers must not surge during later Deployment updates.
+            if kind == "Deployment" and any(
+                "persistentVolumeClaim" in v for v in pod.get("volumes", [])
+            ):
+                spec["strategy"] = {"type": "Recreate"}
+            if ns == "govbiz-evaluation" and name in {
+                "evaluation-runner",
+                "ops-artifacts",
+            }:
+                # Node-group replacement can briefly have two nodes. RWO sharing
+                # still needs the exact same host, not just the same pool label.
+                spec["template"].setdefault("metadata", {}).setdefault("labels", {})[
+                    "govbiz.io/evaluation-volume"
+                ] = "shared"
+                pod["affinity"] = {
+                    "podAffinity": {
+                        "requiredDuringSchedulingIgnoredDuringExecution": [
+                            {
+                                "labelSelector": {
+                                    "matchLabels": {
+                                        "govbiz.io/evaluation-volume": "shared"
+                                    }
+                                },
+                                "topologyKey": "kubernetes.io/hostname",
+                            }
+                        ]
+                    }
+                }
+            for c in pod.get("containers", []) + pod.get("initContainers", []):
+                c["image"] = image_map[c["image"]]
+                c["imagePullPolicy"] = "IfNotPresent"
+                overrides = {}
+                if name == "core-service":
+                    overrides = {
+                        "ACCOUNT_DEV_LOGIN_ENABLED": "false",
+                        "APP_CORS_ALLOWED_ORIGIN": "http://localhost:18173",
+                    }
+                if name == "ops-service":
+                    overrides["OPS_WEB_URL"] = "http://localhost:18173"
+                if name in {"ops-service", "evaluation-runner"}:
+                    overrides.update(
+                        {
+                            key: "false"
+                            for key in (
+                                "LLMOPS_LIVE_ENABLED",
+                                "LLMOPS_RAG_LIVE_ENABLED",
+                                "LLMOPS_SCHEDULES_ENABLED",
+                            )
+                        }
+                    )
+                if overrides:
+                    c["env"] = [
+                        e for e in c.get("env", []) if e["name"] not in overrides
+                    ]
+                    c["env"] += [{"name": k, "value": v} for k, v in overrides.items()]
+            (storage if kind == "StatefulSet" else apps).append(row)
+    require({identity(p) for p in pvcs} == claims, "A source PVC is missing")
+    return {
+        "00-namespaces.json": items(
+            [
+                {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": ns}}
+                for ns in NAMESPACES
+            ]
+        ),
+        "10-claims.json": items(pvcs),
+        "20-private-dependencies.json": items(dependencies),
+        "25-services-and-policies.json": items(services + policies),
+        "30-data-stopped.json": items(storage),
+        "50-workloads-stopped.json": items(apps),
+        "startup-plan.json": {
+            "sourceMode": "manifests",
+            "workloads": replicas,
+            "automaticStart": False,
+        },
+    }
+
+
 def prepare(args):
     config = read_config(args.bundle, key_at(args.key_file))
-    manifests = destination(config, args.node, args.elasticsearch_image)
+    if config.get("sourceMode") == "manifests":
+        require(
+            args.pool_placement and args.image_map,
+            "Use --pool-placement and --image-map for a manifests bundle",
+        )
+        require(
+            not args.node and not args.elasticsearch_image,
+            "Manifest placement uses node-pool labels and a complete image map",
+        )
+        manifests = manifest_destination(config, json.loads(args.image_map.read_text()))
+    else:
+        require(
+            args.node
+            and args.elasticsearch_image
+            and not args.pool_placement
+            and not args.image_map,
+            "Argo bundles require --node and --elasticsearch-image",
+        )
+        manifests = destination(config, args.node, args.elasticsearch_image)
     private_directory(args.output)
     for name, value in manifests.items():
         write_json(args.output / name, value)
@@ -710,9 +1030,16 @@ def main():
             p.add_argument("--kubectl", default="kubectl")
             p.add_argument("--kubeconfig", type=Path, required=True)
         if name != "capture":
-            p.add_argument("--node", required=True)
+            p.add_argument("--node")
+        if name == "capture":
+            p.add_argument(
+                "--source-mode", choices=("argocd", "manifests"), default="argocd"
+            )
+        if name in {"restore", "prepare"}:
+            p.add_argument("--pool-placement", action="store_true")
         if name == "prepare":
-            p.add_argument("--elasticsearch-image", required=True)
+            p.add_argument("--elasticsearch-image")
+            p.add_argument("--image-map", type=Path)
     args = parser.parse_args()
     if args.command == "capture":
         capture(args)
