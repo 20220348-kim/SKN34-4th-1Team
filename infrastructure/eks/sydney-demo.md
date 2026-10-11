@@ -15,12 +15,13 @@
 EKS 목적지에서는 `govbiz-msa/web` Deployment와 Service를 제외한다. 백엔드·저장소·평가 도구는
 EKS로 이전하며 MySQL을 RDS로 바꾸는 작업은 이번 선택에 포함하지 않는다.
 
-목표 요청 경로는 다음과 같다. AWS의 HTTPS 진입점과 Ops 프록시 연결은 아직 구성하지 않았다.
+목표 요청 경로는 다음과 같다. [CloudFront·내부 ALB·Ops 프록시 구성](api-entrypoint.md)은
+코드와 격리 검증을 준비했으며 실제 AWS 적용은 아직 하지 않았다.
 
 ```text
 사용자 → Vercel React 웹 (일반 화면·/ops/evaluations)
        → 같은 주소의 /api 요청 → Vercel 서버 미들웨어
-       → AWS HTTPS 진입점
+       → CloudFront HTTPS → VPC origin → 내부 ALB → Nginx API 프록시
           ├─ /api/v1/ops/* → EKS ops-service → core-service에서 관리자 권한 확인
           └─ 나머지 /api/* → EKS core-service → AI·Catalog·DB
 ```
@@ -34,9 +35,9 @@ EKS로 이전하며 MySQL을 RDS로 바꾸는 작업은 이번 선택에 포함�
   `*.cloudfront.net`만 허용한다. 기존 CloudFront 경로를 EKS의 안정적인 진입점에 연결하거나,
   다른 HTTPS 진입점을 선택할 때 미들웨어 허용 규칙과 테스트를 함께 수정해야 한다.
   EKS의 ClusterIP·사설 DNS·로컬 port-forward 주소를 넣어서는 Vercel이 접속할 수 없다.
-- `/api/v1/ops/*`는 현재 미들웨어에서 **503으로 차단**한다. 외부 진입점의 Core/Ops 분기,
-  프록시 비밀값·신뢰 IP 처리, 쿠키·Origin·CSRF 헤더 전달, NetworkPolicy·허용 Host를 검증한 뒤
-  이 차단을 해제해야 한다. 웹 배포만으로 관리자 API 연결이 완료되지는 않는다.
+- `/api/v1/ops/*`는 기본 **503으로 차단**한다. 외부 진입점의 Core/Ops 분기,
+  프록시 비밀값, 쿠키·Origin·CSRF 헤더 전달, NetworkPolicy·허용 Host를 검증한 뒤
+  Vercel Production의 `GOVBIZ_OPS_PROXY_ENABLED=true`로 연다. 이 옵션만으로 AWS 경로가 만들어지지는 않는다.
 - Core의 OAuth 공급자에도 같은 Vercel 주소의 callback을 등록한다. 외부 API
   진입점 생성, 로그인·Ops 검증은 후속 배포 단계이며 이 문서의 변환 명령은 이를 실행하지 않는다.
 
@@ -55,6 +56,8 @@ Vercel 프로젝트 생성과 개인 저장소 `ilil1/SKN34-4th-1Team` main의 �
 
 원본 21개 workload 중 웹 1개를 제외해 목적지는 20개다. 웹의 요청량 25m CPU·32Mi 메모리를
 제외한 수치이며, 두 워커 노드와 데이터 PVC 용량은 유지한다.
+[외부 API 게이트웨이](api-entrypoint.md)를 적용하면 application 풀에 1개(25m CPU·32Mi)가 추가된다.
+AWS Load Balancer Controller의 시스템 Pod 자원은 별도로 계산한다.
 
 요청량은 현재 Mac 구성의 값이며 실제 최대 사용량이나 성능 보장이 아니다. EKS 시스템 Pod의
 요청량·노드 allocatable·실행 중 최대 메모리를 추가 확인한다. 서비스의 메모리 limit 합계가

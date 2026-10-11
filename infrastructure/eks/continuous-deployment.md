@@ -15,7 +15,8 @@ AWS 스택·GitHub environment·Vercel 프로젝트 설정과 최초 EKS 데이�
 AWS 자원과 배포 토큰 등 최초 연결을 완료한 뒤 활성화한다.
 개인 GitHub의 `eks-production` 환경은 main 브랜치만 허용하도록 만들고,
 해당 Vercel 프로젝트의 `VERCEL_ORG_ID`·`VERCEL_PROJECT_ID` 변수를 등록했다.
-repository variable `EKS_RELEASE_ENABLED=false`를 유지하며, 배포 토큰·AWS 역할·EKS 연결은 남아 있다.
+2026-10-11 `VERCEL_TOKEN` Secret 등록도 확인했다. 값과 실제 배포 권한은 읽지 않았다.
+repository variable `EKS_RELEASE_ENABLED=false`를 유지하며, AWS 역할·EKS 연결과 최초 배포 검증은 남아 있다.
 
 ## 배포 흐름
 
@@ -79,7 +80,8 @@ EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflo
    [Vercel 최초 설정](#vercel-최초-설정)을 먼저 따른다. Root Directory는
    `frontend/web`, 외부 workspace 소스 포함, Node 24.x, pnpm 11.22.x다. Vercel 운영 API 주소,
    Core/Ops 프록시와 OAuth·쿠키 설정은 [웹 연결 절차](sydney-demo.md#웹-배포와-api-연결)를 따른다.
-   현재 미연결 Ops의 503 차단은 CD 추가만으로 해제되지 않는다.
+   [외부 API 구성](api-entrypoint.md)을 검증한 뒤 `GOVBIZ_OPS_PROXY_ENABLED=true`로 열어야 한다.
+   미연결 Ops의 기본 503 차단은 CD 추가만으로 해제되지 않는다.
 7. 클러스터·원본 데이터·Vercel 외부 API 경로를 확인한 뒤 마지막에 repository variable
    `EKS_RELEASE_ENABLED=true`를 설정한다. workflow가 main에 병합되어 있어야 한다.
    첫 실행은 main의 모든 CI가 끝난 뒤 수동 dispatch로 확인할 수 있으며 이후 CI 완료 시 자동 실행된다.
@@ -124,13 +126,14 @@ EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflo
    | `GOVBIZ_FRONTEND_ORIGIN` | `https://govbiz.vercel.app` — 마지막 `/` 없이 |
    | `GOVBIZ_API_ORIGIN` | 현재 미들웨어가 허용하는 실제 `https://….cloudfront.net` 주소 |
    | `GOVBIZ_PROXY_SECRET` | 백엔드와 동일한 64자리 hex 프록시 비밀값 |
+   | `GOVBIZ_OPS_PROXY_ENABLED` | EKS Core/Ops 분기 검증 후에만 `true`, 그 전에는 `false` |
 
    AWS 자격 증명·OpenAI 키·DB 비밀번호는 웹 빌드 변수에 넣지 않는다.
    Core/Ops 라우팅과 인증 연결은 [EKS API 연결](sydney-demo.md#웹-배포와-api-연결)을 완료해야 한다.
 5. GitHub Actions 연결에 사용할 값을 확인한다.
    프로젝트 Settings → General의 **Project ID**를 `VERCEL_PROJECT_ID`,
    소유 팀 Settings → General의 **Team ID**를 `VERCEL_ORG_ID`에 넣는다.
-   [Vercel Account Tokens](https://vercel.com/account/tokens)에서 해당 팀 범위의 토큰을 만들고
+   [Vercel Account Tokens](https://vercel.com/account/settings/tokens)에서 해당 팀의 `govbiz` 프로젝트 범위 토큰을 만들고
    GitHub `eks-production` environment의 `VERCEL_TOKEN` **Secret**에 직접 저장한다.
    토큰을 채팅이나 Git에 붙여 넣지 않는다. 이 세 값은 Vercel 빌드 환경변수가 아니다.
 6. Settings의 Production Branch가 `main`인지 확인한다. 이번 `vercel.json` 변경이 main에 반영되면

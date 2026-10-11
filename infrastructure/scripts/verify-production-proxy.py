@@ -83,7 +83,45 @@ def verify_web(call):
     print("Web image passed: SPA/assets, Core/Ops routing, body/query, Host/Origin/CSRF/cookies, no API cache/fallback, non-root read-only runtime")
 
 
-def main(web_image=None):
+def verify_eks_gateway(call):
+    for path in ("/api/v1/ops", "/api/v1/ops/session", "/api/v1/account",
+                 "/api/v1/application-preparations/1/documents"):
+        assert call(path=path, secret="")[0] == 403
+        assert call(path=path, secret="forged")[0] == 403
+        assert call(path=path, client_ip="")[0] == 400
+    for path, upstream in (("/api/v1/ops", "ops"), ("/api/v1/ops/session", "ops"),
+                           ("/api/v1/ops-other", "core"), ("/api/v1/account", "core"),
+                           ("/api/v1/application-preparations/1/documents", "core")):
+        for method in ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
+            query_path = path + "?q=%EC%84%9C%EC%9A%B8"
+            status, headers, data = call(method, query_path, body='{"test":true}')
+            assert status == 200, (method, path, status, data[:200])
+            payload = json.loads(data)
+            received = {k.lower(): v for k, v in payload["headers"].items()}
+            assert payload["upstream"] == upstream
+            assert payload["path"] == query_path and payload["body"] == '{"test":true}'
+            assert payload["method"] == method
+            assert received["host"] == ("ops-service:8000" if upstream == "ops" else "core-service:8080")
+            assert received["origin"] == "https://govbiz-test.vercel.app"
+            assert received["cookie"] == "session=test" and received["x-csrftoken"] == "csrf-test"
+            assert received["authorization"] == "Bearer test-session"
+            assert received["x-forwarded-for"] == "203.0.113.20"
+            assert received["x-forwarded-proto"] == "https"
+            assert all(k not in received for k in ("forwarded", "x-real-ip", "x-forwarded-host",
+                       "x-forwarded-port", "x-govbiz-proxy-secret", "x-govbiz-client-ip"))
+            assert [v for k, v in headers if k.lower() == "cache-control"] == ["private, no-store"]
+            assert len([v for k, v in headers if k.lower() == "set-cookie"]) == 2
+    for path in ("/", "/api", "/internal/v1/health", "/admin/", "/api/v1/ops/not-found"):
+        assert call(path=path)[0] == 404, path
+    assert call(path="/healthz")[0] == 200
+    assert call("HEAD", "/api/v1/ops/session")[0] == 200
+    large_body = json.dumps({"snapshot": "x" * 2_000_000})
+    assert json.loads(call("PUT", "/api/v1/chat-conversations/test", body=large_body)[2])["body"] == large_body
+    assert call("POST", "/api/test", body="x" * (2 * 1024 * 1024 + 1))[0] == 413
+    print("EKS gateway passed: secret rejection, Core/Ops routing, CSRF/cookies/body, private cache, size limits")
+
+
+def main(web_image=None, eks_gateway=False):
     prefix = "govbiz-proxy-test-" + uuid.uuid4().hex[:10]
     containers = []
     network_id = None
@@ -94,11 +132,20 @@ def main(web_image=None):
         containers.append(docker("run", "-d", "--network", prefix, "--network-alias", "core-service",
                                  "--mount", f"type=bind,src={ROOT / 'scripts/proxy-test-server.py'},dst=/server.py,readonly",
                                  "--entrypoint", "python", stub_image, "/server.py"))
-        if web_image:
+        if web_image or eks_gateway:
             containers.append(docker("run", "-d", "--network", prefix, "--network-alias", "ops-service",
                                      "--mount", f"type=bind,src={ROOT / 'scripts/proxy-test-server.py'},dst=/server.py,readonly",
                                      "-e", "STUB_PORT=8000", "-e", "STUB_UPSTREAM=ops",
                                      "--entrypoint", "python", stub_image, "/server.py"))
+        if eks_gateway:
+            containers.append(docker("run", "-d", "--network", prefix, "-p", "127.0.0.1::8080",
+                                     "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                                     "--user", "101:101", "--memory", "128m", "--cpus", "1",
+                                     "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m,uid=101,gid=101",
+                                     "-e", f"GOVBIZ_PROXY_SECRET={SECRET}",
+                                     "--mount", f"type=bind,src={ROOT / 'eks/api-gateway'},dst=/etc/govbiz,readonly",
+                                     "--entrypoint", "/bin/sh", nginx_image, "/etc/govbiz/start.sh"))
+        elif web_image:
             containers.append(docker("run", "-d", "--network", prefix, "-p", "127.0.0.1::8080",
                                      "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                                      "--user", "101:101", "--memory", "128m", "--cpus", "1",
@@ -132,6 +179,10 @@ def main(web_image=None):
                 headers.update({"Host": "localhost:18173", "Origin": "http://localhost:18173",
                                 "X-CSRFToken": "csrf-test", "X-Forwarded-Host": "forged.invalid",
                                 "X-Forwarded-Proto": "https", "X-Forwarded-Port": "443", "X-Real-IP": "1.2.3.4"})
+            if eks_gateway:
+                headers.update({"X-CSRFToken": "csrf-test", "Authorization": "Bearer test-session",
+                                "X-Forwarded-Proto": "http", "X-Forwarded-Host": "forged.invalid",
+                                "X-Forwarded-Port": "80", "X-Real-IP": "1.2.3.4"})
             try:
                 connection.request(method, path, body=body, headers=headers)
                 response = connection.getresponse()
@@ -140,13 +191,20 @@ def main(web_image=None):
                 connection.close()
 
         upstreams = [("/api/test", "core")]
-        if web_image:
+        if web_image or eks_gateway:
             upstreams.append(("/api/v1/ops/session", "ops"))
         try:
             wait_for_upstreams(call, upstreams)
         except RuntimeError as error:
             logs = "\n".join(docker("logs", container_id) for container_id in containers)
             raise RuntimeError(f"{error}\n{logs}") from error
+        if eks_gateway:
+            verify_eks_gateway(call)
+            docker("stop", "--time", "1", containers[1])
+            assert call(path="/api/v1/ops/session", timeout=10)[0] in (502, 504)
+            assert call(path="/api/v1/account")[0] == 200
+            print("Ops outage remains an error; Core does not receive the Ops request")
+            return
         if web_image:
             verify_web(call)
             docker("stop", "--time", "1", containers[1])
@@ -214,5 +272,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--web-image", help="Test a built Kubernetes web image instead of the AWS proxy")
-    main(parser.parse_args().web_image)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--web-image", help="Test a built Kubernetes web image instead of the AWS proxy")
+    mode.add_argument("--eks-gateway", action="store_true", help="Test the isolated EKS API gateway")
+    args = parser.parse_args()
+    main(args.web_image, args.eks_gateway)

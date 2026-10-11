@@ -13,8 +13,20 @@ const noCache = {
 // Vercel 서버에서만 실행한다. 브라우저 번들에 이 파일이나 비밀값을 import하지 않는다.
 export default function middleware(request: Request) {
   const incoming = new URL(request.url)
-  // Ops는 현재 로컬 개발 연결이다. 배포 프록시가 준비되기 전 Core로 잘못 전달하지 않는다.
-  if (incoming.pathname === '/api/v1/ops' || incoming.pathname.startsWith('/api/v1/ops/')) {
+  // Nginx가 디코딩·정규화한 경로로 분기하므로, 인코딩 별칭으로 Ops 차단을 우회하지 못하게 한다.
+  let routingPath: string
+  try {
+    const decoded = decodeURIComponent(incoming.pathname)
+    if (decoded.includes('//') || decoded.includes('\\')) {
+      return new Response(null, { status: 400, headers: noCache })
+    }
+    routingPath = new URL(decoded, incoming.origin).pathname
+  } catch {
+    return new Response(null, { status: 400, headers: noCache })
+  }
+  // EKS의 Core/Ops 분기를 검증한 뒤 Production에서만 명시적으로 연다.
+  const isOps = routingPath === '/api/v1/ops' || routingPath.startsWith('/api/v1/ops/')
+  if (isOps && process.env.GOVBIZ_OPS_PROXY_ENABLED !== 'true') {
     return new Response('운영 API 배포 연결이 준비되지 않았습니다.', { status: 503, headers: noCache })
   }
   const backend = process.env.GOVBIZ_API_ORIGIN ?? ''
@@ -40,7 +52,7 @@ export default function middleware(request: Request) {
     return new Response('접속 주소를 확인할 수 없습니다.', { status: 400, headers: noCache })
   }
   const headers = new Headers()
-  for (const name of ['accept', 'accept-language', 'content-type', 'cookie', 'origin', 'authorization', 'x-chat-account']) {
+  for (const name of ['accept', 'accept-language', 'content-type', 'cookie', 'origin', 'authorization', 'x-chat-account', 'x-csrftoken']) {
     const value = request.headers.get(name)
     if (value !== null) headers.set(name, value)
   }
