@@ -56,7 +56,8 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 같은 확인 흐름으로 연결하며 중지 시 기존 HTTP 요청의 `AbortController`를 취소하고 늦은 응답을 버립니다.
 계정·공고·새 요청의 수명이 바뀌면 이전 닫기 확인을 폐기합니다. 서버 작업 중단이나 비용 취소 API는 추가하지 않습니다.
 모바일 관심함의 검색·다중 필터·정렬·달력은 검증된 관심 공고 모델을 로컬 화면에서 처리합니다. 공고 검색과 관심함의 조건은 한 시트에서 고르며
-공고 검색은 기존 catalog API, 관심함은 기존 로컬 필터를 사용합니다. 수신 설정의 보기/수정 분리는 기존 리포트 settings PUT과 주소 확인 POST를 그대로 사용하고,
+공고 검색의 `CatalogScreen`은 시트의 임시 선택과 적용 조건을 분리합니다. 시트에서 고른 조건은 `적용`을 눌렀을 때 기존 `BrowseSupportProgramsUseCase → 공통 공고 HTTP 클라이언트 → Core catalog API` 조회 경로로 전달합니다.
+시트의 닫기·초기화는 적용 전 검색 결과를 바꾸지 않습니다. 관심함은 기존 로컬 필터를 사용합니다. 수신 설정의 보기/수정 분리는 기존 리포트 settings PUT과 주소 확인 POST를 그대로 사용하고,
 알림 설정은 리포트 앱 알림에서 진입합니다. 공고 상세에서 준비 화면으로 이동할 때의 복귀 메타데이터는 모바일 내비게이션만 사용하며 HTTP·DB 계약에 전달하지 않습니다.
 목록·진행 관리의 단계 변경은 기존 `ProgressStageSheet → updatePreparationProgress → Core progress-stage API`를
 사용하며 문서별 진행 revision과 복합 공고 식별자를 검증합니다. 웹·공개 HTTP 계약과 shared DTO는 변경하지 않습니다.
