@@ -7,6 +7,19 @@ test('screen context uses canonical routes and selects only a validated detail i
   expect(programIdentity('BIZINFO', ' bad ')).toBeNull()
   expect(programIdentity('BIZINFO', 'a\n')).toBeNull()
 })
+
+test('query-driven page labels stay local while the assistant HTTP context remains unchanged', () => {
+  const browse = assistantOrigin('/all/collab', { management: '0' })
+  const manage = assistantOrigin('/all/collab', { management: '1' })
+  expect(browse.pageLabel).toBe('파트너 모집')
+  expect(manage.pageLabel).toBe('파트너 관리')
+  expect(browse.context).toEqual(manage.context)
+  expect(manage.context).toEqual({ route: '/app/partners', programSelected: false })
+  expect(manage.context).not.toHaveProperty('pageLabel')
+  const result = assistantOrigin('/all/reviews/12', { step: 'analysis', runId: '30' })
+  expect(result.pageLabel).toBe('검토 결과')
+  expect(result.context).toEqual({ route: '/app/combination-reviews', programSelected: false })
+})
 test.each(['https://evil.test/app/chat', '//evil.test/app/chat', '/app/unknown', '/app/chat?mode=filter&mode=filter', '/app/chat?execute=1', '/app/proposals?box=sent', '/app/chat#fragment', '/app/partners/detail?recruitmentId=9007199254740993'])('unsafe or unsupported destination %s is rejected', to => expect(assistantDestination(to)).toBeNull())
 test('search and personal workflow links are mapped without copying web paths', () => {
   expect(assistantDestination('/app/chat')).toEqual({ pathname: '/(tabs)', params: { mode: 'ai' } })

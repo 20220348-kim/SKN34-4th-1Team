@@ -1,6 +1,7 @@
 import { ProgramReturnHeader } from '../../../../src/components/ProgramReturnHeader'
 import { useLoginFlow } from '../../../../src/auth/loginFlow'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { CombinationReviewEditorScreen, type CombinationReviewStep } from '../../../../src/screens/CombinationReviewScreens'
 import { Notice, Page } from '../../../../src/ui'
 const positiveId = (value: unknown) => typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null
@@ -14,7 +15,8 @@ export default function ReviewRoute() {
   // 참여 상태는 이제 분석 확인 단계의 "내 상황(선택)"에서 받아요. 예전 참여 상태 단계 주소는 분석 확인 단계로 열어요.
   const step = params.step === 'participation' ? 'confirm'
     : typeof params.step === 'string' && ['selection', 'confirm', 'analysis'].includes(params.step) ? params.step as CombinationReviewStep : undefined
-  return <><ProgramReturnHeader params={params} /><CombinationReviewEditorScreen id={id} runId={runId} initialStep={step} onLogin={() => requestLogin()}
+  return <><Stack.Screen options={{ title: step === 'analysis' || (!step && runId !== undefined) ? screenTitles.combinationReviewRunResult : screenTitles.combinationReviewDetail }} />
+    <ProgramReturnHeader params={params} /><CombinationReviewEditorScreen id={id} runId={runId} initialStep={step} onLogin={() => requestLogin()}
     onStepChange={(_id, next) => router.setParams({ step: next })}
     onOpenProgram={identity => router.push({ pathname: '/program', params: identity })} /></>
 }

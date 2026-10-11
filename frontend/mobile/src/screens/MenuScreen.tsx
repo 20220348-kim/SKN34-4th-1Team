@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, DevSettings, StyleSheet, Text, View } from 'react-native'
 import { useAuth } from '../auth/session'
 import { clearIntroductionCompleted } from '../auth/introductionStorage'
@@ -36,25 +37,25 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
   const account = status === 'signedIn' ? session?.account : null
   const groups: { title: string; items: MenuItem[] }[] = [
     { title: '내 정보', items: [
-      { destination: 'account', label: '내 계정', description: '이메일 · 로그인 관리', icon: 'account' },
+      { destination: 'account', label: screenTitles.profile, description: '이메일 · 로그인 관리', icon: 'account' },
     ] },
     { title: '지원사업 찾기', items: [
-      { destination: 'filter', label: '공고 검색', description: '조건으로 찾기', icon: 'search' },
-      { destination: 'ai', label: 'AI 검색', description: '대화로 찾기', icon: 'message' },
-      { destination: 'saved', label: '관심 공고함', description: '담은 공고 · 준비 작업', icon: 'bookmark' },
-      { destination: 'report', label: '맞춤 리포트', description: '기업 조건 추천', icon: 'report' },
+      { destination: 'filter', label: screenTitles.filterSearch, description: '조건으로 찾기', icon: 'search' },
+      { destination: 'ai', label: screenTitles.aiSearch, description: '대화로 찾기', icon: 'message' },
+      { destination: 'saved', label: screenTitles.savedPrograms, description: '담은 공고 · 준비 작업', icon: 'bookmark' },
+      { destination: 'report', label: screenTitles.reports, description: '기업 조건 추천', icon: 'report' },
     ] },
     { title: '신청 준비', items: [
-      { destination: 'documents', label: '신청 문서', description: '작성 중 · 초안 완료', icon: 'document' },
-      { destination: 'reviews', label: '중복 검토', description: '공고 조합 검토', icon: 'shield' },
+      { destination: 'documents', label: screenTitles.applicationPreparations, description: '작성 중 · 초안 완료', icon: 'document' },
+      { destination: 'reviews', label: screenTitles.combinationReviews, description: '공고 조합 검토', icon: 'shield' },
     ] },
     { title: '협업', items: [
-      { destination: 'recruitments', label: '모집글', description: '파트너 찾기', icon: 'recruitment' },
-      { destination: 'partners', label: '파트너 관리', description: '제안 · 내 모집글', icon: 'collaboration' },
+      { destination: 'recruitments', label: screenTitles.publicPartners, description: '파트너 찾기', icon: 'recruitment' },
+      { destination: 'partners', label: screenTitles.partnerManagement, description: '제안 · 내 모집글', icon: 'collaboration' },
     ] },
     { title: '서비스 안내', items: [
       ...(account ? [{ destination: 'assistant' as const, label: 'GovBiz 도우미', description: '사용법 · 질문하기', icon: 'message' as const }] : []),
-      { destination: 'pricing', label: '요금제', description: '기능 · 이용 안내', icon: 'creditCard' },
+      { destination: 'pricing', label: screenTitles.pricing, description: '기능 · 이용 안내', icon: 'creditCard' },
       { destination: 'privacy', label: '개인정보 처리방침', description: serviceInformation.privacy.preparing ? '문서 초안' : '문서 읽기', icon: 'document' },
       { destination: 'terms', label: '이용약관', description: serviceInformation.terms.preparing ? '문서 초안' : '문서 읽기', icon: 'document' },
       { destination: 'support', label: '도움말·문의', description: serviceContact.email || serviceContact.url ? '도움말 · 문의처' : '도움말 · 문의처 준비 중', icon: 'message' },
@@ -63,7 +64,7 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
   return <Page headerless backgroundColor={colors.surface}>
     <View style={local.profile}>
       <View style={local.identity}>
-        <Text style={local.name}>{account?.company?.companyName ?? (account ? '내 계정' : '로그인해 주세요')}</Text>
+        <Text style={local.name}>{account?.company?.companyName ?? (account ? screenTitles.profile : '로그인해 주세요')}</Text>
         {!account?.company && <Text style={local.email}>{account?.email ?? '계정과 관심 공고를 이어서 사용하세요'}</Text>}
       </View>
     </View>

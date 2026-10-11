@@ -1,27 +1,28 @@
 import { Stack } from 'expo-router'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { CollaborationHeaderAction } from './collab'
 import { colors } from '../../../src/ui'
 
 export const unstable_settings = { anchor: 'index' }
 
 export default function AllLayout() {
-  return <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerBackTitle: '메뉴',
+  return <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerBackTitle: screenTitles.menu,
     headerTitleStyle: { fontSize: 18, fontWeight: '700' }, headerShadowVisible: false,
     headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
     <Stack.Screen name="index" options={{ headerShown: false }} />
-    <Stack.Screen name="account" options={{ title: '내 정보' }} />
-    <Stack.Screen name="company" options={{ title: '기업 정보' }} />
-    <Stack.Screen name="settings" options={{ title: '알림 설정' }} />
-    <Stack.Screen name="pricing" options={{ title: '요금제' }} />
-    <Stack.Screen name="preparation" options={{ title: '신청 준비' }} />
-    <Stack.Screen name="preparation/new" options={{ title: '새 문서' }} />
-    <Stack.Screen name="preparation/[id]" options={{ title: '답변 작성' }} />
-    <Stack.Screen name="preparation/[id]/review" options={{ title: '답변 검토' }} />
-    <Stack.Screen name="preparation/[id]/documents" options={{ title: '문서 결과' }} />
-    <Stack.Screen name="preparation/[id]/online" options={{ title: '구글폼 입력 도우미' }} />
-    <Stack.Screen name="reviews/index" options={{ title: '중복 검토' }} />
-    <Stack.Screen name="reviews/new" options={{ title: '중복 지원·수혜 검토' }} />
-    <Stack.Screen name="reviews/[id]" options={{ title: '중복 지원·수혜' }} />
-    <Stack.Screen name="collab" options={{ title: '협업', headerRight: () => <CollaborationHeaderAction /> }} />
+    <Stack.Screen name="account" options={{ title: screenTitles.profile }} />
+    <Stack.Screen name="company" options={{ title: screenTitles.companyProfile }} />
+    <Stack.Screen name="settings" options={{ title: screenTitles.notificationSettings }} />
+    <Stack.Screen name="pricing" options={{ title: screenTitles.pricing }} />
+    <Stack.Screen name="preparation" options={{ title: screenTitles.applicationPreparations }} />
+    <Stack.Screen name="preparation/new" options={{ title: screenTitles.applicationPreparationNew }} />
+    <Stack.Screen name="preparation/[id]" options={{ title: screenTitles.applicationPreparationEditor }} />
+    <Stack.Screen name="preparation/[id]/review" options={{ title: screenTitles.applicationPreparationReview }} />
+    <Stack.Screen name="preparation/[id]/documents" options={{ title: screenTitles.applicationPreparationDocuments }} />
+    <Stack.Screen name="preparation/[id]/online" options={{ title: screenTitles.onlineInputGuide }} />
+    <Stack.Screen name="reviews/index" options={{ title: screenTitles.combinationReviews }} />
+    <Stack.Screen name="reviews/new" options={{ title: screenTitles.combinationReviewNew }} />
+    <Stack.Screen name="reviews/[id]" options={{ title: screenTitles.combinationReviewDetail }} />
+    <Stack.Screen name="collab" options={{ title: screenTitles.partnerManagement, headerRight: () => <CollaborationHeaderAction /> }} />
   </Stack>
 }

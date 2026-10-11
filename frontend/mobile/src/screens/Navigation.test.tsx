@@ -119,9 +119,9 @@ const allMenuRoutes = {
 }
 
 test.each([
-  ['내 계정', '/all/account'],
+  ['내 프로필', '/all/account'],
   ['요금제', '/all/pricing'],
-  ['신청 문서', '/all/preparation'], ['중복 검토', '/all/reviews'], ['모집글', '/all/collab'],
+  ['신청 문서 작성', '/all/preparation'], ['중복 지원·수혜 검토', '/all/reviews'], ['파트너 모집', '/all/collab'],
   ['파트너 관리', '/all/collab'],
 ])('pressing All returns from %s to the menu and allows opening another feature', async (label, pathname) => {
   jest.mocked(useAuth).mockReturnValue(memberAuth)
@@ -142,7 +142,7 @@ test('pressing All from another tab returns to the menu without changing the sea
   const view = renderRouter(allMenuRoutes, { initialUrl: '/?mode=filter' })
   fireEvent.changeText(await screen.findByLabelText('공고명·기관명'), '유지할 검색 조건')
   fireEvent.press(screen.getByLabelText('메뉴'))
-  fireEvent.press(await screen.findByLabelText('내 계정'))
+  fireEvent.press(await screen.findByLabelText('내 프로필'))
   await waitFor(() => expect(view.getPathname()).toBe('/all/account'))
   fireEvent.press(screen.getByLabelText('검색'))
   await screen.findByDisplayValue('유지할 검색 조건')
@@ -190,7 +190,7 @@ test('pressing All recovers a stack that was opened without a menu underneath', 
 test('pressing All from a nested account screen returns to the menu instead of the first feature', async () => {
   jest.mocked(useAuth).mockReturnValue(memberAuth)
   const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
-  fireEvent.press(await screen.findByLabelText('내 계정'))
+  fireEvent.press(await screen.findByLabelText('내 프로필'))
   fireEvent.press(await screen.findByLabelText('기업 프로필 등록'))
   await screen.findByText('기업 정보 화면')
   fireEvent.press(screen.getByLabelText('메뉴'))
@@ -267,9 +267,9 @@ test('guests have search, collaboration, pricing and All and browse public recru
   expect(browseProposals).not.toHaveBeenCalled()
   fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
-  expect(screen.getByLabelText('신청 문서')).toBeTruthy()
+  expect(screen.getByLabelText('신청 문서 작성')).toBeTruthy()
   expect(screen.getByLabelText('관심 공고함')).toBeTruthy()
-  fireEvent.press(screen.getByLabelText('내 계정'))
+  fireEvent.press(screen.getByLabelText('내 프로필'))
   await screen.findByLabelText('이메일')
   expect(view.getPathname()).toBe('/all')
   fireEvent.press(screen.getByLabelText('로그인 취소'))
@@ -282,7 +282,7 @@ test('verified members retain the original four tabs and private All menu', asyn
   await screen.findByLabelText('회사 상황이나 궁금한 점')
   expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
   fireEvent.press(screen.getByLabelText('메뉴'))
-  await screen.findByLabelText('신청 문서')
+  await screen.findByLabelText('신청 문서 작성')
   expect(screen.getByLabelText('관심 공고함')).toBeTruthy()
 })
 
@@ -339,7 +339,7 @@ test('member pricing reads the trial, opens the same account usage and refreshes
   expect(screen.getByText('12월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')).toBeTruthy()
   expect(planUsageUseCase).toHaveBeenCalledWith(memberAuth.session!.accessToken)
   const pricingSignal = read.mock.calls[0][0] as AbortSignal
-  fireEvent.press(screen.getByRole('button', { name: '내 계정에서 이용량 보기' }))
+  fireEvent.press(screen.getByRole('button', { name: '내 프로필에서 이용량 보기' }))
   await screen.findByText('플러스 체험')
   expect(view.getPathname()).toBe('/all/account')
   expect(screen.getByText('이번 기간 498회 남음')).toBeTruthy()
@@ -414,7 +414,7 @@ test('logging in through the guest account menu opens the main search instead of
     return <Layout />
   }
   const view = renderRouter({ ...routes, _layout: ReactiveAuthLayout }, { initialUrl: '/all' })
-  fireEvent.press(await screen.findByLabelText('내 계정'))
+  fireEvent.press(await screen.findByLabelText('내 프로필'))
   await screen.findByLabelText('이메일')
   await act(async () => verifyLogin())
   await screen.findByLabelText('회사 상황이나 궁금한 점')
@@ -455,8 +455,8 @@ test.each([
 
 test.each([
   ['알림 설정', '/all/settings', '로그인하면 관심 공고 마감 알림과 리포트 수신 설정을 바꿀 수 있어요.'],
-  ['신청 문서', '/all/preparation', '로그인하면 작성한 답변과 신청문서를 웹과 앱에서 함께 확인할 수 있어요.'],
-  ['중복 검토', '/all/reviews', '로그인하면 본인의 검토와 참여 이력을 관리할 수 있어요. 기업 등록 없이 직접 입력할 수 있습니다.'],
+  ['신청 문서 작성', '/all/preparation', '로그인하면 작성한 답변과 신청문서를 웹과 앱에서 함께 확인할 수 있어요.'],
+  ['중복 지원·수혜 검토', '/all/reviews', '로그인하면 본인의 검토와 참여 이력을 관리할 수 있어요. 기업 등록 없이 직접 입력할 수 있습니다.'],
   ['받은 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
   ['보낸 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
   ['내 모집글', '/all/collab', '내 모집글은 로그인 후 확인할 수 있어요.'],
@@ -466,7 +466,7 @@ test.each([
   await screen.findByText(notice)
   expect(view.getPathname()).toBe(pathname)
   expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
-  fireEvent.press(screen.getByLabelText(label === '중복 검토' ? '로그인하고 시작' : label === '신청 문서' ? '로그인하고 시작하기' : '로그인하기'))
+  fireEvent.press(screen.getByLabelText(label === '중복 지원·수혜 검토' ? '로그인하고 시작' : label === '신청 문서 작성' ? '로그인하고 시작하기' : '로그인하기'))
   if (label !== '알림 설정') {
     await screen.findByText('로그인이 필요해요')
     fireEvent.press(screen.getByLabelText('로그인'))
@@ -476,7 +476,7 @@ test.each([
   fireEvent.press(screen.getByLabelText('로그인 취소'))
 })
 
-test.each([['공고 검색', 'filter', '공고명·기관명'], ['AI 검색', 'ai', '회사 상황이나 궁금한 점']])(
+test.each([['필터 검색', 'filter', '공고명·기관명'], ['AI 대화 검색', 'ai', '회사 상황이나 궁금한 점']])(
   'All %s enters the existing search mode', async (label, mode, field) => {
     const view = renderRouter(routes, { initialUrl: '/all' })
     await screen.findByLabelText('파트너 관리')
@@ -547,7 +547,7 @@ test('All partner management switches received, sent and owned tabs and a recrui
   await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'recruitments', mine: '1' }))
   await waitFor(() => expect(browseRecruitments).toHaveBeenLastCalledWith(expect.objectContaining({ mineOnly: true }), expect.any(String), expect.any(AbortSignal)))
   fireEvent.press(screen.getByLabelText('메뉴'))
-  fireEvent.press(await screen.findByLabelText('모집글'))
+  fireEvent.press(await screen.findByLabelText('파트너 모집'))
   await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '0', view: 'recruitments', mine: '0' }))
   expect(await screen.findByLabelText('모집글 작성')).toBeTruthy()
   await waitFor(() => expect(browseRecruitments).toHaveBeenLastCalledWith(expect.objectContaining({ mineOnly: false }), expect.any(String), expect.any(AbortSignal)))
