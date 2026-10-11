@@ -101,7 +101,7 @@ def verify_eks_gateway(call):
             assert payload["upstream"] == upstream
             assert payload["path"] == query_path and payload["body"] == '{"test":true}'
             assert payload["method"] == method
-            assert received["host"] == ("ops-service:8000" if upstream == "ops" else "core-service:8080")
+            assert received["host"] == ("ops-service.govbiz-msa.svc.cluster.local:8000" if upstream == "ops" else "core-service.govbiz-msa.svc.cluster.local:8080")
             assert received["origin"] == "https://govbiz-test.vercel.app"
             assert received["cookie"] == "session=test" and received["x-csrftoken"] == "csrf-test"
             assert received["authorization"] == "Bearer test-session"
@@ -129,11 +129,12 @@ def main(web_image=None, eks_gateway=False):
     try:
         network_id = docker("network", "create", prefix)
         stub_image = os.environ.get("VERIFY_STUB_IMAGE", "python:3.11-slim-bookworm")
-        containers.append(docker("run", "-d", "--network", prefix, "--network-alias", "core-service",
+        dns_suffix = ".govbiz-msa.svc.cluster.local" if eks_gateway else ""
+        containers.append(docker("run", "-d", "--network", prefix, "--network-alias", "core-service" + dns_suffix,
                                  "--mount", f"type=bind,src={ROOT / 'scripts/proxy-test-server.py'},dst=/server.py,readonly",
                                  "--entrypoint", "python", stub_image, "/server.py"))
         if web_image or eks_gateway:
-            containers.append(docker("run", "-d", "--network", prefix, "--network-alias", "ops-service",
+            containers.append(docker("run", "-d", "--network", prefix, "--network-alias", "ops-service" + dns_suffix,
                                      "--mount", f"type=bind,src={ROOT / 'scripts/proxy-test-server.py'},dst=/server.py,readonly",
                                      "-e", "STUB_PORT=8000", "-e", "STUB_UPSTREAM=ops",
                                      "--entrypoint", "python", stub_image, "/server.py"))

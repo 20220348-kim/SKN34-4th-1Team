@@ -1,8 +1,10 @@
 # Vercel → CloudFront → EKS API 연결
 
 이 구성은 시드니 시연의 **Vercel 웹에서 EKS Core·Ops API를 호출하는 경로**다.
-2026-10-11 코드·오프라인 검사와 격리 Nginx 검증을 준비했으며 실제 AWS에는 아직 적용하지 않았다.
-`kubectl apply -k api-gateway`는 ALB를 생성하므로 비용 승인·클러스터 복원 후에 실행한다.
+2026-10-12 시드니 EKS에 실제 적용하고 `https://govbiz.vercel.app`과 연결했다.
+운영 주소에서 Core·AI health, 저장 공고 조회, Ops session은 200이며 익명 평가 이력 조회는 401이다.
+CloudFront 직접 API 요청은 프록시 비밀값 없이 403으로 차단된다. 관리자 로그인 후 검증은 별도다.
+다른 환경에서 `kubectl apply -k api-gateway`를 실행하면 ALB를 생성하므로 비용 승인·복원 후 적용한다.
 
 ```text
 govbiz.vercel.app /api/*
@@ -31,8 +33,11 @@ govbiz.vercel.app /api/*
   따라서 이 단계만으로 Core의 실제 클라이언트 IP 기반 제한까지 검증했다고 해석하지 않는다.
 - 게이트웨이만 egress를 Core·Ops·DNS로 제한한다. 기존 Core·Ops 통신을 차단하는 새 ingress
   격리 정책은 추가하지 않는다. 기존 NetworkPolicy를 유지하며 목적지의 추가 제한은 따로 확인한다.
-- Nginx는 Ops upstream에 `Host: ops-service:8000`을 보낸다. `DJANGO_ALLOWED_HOSTS`에
-  `ops-service`, `DJANGO_CSRF_TRUSTED_ORIGINS`에 `https://govbiz.vercel.app`이 필요하다.
+- Nginx 비동기 DNS resolver는 `resolv.conf`의 검색 도메인을 적용하지 않는다. Core·Ops를
+  각각 `core-service.govbiz-msa.svc.cluster.local`, `ops-service.govbiz-msa.svc.cluster.local`로
+  해석한다. Ops 요청의 Host도 전체 서비스 이름이므로 `DJANGO_ALLOWED_HOSTS`에
+  `ops-service.govbiz-msa.svc.cluster.local`, `DJANGO_CSRF_TRUSTED_ORIGINS`에
+  `https://govbiz.vercel.app`이 필요하다.
   Core·Ops 쿠키는 Secure 설정을 유지한다. Origin·CSRF 검증과 관리자 판정은 Django·Core가 수행한다.
 
 ## 실제 적용 전 준비
@@ -84,8 +89,11 @@ govbiz.vercel.app /api/*
 5. 관리자 로그인 → Ops session/이력/보고서 조회 → 일반 회원 접근 거절 → 로그아웃 후 차단을
    확인한다. 승인된 무료 쓰기 1건으로 CSRF 누락 거절·정상 요청 성공·기존 이력 보존을 검증한다.
    이 단계에서 모델 호출·스케줄을 활성화하지 않는다.
-6. 전체 API 검증과 최신 main CI 통과 후에만 [CD 활성화](continuous-deployment.md)를 진행한다.
+6. 전체 API 검증·최신 main CI 통과·AWS OIDC 권한 확보 후에만 [CD 활성화](continuous-deployment.md)를 진행한다.
    네트워크·CloudFront·게이트웨이 설정은 앱 이미지 교체용 CD가 자동 적용하지 않으며 별도 검토한다.
+
+현재 AWS의 관리형 조직 정책이 GitHub OIDC provider 조회를 거절하므로 자동 배포는 비활성 상태다.
+수동으로 배포한 ALB·CloudFront·서비스는 이 자동 배포 제한과 별도로 실행된다.
 
 ## 제한 및 복구
 
