@@ -30,7 +30,7 @@ class KStartupAttachmentClient(
         return try {
             val (detailUri, page) = detailPage(sourceProgramId, sourceUrl)
             val title = page.selectFirst("#scrTitle h3")?.text()?.trim().orEmpty()
-            val warnings = mutableListOf("K-Startup 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf<String>()
             val candidates = linkedMapOf<String, Candidate>()
             page.select(".board_file li").forEach { item ->
                 val fileName = item.selectFirst("a.file_bg")?.text()?.trim().orEmpty()
@@ -55,7 +55,7 @@ class KStartupAttachmentClient(
             }
             if (warnings.distinct().size > MAX_WARNINGS) fail(Reason.TOO_LARGE, warnings)
             val files = downloadWithinLimits(candidates.values, detailUri, warnings)
-            SupportProgramAttachments(title, files, warnings.distinct(), detailUri.toString())
+            SupportProgramAttachments(title, files, warnings.distinct(), detailUri.toString(), COLLECTION_NOTICE)
         } catch (error: SupportProgramDocumentException) {
             throw error
         } catch (error: Exception) {
@@ -185,6 +185,7 @@ class KStartupAttachmentClient(
     private data class Candidate(val uri: URI, val fileName: String, val format: String)
 
     private companion object {
+        const val COLLECTION_NOTICE = "K-Startup 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다."
         const val MAX_PAGE_BYTES = 1_000_000
         const val MAX_FILES = 8
         const val MAX_WARNINGS = 16

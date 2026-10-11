@@ -36,7 +36,7 @@ class BizInfoAttachmentClient(
             if (title.isBlank()) fail(Reason.NOT_FOUND)
             val links = linkedMapOf<String, Pair<String, String>>()
             val bodyExports = mutableSetOf<String>()
-            val warnings = mutableListOf("공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf<String>()
             detail.select(".file_name").forEach { name ->
                 val anchor = name.parent()?.selectFirst("a[href*='/cmm/fms/fileDown.do']")
                 if (anchor != null) {
@@ -116,7 +116,7 @@ class BizInfoAttachmentClient(
             if (files.isEmpty()) {
                 throw SupportProgramDocumentException(if (sizeFailures.isNotEmpty()) Reason.TOO_LARGE else Reason.UNSUPPORTED, warnings = warnings.distinct())
             }
-            return SupportProgramAttachments(title, files, warnings.distinct(), url)
+            return SupportProgramAttachments(title, files, warnings.distinct(), url, COLLECTION_NOTICE)
         } catch (error: SupportProgramDocumentException) {
             throw error
         } catch (error: Exception) {
@@ -235,6 +235,7 @@ class BizInfoAttachmentClient(
     private fun fail(reason: Reason): Nothing = throw SupportProgramDocumentException(reason)
 
     private companion object {
+        const val COLLECTION_NOTICE = "공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다."
         /** 다른 제공처와 같은 공고당 첨부 상한입니다. 본문출력파일은 세지 않습니다. */
         const val MAX_ATTACHMENTS = 8
         const val BODY_EXPORT_SECTION = "본문출력파일"

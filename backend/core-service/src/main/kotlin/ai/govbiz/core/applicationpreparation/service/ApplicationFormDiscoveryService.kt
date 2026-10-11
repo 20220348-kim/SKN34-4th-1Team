@@ -216,7 +216,8 @@ class ApplicationFormDiscoveryService(
                 "CNTRADE_NOTICE" -> cnTradeNoticeAttachments.collect(sourceCode, sourceProgramId, catalogTitle, catalogBody)
                 else -> throw ApplicationFormDiscoveryException(Reason.SOURCE_UNSUPPORTED)
             }
-            val warnings = collected.warnings.toMutableList()
+            // 양식 찾기 화면은 수집 범위 안내도 함께 보여 줍니다. 중복 검토는 실제로 빠진 범위만 씁니다.
+            val warnings = (listOfNotNull(collected.collectionNotice) + collected.warnings).toMutableList()
             val sourceFingerprint = sha256(collected.files.joinToString("\n") { file ->
                 "${file.sourceUrl}\u0000${file.fileName}\u0000${sha256(file.bytes)}"
             }.toByteArray())

@@ -121,6 +121,34 @@ class ApplicationDocumentEditor {
         }.also { require(it.targets.isNotEmpty() && it.targets.size <= 3000 && it.targets.sumOf { t -> t.text.length + t.context.length + t.exampleText.length } <= 400_000) }
     }
 
+    /**
+     * Core가 직접 쓰는 HWP·PDF에 넣기 전에 답의 공백과 보이지 않는 문자만 정리합니다. 붙여 넣은 줄 바꿈 없는 공백(NBSP)·전각 공백 같은
+     * 공백 문자와 탭은 보통 공백으로, CR 줄 바꿈은 LF로 바꾸고 폭 없는 공백 같은 서식 문자는 뺍니다. 보이는 글자는 바꾸지 않습니다.
+     */
+    fun writableText(value: String): String = buildString {
+        value.replace("\r\n", "\n").replace('\r', '\n').forEach { character ->
+            when (Character.getType(character).toByte()) {
+                Character.SPACE_SEPARATOR -> append(' ')
+                Character.FORMAT -> Unit
+                else -> append(if (character == '\t') ' ' else character)
+            }
+        }
+    }
+
+    /**
+     * [format]에 쓸 수 없는 문자가 남은 답의 ID입니다. HWP는 hwplib이 보조 평면 문자(이모지 등)를 깨뜨리고 줄 바꿈 외 제어 문자를 쓸 수
+     * 없으며, PDF는 입력란 글꼴(나눔고딕)에 없는 문자(한자·이모지·㈜·① 같은 일부 기호)를 그리지 못합니다. 이런 답 하나 때문에 문서 전체가
+     * 실패하지 않도록 생성 전에 골라 미기입 답변으로 알립니다. 다른 형식은 MCP 편집기가 검사하므로 빈 집합입니다.
+     */
+    fun unsupportedCharacterFactIds(format: String, facts: List<ApplicationDocumentFact>): Set<String> = when (format.lowercase()) {
+        "hwp" -> facts.filter { fact -> fact.value.any { Character.isSurrogate(it) || (it.code < 32 && it != '\n') } }
+        "pdf" -> PDDocument().use { doc ->
+            val font = ClassPathResource(PDF_FONT).inputStream.use { PDType0Font.load(doc, it, false) }
+            facts.filter { fact -> fact.value.lines().any { line -> runCatching { font.getStringWidth(line) }.isFailure } }
+        }
+        else -> emptyList()
+    }.map { it.id }.toSet()
+
     fun fill(bytes: ByteArray, format: String, facts: List<ApplicationDocumentFact>, placements: List<ApplicationDocumentPlacement>, clearExampleTargetIds: List<String> = emptyList()): ByteArray = safely {
         require(bytes.size in 1..MAX_BYTES)
         require(placements.map { it.factId }.toSet() == facts.map { it.id }.toSet() && placements.size >= facts.size && placements.size <= 600)
@@ -724,7 +752,7 @@ class ApplicationDocumentEditor {
         val form = doc.documentCatalog.acroForm ?: PDAcroForm(doc).also { doc.documentCatalog.acroForm = it }
         require(!form.hasXFA())
         val resources = form.defaultResources ?: PDResources().also { form.defaultResources = it }
-        val font = ClassPathResource("fonts/NanumGothic-Regular.ttf").inputStream.use { PDType0Font.load(doc, it, false) }
+        val font = ClassPathResource(PDF_FONT).inputStream.use { PDType0Font.load(doc, it, false) }
         resources.put(COSName.getPDFName("GovBizKorean"), font)
         val byId = facts.associateBy { it.id }
         placements.filter { it.box != null }.forEachIndexed { i, placement ->
@@ -917,6 +945,8 @@ class ApplicationDocumentEditor {
     }
     private companion object {
         const val MAX_BYTES = 32 * 1024 * 1024
+        /** PDF 입력란을 그리는 글꼴이며 쓸 수 있는 문자 검사(unsupportedCharacterFactIds)도 같은 글꼴로 합니다. */
+        const val PDF_FONT = "fonts/NanumGothic-Regular.ttf"
         /** 인쇄된 선택지에 쓰는 표시: □→■, [ ]→√, ( )→○ */
         val CHOICE_MARKS = setOf("■", "√", "○")
     }

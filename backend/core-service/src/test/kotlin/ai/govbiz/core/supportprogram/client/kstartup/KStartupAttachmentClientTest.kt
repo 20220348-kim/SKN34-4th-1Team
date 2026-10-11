@@ -44,7 +44,9 @@ class KStartupAttachmentClientTest {
         assertEquals("신청양식.hwp", result.files.single().fileName)
         assertEquals("HWP", result.files.single().format)
         assertArrayEquals(byteArrayOf(1, 2, 3), result.files.single().bytes)
-        assertTrue(result.warnings.single().contains("K-Startup 공식 페이지"))
+        // 수집 범위 안내는 빠진 범위 경고와 따로 옵니다.
+        assertEquals(emptyList<String>(), result.warnings)
+        assertTrue(result.collectionNotice!!.contains("K-Startup 공식 페이지"))
         server.verify()
     }
 

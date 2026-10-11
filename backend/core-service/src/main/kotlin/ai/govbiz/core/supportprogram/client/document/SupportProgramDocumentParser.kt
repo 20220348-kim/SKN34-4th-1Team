@@ -14,6 +14,10 @@ import org.apache.poi.poifs.filesystem.DirectoryNode
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 import org.apache.pdfbox.Loader
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.PDResources
+import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
 import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException
 import org.apache.pdfbox.text.PDFTextStripper
 import org.apache.tika.exception.EncryptedDocumentException
@@ -89,10 +93,33 @@ class SupportProgramDocumentParser {
         buildList {
             for (page in 1..document.numberOfPages) {
                 val text = PDFTextStripper().apply { startPage = page; endPage = page; sortByPosition = true }.getText(document).trim()
-                if (text.length < 10) fail(Reason.UNSUPPORTED)
+                if (text.length < 10 && hasImage(document.getPage(page - 1))) fail(Reason.UNSUPPORTED)
+                if (text.isEmpty()) continue
                 splitText(text).forEachIndexed { part, value ->
                     add(SupportProgramDocumentBlock("PDF page $page part ${part + 1}", value))
                 }
+            }
+        }
+    }
+
+    /**
+     * 글자가 거의 없는 쪽에 그림이 있는지 봅니다. 그림이 있으면 스캔한 쪽일 수 있어 내용을 조용히 잃지 않도록 문서를 거부하고,
+     * 그림도 없는 빈 쪽이나 "붙임 1" 같은 구분 쪽은 잃을 내용이 없으므로 받아들입니다(짧은 글자는 그대로 남깁니다).
+     * 그림 개체(XObject)는 양식 개체 안까지 찾고, 본문에 직접 넣은 인라인 그림은 내용 스트림의 BI·ID 연산자로 찾습니다.
+     */
+    private fun hasImage(page: PDPage): Boolean {
+        if (hasImage(page.resources, depth = 0)) return true
+        val content = page.contents.use { it.readNBytes(MAX_INLINE_IMAGE_SCAN_BYTES) }.toString(Charsets.ISO_8859_1)
+        return INLINE_IMAGE.containsMatchIn(content)
+    }
+
+    private fun hasImage(resources: PDResources?, depth: Int): Boolean {
+        if (resources == null || depth > MAX_FORM_DEPTH) return false
+        return resources.xObjectNames.any { name ->
+            when (val xObject = resources.getXObject(name)) {
+                is PDImageXObject -> true
+                is PDFormXObject -> hasImage(xObject.resources, depth + 1)
+                else -> false
             }
         }
     }
@@ -102,9 +129,16 @@ class SupportProgramDocumentParser {
         if (document.numberOfPages !in 1..80) fail(Reason.TOO_LARGE)
         val stripper = SupportProgramEvidenceLayoutHelper.PdfLineStripper()
         stripper.getText(document)
-        if (stripper.pages.size != document.numberOfPages || stripper.pages.any { it.text.trim().length < 10 }) fail(Reason.UNSUPPORTED)
+        // 내용 스트림이 없는 빈 쪽은 텍스트 추출기가 건너뛰므로 빈 쪽으로 채워 위치의 쪽 번호를 원본과 맞춥니다.
+        if (stripper.pages.size != document.pages.count { it.hasContents() }) fail(Reason.UNSUPPORTED)
+        val extracted = stripper.pages.iterator()
+        val pages = document.pages.map { page ->
+            if (page.hasContents()) extracted.next()
+            else SupportProgramEvidenceLayoutHelper.PdfPage(emptyList(), page.cropBox.width, page.cropBox.height)
+        }
+        if (pages.withIndex().any { (index, page) -> page.text.trim().length < 10 && hasImage(document.getPage(index)) }) fail(Reason.UNSUPPORTED)
         buildList {
-            SupportProgramEvidenceLayoutHelper.pdfPages(stripper.pages).forEachIndexed { index, text ->
+            SupportProgramEvidenceLayoutHelper.pdfPages(pages).forEachIndexed { index, text ->
                 if (text.isBlank()) return@forEachIndexed
                 splitText(text).forEachIndexed { part, value ->
                     add(SupportProgramDocumentBlock("PDF page ${index + 1} part ${part + 1}", value))
@@ -539,6 +573,9 @@ class SupportProgramDocumentParser {
     private class HwpTextLimitException : SAXException()
 
     companion object {
+        private const val MAX_INLINE_IMAGE_SCAN_BYTES = 4 * 1024 * 1024
+        private const val MAX_FORM_DEPTH = 3
+        private val INLINE_IMAGE = Regex("(?:^|\\s)BI\\s[\\s\\S]*?\\sID\\s")
         const val VERSION = "pdfbox-3.0.8-tika-4.0.0-hwp-form-controls-v2-hwpx-direct-paragraph-v1"
         /** 근거용 추출 버전입니다. 화면은 이 표시("-evidence-layout-")로 PDF 줄 잇기를 다시 하지 않고 " | " 행을 표 행으로 그립니다. */
         const val EVIDENCE_VERSION = "$VERSION-evidence-layout-v1"

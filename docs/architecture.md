@@ -252,7 +252,10 @@ QUEUED 1시간이 지나면 만료, RUNNING 30분이 지나면 유료 AI 호출 
 저장 바인딩·범위·scope 검증을 통과해야 합니다. PDF는 기존 경로(AcroForm 결정적, 평면 PDF는 모델)를 유지합니다.
 칸보다 긴 답은 문서 전체를 실패시키지 않습니다. HWPX는 한컴 줄바꿈 규칙으로 줄 수를 추정해(python-hwpx FormFit) 칸 높이의 두 배를 넘는
 칸의 답만, PDF는 Core가 최소 글자 크기로도 상자에 들어가지 않는 답만 빼고 나머지를 씁니다. 모델이 배치하지 못한 답(`unresolvedTargets`)도
-같은 방식으로 뺍니다. 뺀 답은 이유(`OVERFLOW`·`AMBIGUOUS_SLOT`·`SLOT_MISMATCH`, 위치 미확인은 `INPUT_LOCATION_NOT_FOUND`)와 칸에 들어가는
+같은 방식으로 뺍니다. Core가 직접 쓰는 HWP·PDF는 생성 전에 붙여 넣은 공백(NBSP·전각 공백·탭)을 보통 공백으로, CR을 LF로 바꾸고
+폭 없는 공백 같은 서식 문자를 뺀 뒤, 그 형식에 쓸 수 없는 문자(HWP: 이모지 같은 보조 평면 문자·제어 문자, PDF: 나눔고딕에 없는
+한자·이모지·㈜·① 같은 기호)가 남은 답을 AI 요청 전에 빼서 `UNSUPPORTED_CHARACTER`로 알립니다. 뺀 답은 이유(`OVERFLOW`·`AMBIGUOUS_SLOT`·
+`SLOT_MISMATCH`·`UNSUPPORTED_CHARACTER`, 위치 미확인은 `INPUT_LOCATION_NOT_FOUND`)와 칸에 들어가는
 대략의 글자 수를 미기입 답변 목록에 담고, 쓸 답이 하나도 남지 않을 때만 `OVERFLOW`·`NO_WRITABLE_INPUT`으로 실패합니다.
 HWP·HWPX의 파란·회색 작성 예시는 답을 쓴 칸과 답을 쓴 표의 예시 행(채워진 칸이 모두 예시)에서만 지우고, 답이 없는 표·칸의 예시는
 사용자가 직접 쓸 부분이라 남겨 그 칸 수(`remainingExampleCount`)를 결과 화면에 "직접 작성할 칸 N곳에 예시 문구가 남아 있어요"로 알립니다.

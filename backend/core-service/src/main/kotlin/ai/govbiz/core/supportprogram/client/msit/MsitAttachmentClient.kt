@@ -30,7 +30,7 @@ class MsitAttachmentClient(
         try {
             val board = board(sourceUri)
             val title = board.selectFirst(".view_head h2")?.text()?.trim().orEmpty()
-            val warnings = mutableListOf("과기정통부 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf<String>()
             val candidates = linkedMapOf<String, Candidate>()
             board.select(".view_file ul.down_file > li").forEach { item ->
                 val fileName = item.selectFirst("a[title*='파일 다운로드']")?.text()?.trim()
@@ -80,7 +80,7 @@ class MsitAttachmentClient(
                 totalBytes += bytes.size
             }
             if (files.isEmpty()) fail(if (skippedForSize) Reason.TOO_LARGE else Reason.UNSUPPORTED)
-            return SupportProgramAttachments(title, files, warnings.distinct(), sourceUri.toString())
+            return SupportProgramAttachments(title, files, warnings.distinct(), sourceUri.toString(), COLLECTION_NOTICE)
         } catch (error: SupportProgramDocumentException) {
             throw error
         } catch (error: Exception) {
@@ -163,6 +163,7 @@ class MsitAttachmentClient(
     }
 
     private companion object {
+        const val COLLECTION_NOTICE = "과기정통부 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다."
         const val MAX_PAGE_BYTES = 1_000_000
         const val DOWNLOAD_URI = "https://www.msit.go.kr/ssm/file/fileDown.do"
         val PROGRAM_ID = Regex("[1-9][0-9]{0,254}")
