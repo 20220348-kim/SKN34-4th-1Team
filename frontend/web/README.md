@@ -20,6 +20,10 @@ React·TypeScript·Vite·Tailwind CSS를 사용합니다. 전체 기술 구성�
 
 ### Vercel 운영 배포 준비
 
+운영 주소는 **[govbiz.vercel.app](https://govbiz.vercel.app)**이며 Vercel 프로젝트 `geonwoo4/govbiz`가
+개인 저장소 main의 `frontend/web`에 연결되어 있습니다. 2026-10-11 웹 HTTP 200을 확인했으며,
+Core/Ops API는 아직 배포 설정 미완료 503입니다. 외부 API 연결은 아래 EKS 절차를 따릅니다.
+
 Root Directory는 `frontend/web`, Node 24.x/pnpm 11.22.x를 사용합니다. Vercel 프로젝트 설정에서
 **Include source files outside of the Root Directory in the Build Step**을 켜서 `frontend/packages/shared`와
 루트 workspace/lockfile을 포함합니다. 설치는 저장소 루트에서 웹 의존성만 선택합니다. `vercel.json`은 SPA 라우팅과 API 캐시 금지,
@@ -27,6 +31,16 @@ Root Directory는 `frontend/web`, Node 24.x/pnpm 11.22.x를 사용합니다. Ver
 미들웨어는 서버 전용이며 UI/AI 실행 코드가 아닙니다. Preview의 운영 API 접근은 차단합니다.
 환경값은 [배포 안내](../../docs/deployment-aws-vercel.md)에 정리했습니다. 기존 Vite 개발 프록시는 그대로 유지하며
 실제 Vercel 프로젝트 연결·배포는 별도입니다.
+프로젝트가 없으면 [Vercel 최초 설정](../../infrastructure/eks/continuous-deployment.md#vercel-최초-설정)을 따릅니다.
+개인 저장소 `ilil1/SKN34-4th-1Team` main의 5개 필수 CI 통과 → EKS 배포 성공 → Vercel 빌드·운영 주소 전환 workflow를 준비했습니다.
+학교 저장소의 변경은 개인 main에 동기화한 뒤 해당 커밋의 개인 저장소 CI가 통과해야 배포됩니다.
+`vercel.json`은 main의 기본 Git 자동 배포를 끄므로, GitHub `eks-production` 설정과
+`EKS_RELEASE_ENABLED=true`까지 연결해야 이후 main 병합이 운영 배포로 이어집니다.
+
+현재 AWS 이전 계획도 **웹은 Vercel, 백엔드는 EKS**로 분리합니다.
+[EKS 시연 구성](../../infrastructure/eks/sydney-demo.md#웹-배포와-api-연결)의 `--vercel-origin`으로
+EKS 웹 Pod를 제외하고 Core·Ops에 실제 웹 주소를 반영합니다. AWS의 외부 HTTPS API 진입점과
+현재 503인 Vercel Ops 프록시는 별도로 연결해야 합니다.
 
 ### Docker Compose
 
