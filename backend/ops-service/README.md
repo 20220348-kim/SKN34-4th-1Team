@@ -1196,6 +1196,11 @@ docker compose down
 Kubernetes는 같은 이미지의 PreSync Job을 사용합니다.
 [Ops migration 운영·복구 경계](../../infrastructure/gitops/docs/ops-migration.md)를 확인하세요.
 
+[로컬 Argo 자동 배포](../../infrastructure/gitops/docs/local-auto-sync.md)는 `local_release prepare` hook에서
+접수를 중지하고 진행 중인 평가가 없을 때 migration을 실행합니다. 모든 앱이 Healthy가 된 뒤
+`local_release resume` hook이 평가 연결을 확인하고 자기 접수 중지만 복구합니다.
+관리자의 기존 중지·이후 상태 변경은 보존하며, migration·배포 실패 시 접수를 자동 재개하지 않습니다.
+
 ## Python을 호스트에서 실행
 
 이 절의 명령도 `backend/ops-service`에서 실행합니다.

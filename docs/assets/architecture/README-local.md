@@ -1,15 +1,15 @@
 # GovBiz 로컬 시스템 아키텍처 — LLMOps Kubernetes 통합
 
-**2026-10-11 기준, LLMOps까지 Kubernetes로 전환한 로컬 배치 구성**입니다.
+**2026-10-12 기준, LLMOps Kubernetes 통합과 검증 태그 기반 자동 배포 구성**입니다.
 업무 서비스·평가 실행·관측 저장소를 같은 kind 클러스터 안에 배치하고 namespace로 구분했습니다.
 기존 그림의 Compose 평가 영역과 외부 HTTP 브리지를 Kubernetes Service·PVC로 교체했습니다.
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=3d70cc68175d)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=73d524f283f6)
 
 ## 파일
 
-- [PNG](govbiz-local-architecture.png?v=3d70cc68175d): 5,600 × 5,960, GitHub·발표 첨부용.
-- [SVG](govbiz-local-architecture.svg?v=1c2b6da116ea): 2,800 × 2,980, 로고가 내장된 편집 가능한 원본.
+- [PNG](govbiz-local-architecture.png?v=73d524f283f6): 5,600 × 5,960, GitHub·발표 첨부용.
+- [SVG](govbiz-local-architecture.svg?v=66658e5cedb7): 2,800 × 2,980, 로고가 내장된 편집 가능한 원본.
 - [생성 스크립트](build-local.mjs): 기존 로컬 로고를 사용하며 클러스터·GHCR에 접근하지 않습니다.
 - 로고 출처·해시는 [Kubernetes 로고 목록](kubernetes-logo-sources.json), [RabbitMQ·MyBatis 로고 목록](logo-sources.json), [Devicon 라이선스](DEVICON-LICENSE)를 따릅니다.
 
@@ -62,12 +62,14 @@ Kubernetes로 옮겼다는 이유로 유료 모델 호출을 켜지 않습니다
 
 ## 3. 로컬 화면 접근
 
-웹은 PC의 React/Vite에서 실행하며, API와 도구 UI는 Kubernetes Service의 loopback port-forward로 연결합니다.
+개발 웹은 PC의 React/Vite에서 실행하며 API를 loopback port-forward로 연결합니다.
+배포 웹은 Kubernetes의 `web` Nginx가 Core·Ops의 내부 Service로 프록시하고 `localhost:18173` 포워딩으로 접근합니다.
 모바일은 iOS·Android의 React Native·Expo 앱이며, `EXPO_PUBLIC_API_BASE_URL`에 지정한 API origin으로
 같은 Core API를 호출합니다. 웹·앱은 `@govbiz/shared`의 업무 모델·API 계약·응답 검증을 공유합니다.
 
 | 로컬 진입 | Kubernetes 대상 |
 |---|---|
+| 배포 웹 `localhost:18173` | `web :8080` → 내부 Core·Ops Service |
 | `localhost:5173`의 `/api/*` | Vite → `127.0.0.1:18080` → Core `:8080` |
 | 같은 웹의 `/api/v1/ops/*` | Vite → `127.0.0.1:18001` → Ops `:8000` |
 | 모바일 앱의 `/api/*` | 기기에서 접근 가능한 Core API origin → Core `:8080` (Bearer 인증) |
@@ -86,13 +88,27 @@ Android 에뮬레이터는 `http://10.0.2.2:18080`을 앱의 API origin으로 �
 근거: [모바일 실행·인증](../../../frontend/mobile/README.md#로컬-실행) ·
 [모바일 API 주소·인증 구현](../../../frontend/mobile/src/api/client.ts) · [웹·앱 공통 계약](../../mobile-monorepo.md).
 
-## 4. 이미지·배포·보존
+## 4. 소스·검증·로컬 배포 5단계
 
-동일 소스 SHA의 GovBiz·Catalog·Ops·LLMOps·Infra CI와 이미지 검증을 통과한 digest를 사용합니다.
-Helm Chart와 소스 SHA를 고정하고 Argo CD는 **수동 동기화**합니다. 자동 sync·prune는 활성화하지 않습니다.
+| 단계 | 역할과 결과 |
+|---|---|
+| **1. 소스 · 개인 포크** | 원본 main에 PR을 병합하고 개인 포크 main을 동기화합니다. 애플리케이션 소스와 Helm Chart를 같은 저장소에서 관리합니다. |
+| **2. 필수 CI 5개** | 최신 main의 같은 소스 SHA에 대해 GovBiz·Catalog·Ops·LLMOps·Infra 필수 작업이 모두 통과해야 이미지 발행으로 진행합니다. |
+| **3. GHCR 이미지 발행** | 웹·백엔드·평가 실행기 이미지를 빌드·검증·발행하고, 내용이 고정된 이미지 식별자인 digest를 배포에 사용합니다. |
+| **4. Helm 배포 YAML 생성** | 검증된 소스의 Chart 템플릿에 로컬 환경의 `values`와 이미지 digest를 넣고 `helm template`으로 Deployment·Service·Job 등의 Kubernetes YAML을 생성합니다. CI 워크플로가 이 결과를 불변 Git 태그 `govbiz-local/v1.RUN.ATTEMPT`로 발행합니다. |
+| **5. Argo CD 자동 동기화** | 검증된 배포 태그의 YAML에 Kustomize로 기존 환경·Secret 참조·PVC 연결을 반영한 뒤 kind에 자동 동기화합니다. 접수 중지·migration·앱 갱신을 거쳐 정상 상태와 평가 연결을 확인하면 접수를 재개합니다. |
+
+**Helm은 Kubernetes 배포 설정을 재사용할 수 있는 Chart로 관리하는 도구**입니다.
+Chart가 리소스의 틀을 정의하고 `values`가 환경별 설정을 채웁니다.
+이 경로에서 Helm은 CI에서 배포 YAML을 생성하며, 실제 클러스터 반영은 Argo CD가 담당합니다.
+
+한 Application이 웹·업무·평가 앱 7개를 관리합니다. 접수 중지·진행 평가 확인·migration 후 교체하고,
+정상 상태와 평가 연결을 확인한 뒤 접수를 복구합니다. 자동 prune·selfHeal은 끕니다.
+기존 수동 Application의 최초 인계와 원격 활성화는 [자동 배포 안내](../../../infrastructure/gitops/docs/local-auto-sync.md)를 따릅니다.
+Prefect 서버·Langfuse·데이터 저장소의 설치 및 업그레이드는 별도이며 기존 실행 상태를 유지합니다.
 Secret·PVC는 별도 절차로 준비·보존하며, 앱 갱신과 데이터 삭제를 연결하지 않습니다.
 웹 개발은 Vite HMR, 모바일 개발은 Expo Fast Refresh를 사용합니다.
-선택 업무 서비스 갱신은 기존 `dev.py`의 Docker 빌드·kind 적재·rollout 경로를 사용합니다.
+Argo에 인계하지 않은 개발 환경의 선택 업무 서비스는 기존 `dev.py`의 Docker 빌드·kind 적재·rollout 경로를 사용합니다.
 
 - [이미지 발행](../../msa-image-release.md) · [개인 Kubernetes 개발](../../local-fork-development.md)
 - [평가 환경 이전·PVC 복원 기록](../../../infrastructure/gitops/docs/evaluation-kubernetes.md)
@@ -102,7 +118,8 @@ Secret·PVC는 별도 절차로 준비·보존하며, 앱 갱신과 데이터 �
 
 요청한 **LLMOps 전체 Kubernetes 전환 후 구조**를 표현했습니다. 저장소에는 2026-10-10 개인 환경의
 Prefect·실행기·결과 서버 및 Langfuse 6개 구성요소 이전 기록이 있습니다. 실제 검증 대상과 결과는 위 이전 문서를 따릅니다.
-이 그림을 만들면서 클러스터·배포·데이터를 변경하거나 새 평가를 실행하지 않았으며, 실시간 Ready 상태를 재확인한 그림은 아닙니다.
+자동 배포 코드·문서를 추가했으며 원격 변수·기존 Application은 아직 변경하지 않았습니다.
+이 그림을 만들면서 클러스터·데이터를 변경하거나 새 평가를 실행하지 않았으며, 실시간 Ready 상태를 재확인한 그림은 아닙니다.
 단일 kind 환경의 전환을 고가용성·외부 운영 배포·유료 모델 품질 검증 완료로 해석하지 않습니다.
 
 ## 재생성

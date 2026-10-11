@@ -49,7 +49,8 @@ LLMOps, 실행·검증·배포 범위까지 안내합니다.
 공고 업무의 첫 추출은 [Catalog 서비스 분리](catalog-service-extraction.md)에 정리했습니다.
 루트 Compose의 기본 분리 경로이며 기존 AWS 운영과 전체 MSA 전환 완료를 의미하지 않습니다.
 
-기존 AWS EC2 Compose 배포와 로컬 Kubernetes 검증은 별도 경로입니다.
+현재 AWS 시드니 EKS 배포와 로컬 Kubernetes 검증은 별도 경로입니다.
+과거 EC2 Compose·RDS 구성은 당시 배포 기록으로 보존합니다.
 기존 Mac 유지형 portfolio의 비공개 GHCR·Argo CD 검증 기록을 보존합니다.
 교육기관 원본의 GHCR 발행은 차단하며, 선행 설정을 완료한 개인 포크에서만 발행·promotion을 명시적으로 활성화합니다.
 Intel Mac의 개인 포크 비공개 발행·pull·GitOps는 [실제 검증 기록](fork-gitops-validation-20260921.md)을 참고합니다.
@@ -61,7 +62,9 @@ Windows의 로컬 소스 빌드·기동·웹 연결 확인은 [WSL2 수동 설�
 | [리뷰 0명·필수 CI 병합 조건](merge-protection.md) | 필수 21개 check·활성 ruleset·우회 권한 점검·실제 병합 차단 검증 |
 | [개인 Ops 갱신·복구](ops-upgrade-runbook.md) | 진행 중 평가·백업 복원·migration·이미지 교체·실패 단계 기록과 접수 재개 조건 |
 | [Windows Kubernetes 수동 설치](windows-kubernetes-setup.md) | Ubuntu 연동, 도구 설치, GHCR 없는 소스 빌드·kind 배포, Windows 웹 연결, 재시작·문제 해결 |
-| [LLMOps Kubernetes 통합 구성도](assets/architecture/README-local.md) | 업무·평가·관측 namespace와 내부 Service·PVC, 로컬 화면 접근·수동 동기화 |
+| [LLMOps Kubernetes 통합 구성도](assets/architecture/README-local.md) | 업무·평가·관측 namespace와 내부 Service·PVC, 로컬 화면 접근·자동 동기화 |
+| [로컬 Argo 자동 배포](../infrastructure/gitops/docs/local-auto-sync.md) | 필수 CI·6개 이미지 검증·불변 배포 태그, 평가 접수 보호, 기존 환경 최초 인계 |
+| [Vercel·AWS EKS 전체 구성도](assets/architecture/README-aws-eks.md) | CloudFront·내부 ALB, 사설 워커·EBS·ECR·이전 백업 S3, 업무·LLMOps와 CI 통과 후 자동 배포 |
 | [통합 전 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | 2026-09-20 GovBiz-Team 두 저장소와 Mac portfolio 실행 기록 |
 | [기존 AWS 배포 구성](assets/architecture/README-aws-deployed.md) · [CodeBuild](deployment-codebuild.md) | Vercel·CloudFront·EC2 Compose·RDS와 기존 자동 배포 경로 |
 | [서비스·데이터 경계](../infrastructure/gitops/docs/service-boundaries.md) | Core·AI·Ops 데이터 소유권, 관리자 판정 위임과 서비스 추출 전 제약 |

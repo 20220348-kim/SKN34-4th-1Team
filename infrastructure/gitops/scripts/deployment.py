@@ -458,7 +458,7 @@ def main():
         raise SystemExit(
             "Separate deployment branches and deployment PR automation were removed. "
             "Use verify-public, plan-gitops or review-published-runtime for read-only preparation. "
-            "Automatic deployment is not configured; no remote changes were made."
+            "For tag-based automatic deployment use local_release.py; no remote changes were made."
         )
     parser = argparse.ArgumentParser(
         description="Verify public images or plan pinned Argo inputs; never apply to a cluster."

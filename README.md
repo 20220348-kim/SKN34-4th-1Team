@@ -114,12 +114,18 @@ flowchart LR
 | 캐시·비동기 처리 | Redis, RabbitMQ |
 | LLMOps | Langfuse, Prefect, Pandera, Evidently, pandas |
 | 로컬 실행·컨테이너 | Docker Compose, Kubernetes(kind), Helm |
-| 검증·이미지 관리 | GitHub Actions, GitHub Container Registry(GHCR) |
+| AWS 인프라 | Amazon EKS, Amazon EC2(워커 노드), Amazon EBS(gp3), Amazon VPC |
+| API 진입·프록시 | Amazon CloudFront, Application Load Balancer(ALB), Nginx |
+| 웹 배포 | Vercel |
+| 검증·이미지 관리 | GitHub Actions, GitHub Container Registry(GHCR), Amazon ECR |
+| AWS 배포 도구 | AWS CloudFormation, eksctl, AWS CodeConnections, AWS CodeBuild |
 | 모노레포·공통 계약 | pnpm workspace, 웹·앱 공통 TypeScript 계약 |
 
 버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
 [AI](backend/ai-service/pyproject.toml), [Ops](backend/ops-service/pyproject.toml)과 각 잠금 파일입니다.
 서비스별 역할은 아래 [시스템 아키텍처](#서비스-구성)에 정리했습니다.
+AWS 배포 구성과 검증 범위는 [EKS 배포](infrastructure/eks/README.md),
+[API 연결 경로](infrastructure/eks/api-entrypoint.md), [자동 배포 연결·검증 상태](infrastructure/eks/continuous-deployment.md)를 참고하세요.
 
 <a id="서비스-구성"></a>
 
@@ -209,12 +215,8 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 ### 5.2 전체 구성도
 
-업무 서비스와 LLMOps 평가·관측을 **하나의 Kubernetes(kind) 클러스터**에 배치하고,
-역할에 따라 세 namespace로 구분합니다.
-
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 배치 구조](docs/assets/architecture/govbiz-local-architecture.png?v=3d70cc68175d)
-
-[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png?v=3d70cc68175d) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg?v=1c2b6da116ea)
+로컬은 **Kubernetes(kind)**에서 개발·검증하고, 운영은 **Vercel·AWS EKS**에서 서비스를 제공합니다.
+두 환경 모두 업무·평가·관측을 다음 세 namespace로 구분합니다.
 
 | namespace | 배치 구성 |
 |---|---|
@@ -225,13 +227,40 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 서비스는 **ClusterIP·내부 DNS**로 통신하고, DB·평가 결과·관측 데이터는 **PVC**에 보존합니다.
 Ops가 평가를 접수하면 Prefect와 실행기가 처리하고, `ops-sync`가 상태·결과를 반영해 관리자가 검토합니다.
 
-로컬 React/Vite 웹은 port-forward를 통해 Core·Ops API에 연결하며, React Native·Expo 모바일 앱은
-기기에서 접근 가능한 API 주소를 설정해 같은 Core API를 Bearer 인증으로 호출합니다.
-웹·앱은 `@govbiz/shared`의 업무 모델·API 계약을 공유하고, 관리자 Ops 화면은 웹에서 제공합니다.
-Prefect·Langfuse UI도 각각 포워딩해 접근합니다.
-배포는 검증된 이미지와 소스 SHA를 고정한 Helm Chart를 사용하고 **Argo CD로 수동 동기화**합니다.
+#### 5.2.1 로컬 전체 구성도
 
-[배치·저장소·접근 방식 상세](docs/assets/architecture/README-local.md) · [서비스 호출 상세](docs/architecture.md)
+개발 PC의 kind 클러스터에 업무 서비스와 LLMOps를 함께 실행합니다.
+
+![GovBiz 로컬 전체 구성도 — kind 기반 업무·평가·관측](docs/assets/architecture/govbiz-local-architecture.png?v=73d524f283f6)
+
+[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png?v=73d524f283f6) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg?v=66658e5cedb7)
+
+| 구분 | 로컬 구성 |
+|---|---|
+| **웹·모바일 접근** | 개발 중에는 Vite에서 Core·Ops로 port-forward하고, 배포한 웹은 Kubernetes의 Nginx에서 내부 API로 연결합니다. React Native·Expo 앱은 기기에서 접근 가능한 Core API 주소와 Bearer 인증을 사용합니다. |
+| **관리·관측** | 같은 웹에서 관리자 Ops 화면을 제공하며, Prefect·Langfuse UI는 각각 port-forward로 접근합니다. |
+| **자동 배포** | 소스 동기화 → 필수 CI → GHCR 이미지 발행 → Helm 배포 YAML 생성·태그 발행 → Argo CD 자동 동기화의 5단계입니다. Helm은 Chart·로컬 설정값·검증된 이미지 digest로 배포 설정을 만들고, Argo CD는 이를 kind에 반영합니다. 진행 중인 평가가 있으면 교체를 보류하고 DB·PVC·Secret은 보존합니다. |
+
+[로컬 배치·저장소·접근 방식 상세](docs/assets/architecture/README-local.md) · [자동 배포 설정·최초 전환](infrastructure/gitops/docs/local-auto-sync.md)
+
+#### 5.2.2 운영 전체 구성도
+
+웹은 Vercel, 백엔드·LLMOps는 AWS EKS에 배치합니다.
+아래는 **main의 CI 통과 후 자동 배포가 적용되는 구조**입니다.
+
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=74bf26a75576)
+
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=74bf26a75576) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=68d48de0ee6c)
+
+| 구분 | 운영 구성 |
+|---|---|
+| **웹·API 접근** | Vercel 웹의 API 요청은 CloudFront VPC origin → 내부 ALB → EKS Nginx를 거쳐 Core·Ops로 분기합니다. 모바일은 운영 HTTPS 주소로 같은 Core API를 호출합니다. |
+| **서비스 실행** | 사설 EC2 워커 2대의 EKS에 업무·평가·관측 namespace를 배치합니다. 현재 노드 배치는 단일 AZ입니다. |
+| **데이터 보존** | MySQL·검색·큐·평가·관측 데이터는 EBS gp3 PVC에 보존합니다. S3는 암호화한 이전 백업을 보관합니다. |
+| **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → EKS 갱신 → Vercel 웹 전환 순서로 진행합니다. |
+| **관리·관측** | 관리자 Ops는 같은 React 웹에서 이용합니다. Prefect·Langfuse UI는 EKS 권한을 가진 사용자가 port-forward로 접근합니다. |
+
+[운영 구성·적용 및 검증 기록](docs/assets/architecture/README-aws-eks.md) · [자동 배포 상세](infrastructure/eks/continuous-deployment.md) · [서비스 호출 상세](docs/architecture.md)
 
 <a id="erd"></a>
 

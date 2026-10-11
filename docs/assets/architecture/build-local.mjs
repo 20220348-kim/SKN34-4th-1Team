@@ -61,24 +61,25 @@ text(300,91,'로컬 시스템 아키텍처',{size:38,weight:600});
 text(70,140,'웹·모바일 → 같은 Core API · 업무·평가·관측은 Kubernetes · 사람 검토는 React Ops',{size:25,fill:muted,max:1900});
 card(2170,51,560,62,'#EDF8F1','#BDDAC8',16);
 text(2450,91,'KUBERNETES + LLMOPS',{size:26,weight:700,anchor:'middle',fill:'#256B49',max:520});
-text(2730,140,'2026.10.11 · LLMOps 전환 후 구성',{size:21,fill:muted,anchor:'end',max:650});
+text(2730,140,'2026.10.12 · 자동 동기화 구성',{size:21,fill:muted,anchor:'end',max:650});
 
-// Pin reviewed sources and image digests; Argo synchronization remains manual.
+// Render Helm with tested image digests, publish immutable tags, then let Argo reconcile.
 card(60,188,2680,282,'#F8FAFD','#D2DFEB',26);
 text(90,228,'01   소스 · 검증 · 로컬 배포',{size:25,weight:700,fill:muted});
 const delivery = [
-  [90,560,'git','소스 · 개인 포크',['skn-* → 원본 main PR 병합','개인 포크 main 동기화','소스와 Helm을 한 저장소에서 관리']],
-  [740,570,'githubactions','필수 CI 5개',['GovBiz · Catalog · Ops','LLMOps · Infra','같은 소스 SHA의 필수 작업 통과']],
-  [1400,565,'github','GHCR 이미지 발행',['개인 포크에서 명시적으로 활성화','검증 receipt · 서비스 이미지 digest','발행 성공과 실제 배포는 별도']],
-  [2055,650,'helm','Helm · 수동 Argo 동기화',['CI·이미지 검증 → 소스 SHA 고정','Chart 적용 · 수동 Argo CD sync','Secret · PVC는 별도로 보존']],
+  [90,455,'git','1. 소스 · 개인 포크',['skn-* → 원본 main PR 병합','개인 포크 main 동기화','소스와 Helm Chart를 함께 관리']],
+  [585,460,'githubactions','2. 필수 CI 5개',['GovBiz · Catalog · Ops','LLMOps · Infra','같은 소스 SHA의 필수 작업 통과']],
+  [1085,455,'github','3. GHCR · 이미지 발행',['웹 · 백엔드 · 평가 실행기','이미지 빌드 · 검증 · 발행','같은 소스 SHA · 불변 digest']],
+  [1580,540,'helm','4. Helm · 배포 YAML 생성',['Chart 템플릿 + 로컬 values','검증된 이미지 digest 반영','Kubernetes YAML 렌더링','렌더링 결과 → 불변 배포 태그']],
+  [2160,545,'argocd','5. Argo CD · 자동 동기화',['배포 태그 → kind 자동 반영','접수 중지 → migration → 앱 갱신','정상 상태 · 평가 연결 확인 후 재개','Secret · PVC 보존 · 최초 인계 필요']],
 ];
 for(const [x,w,brand,title,lines] of delivery){
   card(x,255,w,184);
   icon(brand,x+22,277,42);
-  text(x+80,309,title,{size:28,weight:600,max:w-100});
-  lines.forEach((line,i)=>text(x+22,350+i*31,line,{size:22,fill:i===2?muted:ink,max:w-44}));
+  text(x+80,309,title,{size:26,weight:600,max:w-100});
+  lines.forEach((line,i)=>text(x+22,344+i*27,line,{size:21,fill:i===lines.length-1?muted:ink,max:w-44}));
 }
-for(const [a,b] of [[650,740],[1310,1400],[1965,2055]]) edge(`M${a} 344H${b}`,'deploy');
+for(const [a,b] of [[545,585],[1045,1085],[1540,1580],[2120,2160]]) edge(`M${a} 344H${b}`,'deploy');
 
 // User-facing entry points are numbered to avoid a long proxy line crossing service lanes.
 card(60,510,2680,409,'#F8FBFD','#D2DFEB',26);
@@ -89,13 +90,13 @@ text(180,632,'브라우저',{size:29,weight:600,max:250});
 text(113,678,'사용자 화면 · 관리자 Ops',{size:23,max:325});
 card(540,577,530,130);
 icon('react',561,599,45); icon('vitejs',624,600,41);
-text(685,632,'React / Vite',{size:30,weight:600,max:360});
-text(562,677,'localhost:5173  ·  /ops/evaluations',{size:23,max:486});
+text(685,632,'React 웹',{size:30,weight:600,max:360});
+text(562,677,'Vite :5173 · K8s web :18173',{size:23,max:486});
 edge('M460 642H540');
 card(1150,577,725,130,'#F1F8FC','#C3DAE8');
-text(1175,617,'Vite 프록시 → loopback port-forward',{size:26,weight:600,max:675});
-text(1175,654,'① /api/*  →  :18080  →  Core :8080',{size:24,max:675});
-text(1175,690,'② /api/v1/ops/*  →  :18001  →  Ops :8000',{size:24,max:675});
+text(1175,617,'개발 port-forward · 배포 내부 Service',{size:26,weight:600,max:675});
+text(1175,654,'① /api/*  →  Core :8080',{size:24,max:675});
+text(1175,690,'② /api/v1/ops/*  →  Ops :8000',{size:24,max:675});
 edge('M1070 642H1150');
 card(1955,577,750,130,'#F6F3FD','#D8CDEA');
 text(1980,617,'Kubernetes 도구 UI · port-forward',{size:27,weight:600,max:700});
@@ -266,16 +267,16 @@ for(const [a,b] of [[660,750],[1320,1410],[1980,2070]]) edge(`M${a} 2039H${b}`,'
 text(90,2128,'Kubernetes 내부에서 실행·보고서·점수·검토 연결  |  새 답변·RAG는 별도 승인·예산·실행 설정 후 활성화',{size:23,fill:'#256B49',max:2600});
 
 card(60,2200,2680,137,'#FAFBFD','#D2DFEB',23);
-text(90,2241,'로컬 코드 반영',{size:26,weight:700,max:360});
+text(90,2241,'개발 모드 반영',{size:26,weight:700,max:360});
 text(450,2241,'코드 저장 → dev.py → 변경 서비스 Docker 빌드 → kind load → rollout',{size:27,weight:600,max:2230});
-text(90,2298,'웹 Vite HMR · 앱 Expo Fast Refresh · Ops·평가·관측은 검증된 SHA로 수동 동기화 · 자동 sync·prune 비활성 · Secret / PVC 보존',{size:23,fill:muted,max:2600});
+text(90,2298,'웹 Vite HMR · 앱 Expo Fast Refresh · 웹·업무·평가 앱은 검증 태그로 자동 sync · 기반 도구·저장소 유지 · prune 비활성 · Secret / PVC 보존',{size:23,fill:muted,max:2600});
 
 parts.push('<path d="M70 2380H2730" stroke="#E4EBF0" stroke-width="2"/>');
 for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[625,'deploy','검증 · 이미지 공급'],[1210,'config','설정된 내부 연동'],[1800,'dev','평가 · 사람 검토']]){
   edge(`M${x} 2420H${x+55}`,kind); text(x+76,2428,name,{size:22,max:570});
 }
 text(2725,2428,'실행 완료 ≠ 품질 합격',{size:24,weight:600,anchor:'end',max:800});
-text(75,2477,'2026.10.11 · LLMOps Kubernetes 전환 후 배치 구조 · 실시간 가동 상태·고가용성·유료 모델 품질의 검증 결과는 별도',{size:21,fill:muted,max:2650});
+text(75,2477,'2026.10.12 · LLMOps Kubernetes 통합 · 자동 배포 활성화·실시간 가동 상태·유료 모델 품질의 검증 결과는 별도',{size:21,fill:muted,max:2650});
 parts.push('</g></g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
