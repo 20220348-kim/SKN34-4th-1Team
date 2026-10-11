@@ -26,6 +26,7 @@ const business = (businessStatus: string, businessStatusCode: '01' | '02' | '03'
 
 async function lookUp(lookup: ReturnType<typeof business>) {
   jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (path === '/api/v1/me/company/partner-profile') return Promise.resolve({ isSet: false, roles: [], interestAreas: [], introduction: '', capabilities: [], updatedAt: null })
     if (path.startsWith('/api/v1/me/company/lookup?')) return Promise.resolve(lookup)
     if (options?.method === 'POST') return Promise.resolve({ ...(options.body as object), companyName: lookup.companyName,
       businessStatus: lookup.businessStatus, businessStatusCode: lookup.businessStatusCode,
@@ -76,4 +77,13 @@ test('a network failure or unknown endpoint cannot be misrepresented as an absen
   await waitFor(() => expect(view.getByText('기업 정보를 불러오지 못했습니다.')).toBeTruthy())
   expect(view.queryByLabelText('사업자등록번호')).toBeNull()
   expect(view.getByText('다시 불러오기')).toBeTruthy()
+})
+
+test('partner settings load after company registration and are absent from the registration form', async () => {
+  const view = await lookUp(business('계속사업자', '01', true))
+  expect(view.queryByText('협업·파트너 설정')).toBeNull()
+  expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path.endsWith('/partner-profile'))).toBe(false)
+  submitProfile(view)
+  await view.findByLabelText('협업·파트너 설정 수정')
+  expect(apiRequest).toHaveBeenCalledWith('/api/v1/me/company/partner-profile', expect.objectContaining({ accessToken: 'test-token' }))
 })
