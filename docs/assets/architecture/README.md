@@ -3,7 +3,8 @@
 주요 서비스 연결을 기술 로고와 함께 정리한 문서용 이미지입니다.
 **로컬 구성 기록(2026-09-12)**, **초기 배포 예정안(2026-09-13)**,
 **Vercel + AWS 배포 구성(2026-09-16 정리)**, **통합 전 Mac Kubernetes(2026-09-20)**,
-**LLMOps Kubernetes 통합 구성(2026-10-11)**, **AWS EKS 확장 구성(2026-10-12)**을 별도 파일로 관리합니다.
+**LLMOps Kubernetes 통합 구성(2026-10-11)**, **Docker Compose 전체 구성(2026-10-12)**,
+**AWS EKS 확장 구성(2026-10-12)**을 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
 ## 메인 README 서비스 요청 관계 — 2026-10-06
@@ -18,18 +19,29 @@
 
 ## Vercel + AWS EKS 전체 구성 — 2026-10-12
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=74bf26a75576)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=be244c2d5ed5)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=74bf26a75576) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=68d48de0ee6c)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=be244c2d5ed5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=1ffd1dac1d04)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
 로컬 통합 구성에 Vercel·CloudFront·내부 ALB·EKS·EC2 워커·EBS·ECR·S3를 반영한 별도 그림입니다.
 MySQL은 EKS 내부에 유지하며, 모바일·MyBatis·업무·평가·관측 연결과 저장소별 색상을 보존했습니다.
-자동 배포를 활성화한 목표 구조로, 개인 main의 CI 통과 → CodeBuild → ECR → EKS → Vercel 흐름을 표시합니다.
+자동 배포를 활성화한 목표 구조로, 개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 흐름을 표시합니다.
 실제 활성화·실행 검증 상태는 구성도 설명 문서에 별도로 기록합니다.
 
-## LLMOps Kubernetes 통합 구성 — 2026-10-12
+## Docker Compose 로컬 전체 구성 — 2026-10-12
+
+![GovBiz Docker Compose 로컬 전체 구성](govbiz-compose-architecture.png?v=127a77d72a67)
+
+- [PNG 크게 보기](govbiz-compose-architecture.png?v=127a77d72a67) · [SVG 원본](govbiz-compose-architecture.svg?v=8b508bff3504)
+- [실행 경로·저장소·프로젝트 간 연결](README-compose.md) · [생성 스크립트](build-compose.mjs)
+
+호스트 Vite·Expo, Catalog 분리형 업무 Compose와 LLMOps 전용 Compose를 표시합니다.
+루트 기본 통합 Ops와 별도 LLMOps Ops의 차이, named volume과 선택 artifact overlay를 구분합니다.
+Kubernetes의 namespace·PVC·port-forward와 다른 실행 경로이며 두 그림을 별도로 유지합니다.
+
+## Kubernetes 로컬 전체 구성 — 2026-10-12
 
 ![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=73d524f283f6)
 

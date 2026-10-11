@@ -6,9 +6,9 @@
 **자동 배포가 활성화된 목표 구조**를 표현하며, 개인 main의 필수 CI 통과부터 EKS·Vercel 갱신까지 연결합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=74bf26a75576)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=be244c2d5ed5)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=74bf26a75576) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=68d48de0ee6c) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=be244c2d5ed5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=1ffd1dac1d04) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
@@ -21,7 +21,8 @@
 | 웹·API 진입 | Vercel React 웹 → 서버 미들웨어 → CloudFront VPC origin → 내부 ALB → EKS Nginx | [실배포 기록](../../../infrastructure/eks/sydney-demo.md), [API 진입점](../../../infrastructure/eks/api-entrypoint.md), [Vercel 미들웨어](../../../frontend/web/middleware.ts) |
 | 컴퓨팅·네트워크 | 시드니 EKS, private EC2 워커 2대, NAT 1개, EKS API의 사설 접근·관리 IP 제한 | [클러스터 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml) |
 | 데이터 | 기존 DB·색인·큐·평가·관측 데이터를 EBS gp3 PVC에 복원, S3에는 암호화한 이전 백업 보관 | [이전 기록](../../../infrastructure/eks/sydney-demo.md), [StorageClass](../../../infrastructure/eks/storage-class.yaml) |
-| 변경 배포 | 같은 최신 main의 필수 CI → CodeBuild 임시 실행기 → ECR → EKS → Vercel | [자동 배포 구성·검증 상태](../../../infrastructure/eks/continuous-deployment.md), [워크플로](../../../.github/workflows/eks-release.yml) |
+| 변경 배포 | 같은 최신 main의 필수 CI → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel | [자동 배포 구성·검증 상태](../../../infrastructure/eks/continuous-deployment.md), [워크플로](../../../.github/workflows/eks-release.yml) |
+| Helm·Argo CD | Helm으로 만든 배포 YAML을 Git에 보관하고 Argo CD가 EKS 앱에 반영합니다. Helm은 AWS Load Balancer Controller 설치에도 사용합니다. | [Argo 최초 인계](../../../infrastructure/eks/argo-cd.md), [Controller 설치 절차](../../../infrastructure/eks/api-entrypoint.md#실제-적용-전-준비) |
 | 모바일 | React Native·Expo, 웹과 공통 계약, API origin 설정·Bearer 인증 | [모바일 안내](../../../frontend/mobile/README.md) |
 
 ## 요청·데이터 흐름
@@ -57,15 +58,27 @@
 주황색 실선은 **CI 통과 후 자동 배포 경로**입니다.
 
 개인 저장소 main의 **같은 최신 SHA**에 대한 필수 CI가 모두 통과하면 GitHub Actions가
-CodeConnections로 연결한 CodeBuild 임시 실행기에 빌드·배포를 맡깁니다.
-CodeBuild는 VPC 내부에서 IAM 서비스 역할로 ECR에 이미지를 발행하고 EKS에 접속합니다.
+CodeConnections로 연결한 CodeBuild 임시 실행기에 빌드·ECR 발행을 맡깁니다.
+CodeBuild는 Helm으로 배포 YAML을 만들고 CI 근거·이미지 digest와 함께 불변 Git 태그에 저장합니다.
+[Argo CD 연결 스크립트](../../../infrastructure/eks/gitops.py)는 기존 환경을 보존하는 Application을 생성하고,
+배포 시에는 Argo 동기화 결과를 읽기 전용으로 확인합니다.
 
 서비스 이미지 5개를 immutable `git-SHA` 태그로 발행하고 digest를 고정해 배포합니다.
-평가 접수·실행 상태를 확인한 뒤 Ops migration·EKS rollout을 수행하고, Ready 확인 후 접수를 재개합니다.
-백엔드 배포가 성공하면 같은 SHA의 웹·shared를 빌드하고 CI를 다시 확인한 뒤 Vercel 운영 주소를 전환합니다.
+Argo PreSync가 평가 접수를 중지하고 실행 종료·Ops migration을 확인한 뒤 앱을 동기화합니다.
+PostSync가 평가 연결을 검증하고 해당 배포가 중지한 접수 상태만 복구합니다.
+CodeBuild에서 정확한 Git revision·두 hook·앱 6개의 실제 이미지를 확인해야
+같은 SHA의 웹·shared를 빌드하고 CI를 다시 확인한 뒤 Vercel 운영 주소를 전환합니다.
 
 자동 갱신 범위는 애플리케이션·평가 실행기·결과 서버입니다.
-DB·PVC·네트워크·Langfuse는 별도로 관리합니다. 로컬 GHCR·Argo CD 경로는 이 EKS 배포 흐름에 포함하지 않습니다.
+DB·PVC·네트워크·Langfuse는 별도로 관리합니다.
+
+| 도구 | 운영 구성에서의 역할 |
+|---|---|
+| **CodeBuild** | 검증된 소스로 이미지 5개를 빌드·ECR 발행하고 배포 Git 태그를 만듭니다. EKS 권한은 지정한 앱과 Argo Application의 조회로 제한합니다. |
+| **Helm** | Chart·EKS 설정·이미지 digest를 결합해 배포 YAML을 만듭니다. AWS Load Balancer Controller 설치에도 사용합니다. |
+| **Argo CD** | `govbiz-eks/v1.RUN.ATTEMPT` 태그를 자동 추적해 EKS에 반영합니다. 평가 접수 보호·migration·연결 검증을 hook으로 수행하며 데이터 리소스는 소유하지 않습니다. |
+
+기존 환경의 최초 관리권 이전과 자동 배포 활성화는 [전환 절차](../../../infrastructure/eks/argo-cd.md)를 따릅니다.
 
 ## 실제 적용·검증 기록
 
@@ -74,6 +87,8 @@ DB·PVC·네트워크·Langfuse는 별도로 관리합니다. 로컬 GHCR·Argo 
 - 2026-10-12 GitHub 조회에서 자동 배포 코드의 개인 main 반영과 `EKS_RELEASE_ENABLED=false`를 확인했습니다.
   최근 배포 워크플로 8건은 모두 `skipped`였습니다([당시 최신 실행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38159617616)).
   그림은 활성화 후 구조를 표현하며, 첫 실제 자동 rollout·Vercel 전환 성공 기록은 후속 검증 후 갱신합니다.
+- 같은 날 EKS 읽기 전용 점검에서 앱 6개는 Ready였고 Argo Application CRD는 없었습니다.
+  새 GitOps 코드·설정과 실제 Helm·Kustomize 렌더링을 준비했으며, main 반영·CI와 최초 인계·실배포 검증은 별도입니다.
 - 현재 기록의 유료 평가·정기 실행은 비활성입니다. 관리자 로그인 후 전체 Ops 동작, 모바일 실기기,
   실제 모델 품질과 실시간 AWS 상태를 이 그림의 검증 결과로 간주하지 않습니다.
 

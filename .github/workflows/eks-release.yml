@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 120
     environment: eks-production
     permissions:
-      contents: read
+      contents: write # Publish immutable govbiz-eks/* tags; no direct workload writes.
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -53,6 +53,7 @@ jobs:
       AWS_REGION: ap-southeast-2
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      KUBECONFIG: /tmp/govbiz-eks-kubeconfig
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,14 +76,29 @@ jobs:
           aws --version
           gh --version
           docker info >/dev/null
+      - name: Install GitOps renderer and pinned Helm
+        run: |
+          set -euo pipefail
+          python -m pip install --requirement infrastructure/gitops/scripts/requirements.txt
+          tool_dir="$(mktemp -d)"
+          cd "$tool_dir"
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          tar -xzf helm-v4.3.0-linux-amd64.tar.gz
+          echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Require Argo ownership and a read-only cluster observer before building
+        run: python3 -B infrastructure/eks/gitops.py preflight
       - name: Recheck the exact main commit before publication
         run: python3 -B infrastructure/eks/release.py check --sha "$SOURCE_SHA"
       - name: Publish five immutable ECR images from the tested Git source
         run: python3 -B infrastructure/eks/release.py publish --sha "$SOURCE_SHA" --output "$RUNNER_TEMP/release.json"
-      - name: Deploy inside the EKS VPC and wait for rollout
-        env:
-          KUBECONFIG: ${{ runner.temp }}/govbiz-eks-kubeconfig
-        run: python3 -B infrastructure/eks/release.py rollout --sha "$SOURCE_SHA" --output "$RUNNER_TEMP/release.json"
+      - name: Publish tested Helm manifests as an immutable Git release
+        run: |
+          gh auth setup-git
+          python3 -B infrastructure/eks/gitops.py publish --sha "$SOURCE_SHA" --receipt "$RUNNER_TEMP/release.json"
+      - name: Observe the exact Argo revision, successful hooks and ready images
+        run: python3 -B infrastructure/eks/gitops.py wait --sha "$SOURCE_SHA" --receipt "$RUNNER_TEMP/release.json"
       - name: Save source and image evidence, without secrets or data
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

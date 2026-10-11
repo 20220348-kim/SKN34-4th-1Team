@@ -1,4 +1,4 @@
-"""CI-gated ECR publication and rollout on the private CodeBuild Actions runner."""
+"""CI-gated ECR publication on the private CodeBuild Actions runner."""
 
 import argparse
 import io
@@ -58,14 +58,14 @@ def authority():
     return fork
 
 
-def check(sha, get=gate.api):
+def check(sha, get=gate.api, *, evidence=None):
     fork = authority()
     require(gate.valid_sha(sha), "A full source SHA is required")
     head = get(f"repos/{fork.repository}/git/ref/heads/{quote(fork.branch, safe='')}")[
         "object"
     ]["sha"]
     require(head == sha, "Source superseded; deploy the latest tested main")
-    reason = gate.ci_blocked_reason(sha, fork, get)
+    reason = gate.ci_blocked_reason(sha, fork, get, evidence=evidence)
     require(reason is None, "Required CI is not ready: " + str(reason))
     require(
         get(f"repos/{fork.repository}/git/ref/heads/main")["object"]["sha"] == sha,
@@ -222,14 +222,7 @@ def publish(sha, output):
 
 
 def rollout(sha, receipt):
-    # One runner builds and deploys: no mutable S3 bundle or second build job.
-    check(sha)
-    record = json.loads(receipt.read_text())
-    require(record.get("sourceSha") == sha, "Release receipt does not match this SHA")
-    sys.path.insert(0, str(ROOT / "infrastructure/eks"))
-    import deploy
-
-    deploy.deploy(record)
+    raise ValueError("Direct rollout is disabled; publish GitOps inputs and wait for Argo CD.")
 
 
 def web_source(sha, destination):

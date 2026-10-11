@@ -10,7 +10,9 @@ Core·Ops의 웹 주소를 설정한다. 2026-10-12 활성 PVC 13개를 복원�
 [Vercel 최초 설정·자동 배포 연결 절차](continuous-deployment.md)를 준비했다.
 [CloudFront·내부 ALB·Core/Ops 프록시](api-entrypoint.md)는 실제 AWS에 적용했다.
 GitHub OIDC 제한에 대응해 자동 배포 코드를 **CodeConnections·CodeBuild 임시 Actions 실행기**로
-전환했다. 연결 승인·main 반영·최초 자동 실행 검증이 끝나기 전까지 운영은 수동 배포 상태다.
+전환했다. 후속 자동 배포는 **CodeBuild 빌드·ECR 발행 → Helm·Git 배포 태그 → Argo CD 동기화**로 구성한다.
+[Argo CD 최초 인계](argo-cd.md), main의 필수 CI와 첫 실제 자동 실행 검증이 끝나야 전환 완료다.
+아래 시드니 최초 이전 기록의 직접 배포는 과거 실행 방식이며 새 자동 배포 코드는 직접 앱 교체를 차단한다.
 
 아래는 **다른 원본 클러스터의 기존 Argo CD 이전 절차와 기록**이다. 아래의 PVC 14개·Argo 앱
 9개·`work/eks-handoff-20261011-final` 기록을 현재 Mac의 백업 완료 증거로 사용하지 않는다.
