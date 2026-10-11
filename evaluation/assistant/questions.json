@@ -2,7 +2,7 @@
   "schemaVersion": "assistant-intent-eval-v2",
   "dataType": "synthetic",
   "referenceSource": "ai-authored",
-  "description": "도우미 자유 질문 의도 분류 회귀 세트. 도움말 10항목마다 표현 3개(30문항), 회원 상태·검색·공고 질문 10문항, 답할 수 없어 기권해야 하는 10문항, 도구 에이전트 문항 20개(모집글 매칭 8·관심 공고 묶음 8·도구 상태 4, mode=agent). 실제 사용자 질문이 아니며 사람 검증 정답이 아니다.",
+  "description": "도우미 자유 질문 의도 분류 회귀 세트. 도움말 9항목마다 표현 3개(27문항), 회원 상태·검색·공고 질문 10문항, 답할 수 없어 기권해야 하는 10문항, 도구 에이전트 문항 20개(모집글 매칭 8·관심 공고 묶음 8·도구 상태 4, mode=agent). 실제 사용자 질문이 아니며 사람 검증 정답이 아니다.",
   "defaults": {
     "session": { "authenticated": false, "hasCompany": false },
     "context": { "route": "/", "programSelected": false }
@@ -32,9 +32,6 @@
     { "id": "H08-1", "split": "dev", "message": "모집글 작성 버튼이 안 눌려요", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "partner-write-requires-company", "session": { "authenticated": true, "hasCompany": false } },
     { "id": "H08-2", "split": "dev", "message": "파트너 모집글 쓰려면 뭐가 필요해요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "partner-write-requires-company", "session": { "authenticated": true, "hasCompany": false } },
     { "id": "H08-3", "split": "heldout", "message": "기업 등록 안 하면 제안도 못 보내나요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "partner-write-requires-company", "session": { "authenticated": true, "hasCompany": false } },
-    { "id": "H09-1", "split": "dev", "message": "준비 중이라고 뜨는 기능은 뭐예요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "feature-status-preparing", "session": { "authenticated": true, "hasCompany": false } },
-    { "id": "H09-2", "split": "dev", "message": "준비 중 화면에 입력하면 저장되나요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "feature-status-preparing", "session": { "authenticated": true, "hasCompany": false } },
-    { "id": "H09-3", "split": "heldout", "message": "준비 중 기능은 언제 열려요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "feature-status-preparing", "session": { "authenticated": true, "hasCompany": false } },
     { "id": "H10-1", "split": "dev", "message": "검색이 너무 오래 걸려요", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "search-slow-or-failed" },
     { "id": "H10-2", "split": "dev", "message": "검색이 실패했다고 나와요 결과가 0건인 건가요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "search-slow-or-failed" },
     { "id": "H10-3", "split": "heldout", "message": "검색 시간이 정해진 시간을 넘기면 어떻게 돼요?", "expectedIntent": "PRODUCT_HELP", "expectedCitation": "search-slow-or-failed" },
