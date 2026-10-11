@@ -69,11 +69,13 @@ OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합�
 | 개인 환경 평가 서비스 이전 | 2026-10-10 Prefect·실행기·결과 서버와 Ops 연결을 실제 전환. 무료 평가 6사례·보고서 조회 성공, 원본 Compose 평가 서비스 3개 중지·볼륨 보존 |
 | 개인 환경 Langfuse 이전 | 2026-10-10 web/worker·저장소 4개 기동 및 실행기의 내부 Service 연결 완료. 무료 평가 6사례·점수 22개 갱신 확인. 원본 Compose 6개 중지·볼륨 보존. 새 설치의 기본 replica는 0 유지 |
 | 웹 배포 구성 | 정적 웹 이미지·Core/Ops 프록시·기존 서비스 Chart의 웹 values 추가. 개인 환경의 실제 웹 주소 전환과 공개 이미지 발행은 후속 단계 |
-| Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |
+| Argo 자동 배포 | `Local Argo release`: 같은 최신 main의 CI·6개 이미지 receipt 검증 → 불변 배포 태그 → 웹·업무·평가 7개 Deployment의 단일 Application 자동 sync. 기존 환경의 최초 인계 필요. prune·selfHeal 비활성 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
 [현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다.
+상시 자동 배포는 [로컬 자동 동기화 설정](docs/local-auto-sync.md)을 따릅니다.
+새 코드는 아래의 과거 수동 인계 기록이나 기존 준비 도구를 자동 적용 완료로 바꾸지 않습니다.
 개인 환경 1곳은 검증된 `e7898ec` 공개 발행본으로 최초 수동 인계를 마쳤습니다.
 이후 Ops와 평가 서비스는 검증된 `2cab488` 발행본으로 전환했으며 Core·Catalog·AI는 기존 배포를 유지합니다.
 [실제 백업·migration·Argo 인계 기록](../../docs/ops-upgrade-runbook.md#개인-환경-공개-이미지의-argo-인계--2026-10-07)을 참고하세요.

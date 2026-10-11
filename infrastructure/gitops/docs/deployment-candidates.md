@@ -28,6 +28,7 @@
 
 후속 개발에서 GHCR 기반 `fork_cluster.py up`은 현재 소스의 CI·발행·receipt를 직접 검증하도록 복구했다.
 [GHCR 초기화 방법](image-promotion.md)을 따른다. 별도 브랜치·PR·추가 승인 없이 실행하며 로컬 작업 파일은 보존한다.
-기존 배포 snapshot을 요구하는 새 `gitops` 전환의 대체 경로는 아직 없다.
+2026-10-12 후속 코드에서는 [검증된 태그 기반 자동 동기화](local-auto-sync.md)를 추가했다.
+별도 배포 브랜치·PR을 복원하지 않으며 기존 수동 환경의 최초 인계와 실제 배포 검증은 별도다.
 [소스 이미지 빌드와 `up --local-images`](../../../docs/windows-kubernetes-setup.md)도 유지한다.
 기존 클러스터·Argo Application·데이터·볼륨은 변경하지 않았다.

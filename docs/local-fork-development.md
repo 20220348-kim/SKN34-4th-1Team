@@ -2,7 +2,7 @@
 
 > 별도 배포 브랜치·PR 절차는 제거했습니다. 소스 이미지의 `up --local-images`와 검증된 GHCR의 `up`을 지원합니다.
 > GHCR `up`은 현재 기본 브랜치의 CI·발행·receipt를 직접 확인하며 추가 PR이 없습니다.
-> 새 Argo 자동 배포 연결은 아직 없습니다.
+> 상시 반영은 [로컬 Argo 자동 동기화](../infrastructure/gitops/docs/local-auto-sync.md)를 사용합니다. 기존 환경의 최초 관리권 이전은 별도입니다.
 
 Windows에서 도구 설치부터 시작하거나 GHCR 이미지 없이 실행하려면
 [WSL2·kind 수동 설치 안내](windows-kubernetes-setup.md)를 먼저 따릅니다.
@@ -26,14 +26,16 @@ GHCR 이미지를 사용하는 경우 [비공개 GHCR 최초 준비](private-ghc
 아래의 `init`·`doctor`와 명시적 로컬 이미지 경로는 GHCR 준비와 별개입니다.
 GHCR 기반 `up`은 현재 발행 결과를 직접 검증합니다. `gitops` 전환은 과거 환경 호환 경로이며 새 활성화 안내가 아닙니다.
 
-## 두 실행 모드
+## 실행 모드
 
 | 모드 | 반영하는 코드 | 이미지 경로 | 서비스 변경 주체 |
 |---|---|---|---|
 | `dev` | 자기 PC에 저장한 코드, 아직 커밋하지 않은 새 소스도 포함 | 로컬 Docker 빌드 → 자기 kind에 적재 | `dev.py` |
+| 자동 Argo | 최신 main의 필수 CI·발행 검증을 마친 소스 | GHCR digest + 불변 배포 태그 | 단일 `govbiz-local` Application |
 | 기존 `gitops` | 과거 환경 호환용. 새 활성화 절차는 제거 | 기존 배포 이미지 | 기존 Argo CD |
 
-개발 모드는 Argo CD의 Application을 제거하되 서비스·DB·볼륨을 삭제하지 않습니다.
+기존 개발 전환 도구는 서비스별 Application만 다룹니다. 새 자동 Application의 관리권 이전·복귀는 위 자동 동기화 안내를 따릅니다.
+개발 모드는 서비스·DB·볼륨을 삭제하지 않습니다.
 동일 Deployment를 Argo CD와 개발 도구가 동시에 수정하지 않게 하는 구분입니다.
 개발 중 저장한 코드는 다른 팀원의 PC, GHCR, GitHub에 자동 업로드되지 않습니다.
 
