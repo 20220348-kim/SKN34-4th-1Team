@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
@@ -617,6 +618,40 @@ class VercelPromotionTests(unittest.TestCase):
         )
         self.assertTrue(all("user" not in call.args[0] for call in api.call_args_list))
         self.assertTrue(all(call.args[1] == "team_Test" for call in api.call_args_list))
+
+    def test_project_status_requires_rollback_info_query_at_http_boundary(self):
+        requested = False
+
+        def respond(request, **kwargs):
+            nonlocal requested
+            url = urlsplit(request.full_url)
+            query = parse_qs(url.query)
+            self.assertEqual(query.get("teamId"), ["team_Test"])
+            if url.path == "/v13/deployments/govbiz-test-team.vercel.app":
+                payload = self.deployment
+            elif url.path == "/v10/projects/prj_Test/promote/dpl_Test":
+                self.assertEqual(request.get_method(), "POST")
+                requested = True
+                payload = {}
+            elif url.path == "/v9/projects/prj_Test":
+                # The real project API hides alias job details by default.
+                payload = (
+                    self.promoted()
+                    if requested and query.get("rollbackInfo") == ["true"]
+                    else self.project
+                )
+            else:
+                self.fail("Unexpected Vercel endpoint: " + url.path)
+            return io.BytesIO(json.dumps(payload).encode())
+
+        with (
+            patch.object(release, "urlopen", side_effect=respond),
+            patch.object(release.time, "monotonic", side_effect=[0, 0, 181]),
+        ):
+            record = release.promote_web(SHA, self.url)
+        self.assertTrue(requested)
+        self.assertEqual(record["deploymentId"], "dpl_Test")
+        self.assertEqual(self.check.call_count, 3)
 
     def test_unready_preview_wrong_project_sha_and_url_never_promote(self):
         for change in (

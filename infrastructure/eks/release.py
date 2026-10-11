@@ -240,8 +240,9 @@ def web_source(sha, destination):
 
 def vercel_api(path, team, token, method="GET"):
     # Project-scoped requests do not require the CLI's personal /v2/user lookup.
+    separator = "&" if "?" in path else "?"
     request = Request(
-        "https://api.vercel.com" + path + "?teamId=" + quote(team, safe=""),
+        "https://api.vercel.com" + path + separator + "teamId=" + quote(team, safe=""),
         data=b"{}" if method == "POST" else None,
         method=method,
         headers={
@@ -282,7 +283,8 @@ def promote_web(sha, deployment_url):
     deployment = vercel_api(
         "/v13/deployments/" + quote(url.netloc, safe=""), team, token
     )
-    project_path = "/v9/projects/" + project_id
+    # Vercel omits lastAliasRequest unless rollbackInfo is explicitly requested.
+    project_path = "/v9/projects/" + project_id + "?rollbackInfo=true"
     project = vercel_api(project_path, team, token)
     require(
         project.get("id") == project_id and project.get("accountId") == team,
