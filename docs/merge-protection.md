@@ -6,9 +6,9 @@ PR 리뷰 승인 수는 **0명**으로 유지한다. 필수 CI 성공과 리뷰 
 
 ## 필수 검증
 
-[ci_policy.py](../infrastructure/release/ci_policy.py)가 다섯 workflow의 기존 16개 작업과
+[ci_policy.py](../infrastructure/release/ci_policy.py)가 다섯 workflow의 18개 작업과
 다음 다섯 종합 판정의 이름을 관리한다. 이미지 발행의 [gate.py](../infrastructure/release/gate.py)도
-같은 목록을 사용한다. 필수 check 이름은 총 **21개**로 유지한다. 각 workflow의 영향 범위를
+같은 목록을 사용한다. 필수 check 이름은 총 **23개**다. 각 workflow의 영향 범위를
 계산하는 job ID는 `changes`, 표시명은 `CI scope / ...`다. 이 다섯 job은 별도로 실행하며
 필수 check 목록에 추가하지 않는다.
 
@@ -20,12 +20,15 @@ PR 리뷰 승인 수는 **0명**으로 유지한다. 필수 CI 성공과 리뷰 
 | `infra-ci.yml` | `Required CI / Infra` |
 | `llmops-ci.yml` | `Required CI / LLMOps` |
 
+LLMOps는 파이프라인·취소/예산·Kubernetes 복구를 독립 job으로 병렬 실행한다. 세 결과를
+모두 종합 판정에 포함하며, 원격 ruleset 갱신 전에도 종합 판정과 이미지 발행 가드가 실패를 차단한다.
+
 다섯 workflow는 경로 필터 없이 push와 PR마다 실행한다. 각 `changes` job이 영향받는 작업을
 선택하고, `always()`로 실행하는 종합 job은 선택된 작업이 모두 `success`일 때만 성공한다.
 정책이 명시적으로 비대상으로 판정한 작업의 `skipped`만 허용하며, 선택된 작업의 실패·취소·
 건너뛰기나 작업 누락은 실패다. 발행 가드도 `changes`와 실제 job 결과를 함께 확인한다.
 GitHub가 개별 skipped check를 병합 허용으로 취급할 수 있으므로 종합 판정이 필요하다.
-기존 16개 작업 이름도 필수로 유지해 재실행 중인 작업을 이전 종합 판정 성공만으로
+18개 작업 이름도 필수로 유지해 재실행 중인 작업을 이전 종합 판정 성공만으로
 통과시키지 않는다. workflow 전체가 시작되지 않으면 새 SHA의 필수 check가 없으므로 병합은
 대기한다. 작업 이름·matrix·의존관계 변경은 정책 테스트로 확인한다.
 
@@ -73,13 +76,13 @@ python3 -B infrastructure/release/merge_protection.py ruleset \
 ```
 
 JSON은 `main`에만 적용하는 전용 ruleset이다. PR 경로·리뷰 0명·최신 base 반영·GitHub Actions 앱에
-묶인 21개 check·빈 bypass 목록을 포함한다. 별도 배포 브랜치를 만들지 않는다.
+묶인 23개 check·빈 bypass 목록을 포함한다. 별도 배포 브랜치를 만들지 않는다.
 기존 deletion/non-fast-forward 규칙이나 조직 규칙은 삭제·교체하지 않는다.
 
 1. 이 정책을 처음 도입하는 PR에서 전체 작업과 다섯 종합 판정이 실제 성공하는지 먼저 확인한다.
 2. **Settings → Rules → Rulesets**에서 JSON을 가져오거나 같은 전용 ruleset을 설정한다.
    동명 ruleset이 있으면 수정하며 중복 생성하지 않는다. 대상 `main`, `Active`, 승인 0명,
-   필수 check 21개, strict, bypass 없음이 검토 대상이다.
+   필수 check 23개, strict, bypass 없음이 검토 대상이다.
 3. 위 `check`를 다시 실행한다. 활성 branch rules와 원본 ruleset, 기존 branch protection까지 조회한다.
    다른 조직·저장소 규칙이 리뷰를 요구하거나 우회를 허용하면 보고하며 자동으로 약화하지 않는다.
 4. 시험 PR에서 선택된 작업의 실패/실행 중에는 병합할 수 없고, 최신 SHA에서 선택된 작업과

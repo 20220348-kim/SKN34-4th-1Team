@@ -236,11 +236,8 @@ jobs:
   container-integration:
     if: ${{ contains(fromJSON(needs.changes.outputs.selected), 'container-integration') }}
     name: Container integration
-    needs:
-      - changes
-      - frontend
-      - core-service
-      - ai-service
+    # Self-contained container build; the final required check joins all results.
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:

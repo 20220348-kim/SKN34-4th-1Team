@@ -43,8 +43,8 @@ jobs:
     if: ${{ contains(fromJSON(needs.changes.outputs.selected), 'integration') }}
     name: Saved capture pipeline with local servers
     runs-on: ubuntu-24.04
-    # Retain Core tracing and the expanded Kubernetes evaluation/restart checks.
-    timeout-minutes: 90
+    # Core captures and their replay share state; independent recovery suites run below.
+    timeout-minutes: 40
     services:
       ragmysql:
         image: mysql:8.4
@@ -140,7 +140,7 @@ jobs:
           DB_USER: root
           DB_PASSWORD: ci-only-rag-budget-password
           DB_HOST: 127.0.0.1
-          DB_PORT: ${{ job.services.ragmysql.ports[3306] }}
+          DB_PORT: ${{ job.services.ragmysql.ports['3306'] }}
           PYTHONPATH: ${{ github.workspace }}/infrastructure/llmops
           RAG_BUDGET_AI_PYTHON: ${{ github.workspace }}/backend/ai-service/.venv/bin/python
           CORE_RAG_CAPTURE_ROOT: ${{ github.workspace }}/work/llmops-ci/core-rag
@@ -319,12 +319,32 @@ jobs:
         # Earlier validation can fail before the Compose env files are created.
         if: ${{ always() && steps.development-credentials.outcome == 'success' }}
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
-      - name: Stop this job's initial web proxy before Kubernetes verification
+      - name: Stop this job's initial web proxy
         if: always()
         run: |
           if [ -f /tmp/govbiz-ops-web.pid ]; then
             kill "$(cat /tmp/govbiz-ops-web.pid)" 2>/dev/null || true
           fi
+
+  cancellation:
+    needs: changes
+    if: ${{ contains(fromJSON(needs.changes.outputs.selected), 'cancellation') }}
+    name: Offline cancellation and budget recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Own Compose project, credentials and volumes; no pipeline artifacts are consumed.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: '0.12.5'
+          python-version: '3.12'
+          working-directory: backend/ai-service
+      - name: Install locked evaluation dependencies
+        working-directory: backend/ai-service
+        run: uv sync --locked --extra dev --group evaluation
       - name: Verify execution, cancellation, budget and free RAG recovery with offline model HTTP
         # Includes cold startup, 13 fixed-context and 6 RAG scenarios; deadlines stay strict.
         timeout-minutes: 20
@@ -337,6 +357,39 @@ jobs:
           path: work/llmops-ci/cancellation.json
           if-no-files-found: warn
           retention-days: 7
+
+  kubernetes:
+    needs: changes
+    if: ${{ contains(fromJSON(needs.changes.outputs.selected), 'kubernetes') }}
+    name: Kubernetes evaluation and restore
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    # Build from this checkout in a fresh runner. Each smoke owns its disposable cluster.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: '0.12.5'
+          python-version: '3.12'
+          working-directory: backend/ai-service
+      - name: Install locked evaluation dependencies
+        working-directory: backend/ai-service
+        run: uv sync --locked --extra dev --group evaluation
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.22.0
+          runtime: node@24
+          install: false
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          package-json-file: package.json
+      - name: Install locked web dependencies and Chromium
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir frontend/web exec playwright-core install --with-deps --only-shell chromium
       - name: Install pinned kind, kubectl and Helm for isolated Kubernetes evaluation
         shell: bash
         run: |
@@ -370,7 +423,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Verify Ops recovery and restored Kubernetes evaluation runtime
-        # Reuse this job's disposable cluster/images; no personal environment is stopped.
+        # This smoke creates and cleans up its own cluster, images and synthetic data.
         timeout-minutes: 40
         run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate --evaluation-runtime --report work/llmops-ci/ops-bridge.json
       - name: Preserve isolated Compose bridge evidence
@@ -385,7 +438,7 @@ jobs:
   merge-readiness:
     name: Required CI / LLMOps
     if: ${{ always() }}
-    needs: [changes, integration]
+    needs: [changes, integration, cancellation, kubernetes]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     defaults:

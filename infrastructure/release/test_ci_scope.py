@@ -86,7 +86,7 @@ class AffectedJobsTests(unittest.TestCase):
     def test_global_web_styles_still_require_the_ops_browser_checks(self):
         for path in ("frontend/web/src/index.css", "frontend/web/src/design-tokens.css"):
             with self.subTest(path=path):
-                self.assertEqual(policy.affected_jobs([path])["llmops-ci.yml"], {"integration"})
+                self.assertEqual(policy.affected_jobs([path])["llmops-ci.yml"], set(policy.WORKFLOW_JOBS["llmops-ci.yml"]))
 
     def assert_full(self, paths):
         self.assertEqual(
@@ -126,7 +126,7 @@ class AffectedJobsTests(unittest.TestCase):
     def test_shared_contract_changes_include_web_mobile_and_llmops(self):
         selected = policy.affected_jobs(["frontend/packages/shared/src/domain/entities/GovAgent.ts"])
         self.assertEqual(selected["ci.yml"], set(policy.WORKFLOW_JOBS["ci.yml"]))
-        self.assertEqual(selected["llmops-ci.yml"], {"integration"})
+        self.assertEqual(selected["llmops-ci.yml"], set(policy.WORKFLOW_JOBS["llmops-ci.yml"]))
 
     def test_root_locks_workflow_policy_and_unknown_paths_select_everything(self):
         for path in (
@@ -151,7 +151,7 @@ class AffectedJobsTests(unittest.TestCase):
         self.assertEqual(selected["llmops-ci.yml"], set())
         selected = policy.affected_jobs(["backend/core-service/src/test/resources/application-test.yml"])
         self.assertIn("container-integration", selected["ci.yml"])
-        self.assertEqual(selected["llmops-ci.yml"], {"integration"})
+        self.assertEqual(selected["llmops-ci.yml"], set(policy.WORKFLOW_JOBS["llmops-ci.yml"]))
 
 
 class ChangedPathsTests(unittest.TestCase):
@@ -163,7 +163,7 @@ class ChangedPathsTests(unittest.TestCase):
         self.assertIn("backend/core-service/src/main/Main.kt", paths)
         self.assertIn("backend/ai-service/app/gov_agent/models.py", paths)
         self.assertIn("core-service", policy.affected_jobs(paths)["ci.yml"])
-        self.assertEqual(policy.affected_jobs(paths)["llmops-ci.yml"], {"integration"})
+        self.assertEqual(policy.affected_jobs(paths)["llmops-ci.yml"], set(policy.WORKFLOW_JOBS["llmops-ci.yml"]))
 
     def test_invalid_or_ambiguous_comparison_is_rejected(self):
         original = comparison(files=["README.md"])
@@ -296,6 +296,18 @@ class PlanTests(unittest.TestCase):
             with self.subTest(response=response):
                 get, _ = fixture_api({"feature": [run]}, {BASE: comparison(files=["README.md"])}, {run["id"]: response})
                 self.assert_full(self.plan(get))
+
+    def test_pre_split_llmops_success_cannot_omit_new_required_suites(self):
+        filename = "llmops-ci.yml"
+        run = run_record(filename)
+        response = job_response(run, scoped=True)
+        old_names = {"Saved capture pipeline with local servers", policy.SUMMARY_NAMES[filename], policy.SCOPE_NAMES[filename]}
+        response["jobs"] = [job for job in response["jobs"] if job["name"] in old_names]
+        response["total_count"] = len(response["jobs"])
+        get, _ = fixture_api({"feature": [run]}, {BASE: comparison(files=["README.md"])}, {run["id"]: response})
+        result = self.plan(get, filename=filename)
+        self.assert_full(result, filename)
+        self.assertEqual(result["reason"], "baseline_jobs_unproven")
 
     def test_successful_scoped_baseline_requires_both_planner_and_summary(self):
         run = run_record()

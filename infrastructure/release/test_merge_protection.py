@@ -81,7 +81,10 @@ class SummaryTests(unittest.TestCase):
                 str(ROOT / "infrastructure/release/ci_policy.py"),
                 "llmops-ci.yml",
             ],
-            env={"NEEDS_JSON": '{"integration":{"result":"skipped"}}'},
+            env={"NEEDS_JSON": json.dumps({
+                name: {"result": "skipped" if name == "integration" else "success"}
+                for name in ci_policy.WORKFLOW_JOBS["llmops-ci.yml"]
+            })},
             capture_output=True,
             text=True,
             check=False,
@@ -116,8 +119,8 @@ class ProtectionTests(unittest.TestCase):
 
     def test_plan_keeps_zero_reviews_and_binds_all_checks_to_github_actions(self):
         checks = self.rule["rules"][1]["parameters"]["required_status_checks"]
-        self.assertEqual(len(checks), 21)
-        self.assertEqual(len({item["context"] for item in checks}), 21)
+        self.assertEqual(len(checks), 23)
+        self.assertEqual(len({item["context"] for item in checks}), 23)
         self.assertEqual({item["integration_id"] for item in checks}, {15368})
         self.assertEqual(self.rule["bypass_actors"], [])
         self.assertEqual(
