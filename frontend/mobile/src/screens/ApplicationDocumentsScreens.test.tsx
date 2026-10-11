@@ -464,11 +464,13 @@ test('undecided current answers still allow confirming the same previously store
 })
 
 test('current generated documents retain overflow guidance and remaining examples for manual completion', async () => {
-  api.documents.mockResolvedValue([{ ...documentFile, filledAnswerCount: 1, unfilledAnswerCount: 1, remainingExampleCount: 2,
-    unfilledAnswers: [{ fieldId: 'company:goal', fieldLabel: '추진 목표', value: '길어서 들어가지 않은 목표', reason: 'OVERFLOW', capacity: 12 }] }])
+  api.documents.mockResolvedValue([{ ...documentFile, filledAnswerCount: 1, unfilledAnswerCount: 2, remainingExampleCount: 2,
+    unfilledAnswers: [{ fieldId: 'company:goal', fieldLabel: '추진 목표', value: '길어서 들어가지 않은 목표', reason: 'OVERFLOW', capacity: 12 },
+      { fieldId: 'company:name', fieldLabel: '기업명', value: '㈜가상기업', reason: 'UNSUPPORTED_CHARACTER', capacity: null }] }])
   render(<ApplicationDocumentScreen {...docProps} />)
   await screen.findByText('직접 작성할 칸 2곳에 예시 문구가 남아 있어요. 제출 전에 지워 주세요.')
   expect(screen.getByText('추진 목표: 칸보다 길어 넣지 못했어요. 약 12자 이내로 줄여 주세요.')).toBeTruthy()
+  expect(screen.getByText('기업명: 이 문서에 쓸 수 없는 문자(이모지·한자·㈜·① 등)가 있어요. 문자를 바꾸거나 원본 파일에서 직접 작성해 주세요.')).toBeTruthy()
   expect(screen.getByText('길어서 들어가지 않은 목표')).toBeTruthy()
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
 })

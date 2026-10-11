@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentExcep
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException.Reason
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -41,7 +42,8 @@ class MsitAttachmentClientTest {
         assertEquals("신청양식.hwpx", result.files.single().fileName)
         assertEquals("HWPX", result.files.single().format)
         assertArrayEquals(byteArrayOf(0x50, 0x4b, 0x03, 0x04), result.files.single().bytes)
-        assertTrue(result.warnings.any { it.contains("과기정통부 공식 페이지") })
+        assertTrue(result.collectionNotice!!.contains("과기정통부 공식 페이지"))
+        assertFalse(result.warnings.any { it.contains("과기정통부 공식 페이지") })
         server.verify()
     }
 

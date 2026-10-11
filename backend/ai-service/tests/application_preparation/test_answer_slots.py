@@ -34,7 +34,7 @@ def written(text: str, value: str, label: str = "문항") -> str:
     # examples and placeholders are replaced as a whole
     ("예) 홍길동", "김철수", "김철수"),
     ("홍○○", "김철수", "김철수"),
-    ("0000.00.00.", "2026.10.01", "2026.10.01"),
+    ("0000.00.00.", "2026.10.01", "2026.10.01."),
 ])
 def test_the_printed_text_around_a_blank_is_kept(text, value, expected):
     assert written(text, value) == expected
@@ -120,6 +120,44 @@ def test_the_answer_label_picks_one_of_several_blanks(text, value, label, expect
 ])
 def test_an_undecidable_slot_is_skipped_rather_than_overwritten(text, value, label, reason):
     assert answer_slots(text, value, label) == reason
+
+
+@pytest.mark.parametrize("text,value,expected", [
+    # An answer that repeats the printed unit is written once.
+    ("        명", "12명", "     12 명"),
+    ("      %", "35%", "    35%"),
+    ("총      명", "12명", "총   12 명"),
+    ("          (천원)", "3,000천원", "    3,000 (천원)"),
+    ("원", "5천만원", "5천만 원"),
+    ("          원", "12억 3천만원", "  12억 3천만 원"),
+    ("상시종업원(   명)", "12명", "상시종업원(12 명)"),
+    (" - 경영관리 ( )명", "3명", " - 경영관리 (3)명"),
+    ("회", "한국벤처협회", "한국벤처협회 회"),
+    # A blank inside the parentheses takes the number next to its unit.
+    ("(        백만원)", "1,234", "(  1,234 백만원)"),
+    ("(   명)", "12명", "(12 명)"),
+    ("(      %)", "35%", "(    35%)"),
+    # An example date is replaced as a whole, with its own separators.
+    ("2000. 00. 00", "2019-03-05", "2019. 03. 05"),
+    ("20XX.XX.XX.", "2019년 3월 5일", "2019.03.05."),
+])
+def test_units_are_written_once_and_example_dates_are_replaced_whole(text, value, expected):
+    assert written(text, value) == expected
+
+
+@pytest.mark.parametrize("text,value", [
+    # An amount in another unit would have the wrong digits: it is skipped, not converted.
+    ("          백만원", "1,234,000,000원"),
+    ("(        백만원)", "5천만원"),
+    ("      명", "3개사"),
+    ("총      명", "3개사"),
+    (" - 경영관리 ( )명", "3개사"),
+    # A date that cannot fill the year, month and day blanks is not crammed into one of them.
+    ("     년     월     일", "2019. 3."),
+    ("     년     월     일", "19.03.05"),
+])
+def test_an_answer_in_another_unit_or_an_incomplete_date_is_skipped(text, value):
+    assert written(text, value) == SLOT_MISMATCH
 
 
 @pytest.mark.parametrize("text", ["업  체  명", "사 업 장주    소", "생 년 월 일", "18:00", "참가하면서  아래와 같이 신청합니다"])

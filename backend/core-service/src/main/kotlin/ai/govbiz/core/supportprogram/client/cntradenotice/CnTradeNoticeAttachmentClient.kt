@@ -36,9 +36,9 @@ class CnTradeNoticeAttachmentClient(
         }
         return try {
             val (candidate, detail) = officialDetail(expectedTitle, expectedBody)
-            val warnings = mutableListOf("충남 공식 게시판에서 제목·본문을 교차 검증한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf<String>()
             val files = collectFiles(detail, candidate.detailUri, warnings)
-            SupportProgramAttachments(expectedTitle, files, warnings.distinct(), candidate.detailUri.toString())
+            SupportProgramAttachments(expectedTitle, files, warnings.distinct(), candidate.detailUri.toString(), COLLECTION_NOTICE)
         } catch (error: SupportProgramDocumentException) {
             throw error
         } catch (error: Exception) {
@@ -199,6 +199,7 @@ class CnTradeNoticeAttachmentClient(
     private data class FileCandidate(val key: String, val fileName: String, val format: String)
 
     private companion object {
+        const val COLLECTION_NOTICE = "충남 공식 게시판에서 제목·본문을 교차 검증한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다."
         const val BOARD_URI = "https://cntrade.chungnam.go.kr/home/kor/M102638244/board.do"
         const val DOWNLOAD_URI = "https://cntrade.chungnam.go.kr/fileDownload.do"
         const val MAX_PAGE_BYTES = 1_000_000

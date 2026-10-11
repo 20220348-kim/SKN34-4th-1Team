@@ -24,7 +24,14 @@ BULLET = re.compile("^" + SPACE + r"*(?:[○❍◦•·∙ㅇ▪◆◇◎●☞�
 EXAMPLE = re.compile(r"^(?:[(（]?예시?[)）:：]|예시|ex\)|e\.g\.)", re.IGNORECASE)
 # "000", "○○○", "0000.00.00." but not "18:00" or "7,025.00".
 PLACEHOLDER = re.compile(r"(?<![0-9A-Za-z])(?<![0-9A-Za-z][,.\-:/])[0○◯OoＯ〇xX×ㅇ](?:[,.\-:/ ]*[0○◯OoＯ〇xX×ㅇ])+(?![0-9A-Za-z])")
-UNIT = re.compile(r"(?:백만원|천만원|천원|만원|억원|백만달러|천달러|달러|USD|개소|개사|개월|시간|가구|명|개|건|곳|원|세|회|차|년|월|일|분|평|㎡|호|기|대|종|주|박|점|톤|kg|㎏|ha|인|%|％|won|hours?)(?![가-힣A-Za-z])")
+UNITS = ("백만원", "천만원", "천원", "만원", "억원", "백만달러", "천달러", "달러", "USD", "개소", "개사", "개월", "시간", "가구",
+         "명", "개", "건", "곳", "원", "세", "회", "차", "년", "월", "일", "분", "평", "㎡", "호", "기", "대", "종", "주", "박", "점",
+         "톤", "kg", "㎏", "ha", "인", "%", "％", "won", "hours", "hour")
+UNIT = re.compile("(?:" + "|".join(map(re.escape, UNITS)) + ")(?![가-힣A-Za-z])")
+# A unit at the end of an answer ("12명", "1,234,000,000원"), longest first so "백만원" is not read as "원".
+VALUE_UNIT = re.compile("(?:" + "|".join(map(re.escape, sorted(UNITS, key=len, reverse=True))) + r")\s*$", re.IGNORECASE)
+# What may stand right before a unit in a number answer: digits, separators or Korean numerals ("5천만", "삼십").
+NUMBER_END = re.compile(r"[\d,.일이삼사오육칠팔구십백천만억영]$")
 SIGN = re.compile(r"[(（]" + SPACE + "*(?:인|印|서명|날인|직인|서명" + SPACE + "*또는" + SPACE + "*(?:날인|인))" + SPACE + r"*[)）]")
 # A unit printed in parentheses after the blank: "      (백만원)".
 PAREN_UNIT = re.compile(r"[(（]" + SPACE + "*(?:" + UNIT.pattern + ")" + SPACE + r"*[)）]")
@@ -33,6 +40,12 @@ DIGIT_BOXES = re.compile(r"[□☐](?:[ \-]?[□☐]){2,}")
 QUANTITY_PREFIX = set("총약만제월연주일각")
 SEPARATORS = SPACES + "/,|·・、;\n"
 DATE_VALUE = re.compile(r"((?:19|20)\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})")
+# A date answer that cannot fill year, month and day ("2019. 3.", "19.03.05", "2019년 3월").
+PARTIAL_DATE_VALUE = re.compile(r"^\s*(?:19|20)?\d{2}\s*[.\-/년]\s*\d{1,2}(?:\s*[.\-/월]\s*\d{0,2})?\s*[.일]?\s*$")
+# An example date whose month and day are printed as 00, XX, MM/DD: "2000. 00. 00", "20XX.XX.XX.", "YYYY-MM-DD".
+_DATE_SEPARATOR = SPACE + r"*[.\-/]" + SPACE + "*"
+PLACEHOLDER_DATE = re.compile(r"(?<![0-9A-Za-z])(?P<y>(?:19|20)\d{2}|20[Xx]{2}|[0Xx]{4}|YYYY)(?P<s1>" + _DATE_SEPARATOR
+                              + r")(?:00|[Xx]{2}|MM)(?P<s2>" + _DATE_SEPARATOR + r")(?:00|[Xx]{2}|DD)(?P<end>\.?)(?![0-9A-Za-z])")
 _YEAR = "(?P<y>(?:(?:19|20)\\d{0,2})?" + SPACE + "*)"
 _PART = SPACE + r"*\d{0,2}" + SPACE + "*"
 KOREAN_DATE = re.compile(r"(?<![가-힣A-Za-z0-9])" + _YEAR + "[년연](?P<m>" + _PART + ")월(?P<d>" + _PART + ")일")
@@ -52,7 +65,18 @@ def label_key(text: str) -> str:
 
 
 def answer_slots(text: str, value: str, label: str) -> list[Slot] | str:
-    """Edits that put [value] into the non-blank paragraph [text], or AMBIGUOUS_SLOT / SLOT_MISMATCH."""
+    """Edits that put [value] into the non-blank paragraph [text], or AMBIGUOUS_SLOT / SLOT_MISMATCH.
+
+    A blank whose printed unit the answer cannot take (another unit, so the digits would be wrong) is kept as a
+    SLOT_MISMATCH slot while the blanks are compared; when that blank is the one chosen, the paragraph is skipped.
+    """
+    slots = _answer_slots(text, value, label)
+    if isinstance(slots, list) and any(slot.reason == SLOT_MISMATCH for slot in slots):
+        return SLOT_MISMATCH
+    return slots
+
+
+def _answer_slots(text: str, value: str, label: str) -> list[Slot] | str:
     value = value.strip()
     field = label_key(label.partition(" / ")[2] or label)
     bullet = BULLET.match(text)
@@ -80,7 +104,18 @@ def answer_slots(text: str, value: str, label: str) -> list[Slot] | str:
     core = rest.strip()
     if UNIT.fullmatch(core) or SIGN.fullmatch(core) or PAREN_UNIT.fullmatch(core):
         start = body + len(rest) - len(rest.lstrip())
-        return [_aligned(start, start, value + ("" if core in {"%", "％"} else " "), "단위·서명 표시 앞에 저장된 답변을 삽입", body, right=True)]
+        unit = _printed_unit(core) if not SIGN.fullmatch(core) else None
+        number = _in_unit(value, unit)
+        if number is None:
+            return SLOT_MISMATCH
+        inner = re.match(r"[(（](" + SPACE + "{2,})", core)
+        if PAREN_UNIT.fullmatch(core) and inner:
+            # "(        백만원)": the number goes into the blank inside the parentheses, next to its unit.
+            gap_start = start + 1
+            gap_end = gap_start + len(inner.group(1))
+            return [_aligned(gap_start, gap_end, number + ("" if unit in {"%", "％"} else " "),
+                             "괄호 안 단위 앞 빈칸에 저장된 답변을 입력", gap_start, right=True)]
+        return [_aligned(start, start, number + ("" if core in {"%", "％"} else " "), "단위·서명 표시 앞에 저장된 답변을 삽입", body, right=True)]
     if not any(c.isalnum() for c in rest):
         return [Slot(body, len(text), value, "구분 기호만 있는 빈칸을 저장된 답변으로 교체")]
     placeholders = list(PLACEHOLDER.finditer(text, body))
@@ -117,10 +152,45 @@ def _placeholder_slots(text: str, body: int, placeholders: list[re.Match], value
         after = text[match.end():].strip()
         if (label.strip() and label[-1] in SPACES + ":：" and len(label_key(label)) <= 15
                 and (not after or UNIT.fullmatch(after) or PAREN_UNIT.fullmatch(after))):
+            number = _in_unit(value, _printed_unit(after)) if after else value
+            if number is None:
+                return SLOT_MISMATCH
             left = "" if label[-1] in SPACES else " "
             right = " " if after and text[match.end():match.end() + 1] not in SPACES else ""
-            return [Slot(match.start(), match.end(), left + value + right, "라벨 뒤 자리표시자를 저장된 답변으로 교체")]
+            return [Slot(match.start(), match.end(), left + number + right, "라벨 뒤 자리표시자를 저장된 답변으로 교체")]
     return [Slot(body, len(text), value, "자리표시자 예시를 저장된 답변으로 교체")]
+
+
+def _printed_unit(text: str) -> str | None:
+    """The unit of a printed unit mark ("명", "(백만원)", "%"). None when the mark is not a unit."""
+    match = UNIT.search(unicodedata.normalize("NFKC", text))
+    return match.group() if match else None
+
+
+def _in_unit(value: str, unit: str | None) -> str | None:
+    """The answer to write in front of the printed [unit]: without the same unit when the answer repeats it ("12명" in a
+    명 blank → "12"), or None when the answer carries another unit, whose digits would then be wrong ("1,234,000,000원"
+    in a 백만원 blank). Amounts are not converted because forms pick their own units (천원, 백만원) per table.
+    A word that only ends in a unit-like syllable ("협회") is not a number with a unit and is kept as it is."""
+    if unit is None:
+        return value
+    normalized = unicodedata.normalize("NFKC", value).strip()
+    match = VALUE_UNIT.search(normalized)
+    number = normalized[:match.start()].rstrip() if match else ""
+    if not match or not number or not NUMBER_END.search(number):
+        return value
+    written = match.group().strip()
+    if written.casefold() == unicodedata.normalize("NFKC", unit).casefold():
+        return number
+    # A Korean amount whose last word carries the unit ("5천만원", "12억 3천만원") fits a 원 blank as it is.
+    if unit == "원" and written.endswith("원") and written[:-1] and set(written[:-1]) <= set("억만천백십"):
+        return normalized[:match.start()] + written[:-1]
+    return None
+
+
+def _unit_mismatch(start: int, end: int) -> Slot:
+    """A blank this answer cannot fill because of its printed unit. Chosen, it skips the paragraph."""
+    return Slot(start, end, "", SLOT_MISMATCH)
 
 
 def _aligned(start: int, end: int, written: str, reason: str, gap_start: int, right: bool) -> Slot:
@@ -149,6 +219,13 @@ def _pick(text: str, body: int, slots: list[Slot], field: str) -> list[Slot] | s
 
 
 def _blank_slot(text: str, blank: re.Match, value: str) -> Slot:
+    # "경영관리 ( )명", "기본부스 ___개": the unit printed right after the blank is not written twice.
+    unit = UNIT.match(text, blank.end())
+    if unit:
+        number = _in_unit(value, unit.group())
+        if number is None:
+            return _unit_mismatch(blank.start(), blank.end())
+        value = number
     if blank.group()[0] in "(（":
         return Slot(blank.start() + 1, blank.end() - 1, value, "괄호 빈칸에 저장된 답변을 입력")
     left = " " if blank.start() > 0 and text[blank.start() - 1] not in SPACES + "(（[［" else ""
@@ -170,7 +247,10 @@ def _gap_slot(text: str, body: int, gap: re.Match, value: str) -> Slot | None:
         # Leading indentation is a slot only in front of a printed unit or signature mark ("      명", "     (인)").
         if not unit_after:
             return None
-        return _aligned(start, end, value + ("" if following[:1] in "%％" else " "), "단위 앞 빈칸에 저장된 답변을 입력", start, right=True)
+        number = _in_unit(value, _printed_unit(following) if not SIGN.match(following) else None)
+        if number is None:
+            return _unit_mismatch(start, end)
+        return _aligned(start, end, number + ("" if following[:1] in "%％" else " "), "단위 앞 빈칸에 저장된 답변을 입력", start, right=True)
     # A blank follows a short label ("대표자     ", "전화번호 :      "). After a sentence the spaces are layout,
     # and guidance prose in an answer cell is replaced as a whole by the last rule.
     label = before.split("\n")[-1].strip()
@@ -185,8 +265,11 @@ def _gap_slot(text: str, body: int, gap: re.Match, value: str) -> Slot | None:
         return None  # Spaces inside prose, not an input blank.
     left = "" if before[-1] in "(（[［" else " "
     if unit_after:
+        number = _in_unit(value, _printed_unit(following) if not SIGN.match(following) else None)
+        if number is None:
+            return _unit_mismatch(start, end)
         right = "" if following[:1] in "%％" else " "
-        return _aligned(start, end, (left if end - start <= len(value) + 2 else "") + value + right,
+        return _aligned(start, end, (left if end - start <= len(number) + 2 else "") + number + right,
                         "단위 앞 빈칸에 저장된 답변을 입력", start, right=True)
     right = "" if following[:1] in ")）]］,.:;" else " "
     if end - start > len(left + value) + 1:
@@ -272,11 +355,12 @@ def _date_slots(text: str, value: str) -> list[Slot] | str | None:
     groups = [match for pattern in (KOREAN_DATE, DOTTED_DATE) for match in pattern.finditer(text)
               if any(_blank_part(match.group(part), part == "y") for part in "md")
               and all(_blank_part(match.group(part), part == "y") or match.group(part).strip().isdigit() for part in "ymd")]
-    if not groups:
-        return None
     dates = [(y, str(int(m)), str(int(d))) for y, m, d in DATE_VALUE.findall(value) if 1 <= int(m) <= 12 and 1 <= int(d) <= 31]
+    if not groups:
+        return _placeholder_date_slots(text, dates)
     if not dates:
-        return None
+        # "2019. 3.", "19.03.05": a date that cannot fill year, month and day is not crammed into one blank.
+        return SLOT_MISMATCH if PARTIAL_DATE_VALUE.match(value) else None
     groups.sort(key=lambda match: match.start())
     if len(dates) != len(groups):
         return SLOT_MISMATCH
@@ -301,6 +385,19 @@ def _date_slots(text: str, value: str) -> list[Slot] | str | None:
                 lead = "" if start > 0 and text[start - 1] in SPACES else " "
                 slots.append(Slot(start, end, lead + wanted, "날짜의 월·일 빈칸에 입력"))
     return slots
+
+
+def _placeholder_date_slots(text: str, dates: list[tuple[str, str, str]]) -> list[Slot] | str | None:
+    """"2000. 00. 00", "20XX.XX.XX." is an example date: it is replaced as a whole by the answer's date written with
+    the same separators. None when the paragraph has no example date or the answer is not a date."""
+    placeholders = list(PLACEHOLDER_DATE.finditer(text))
+    if not placeholders or not dates:
+        return None
+    if len(placeholders) != len(dates):
+        return SLOT_MISMATCH
+    return [Slot(match.start(), match.end(),
+                 f"{year}{match.group('s1')}{int(month):02d}{match.group('s2')}{int(day):02d}{match.group('end')}",
+                 "예시 날짜를 저장된 날짜로 교체") for match, (year, month, day) in zip(placeholders, dates)]
 
 
 def _blank_part(part: str, year: bool) -> bool:

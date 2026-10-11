@@ -139,6 +139,7 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
     if (reason === 'OVERFLOW') return capacity ? `칸보다 길어 넣지 못함 · 약 ${capacity}자 이내` : '칸보다 길어 넣지 못함'
     if (reason === 'AMBIGUOUS_SLOT') return '빈칸이 여러 개라 위치 확인 불가'
     if (reason === 'SLOT_MISMATCH') return '인쇄된 선택지·날짜와 달라 원본에서 직접 작성'
+    if (reason === 'UNSUPPORTED_CHARACTER') return '이 문서에 쓸 수 없는 문자(이모지·한자·㈜·① 등)가 있어 넣지 못함'
     return reason === 'AUTO_FILL_UNSUPPORTED' ? '자동 기입 미지원' : '입력 위치 확인 불가'
   }
   const changeTypeLabel: Record<ApplicationDocumentMigrationNotice['changes'][number]['changeType'], string> = {

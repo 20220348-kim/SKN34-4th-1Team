@@ -197,6 +197,11 @@ class ApplicationDocumentService(
                 evidence = mapOf("verification" to mapOf("stage" to "ORIGINAL_WITHOUT_ANSWERS"), "pipelineVersion" to pipelineVersion),
                 filledAnswerCount = 0, unfilledAnswers = emptyList()))
         }
+        // Core가 직접 쓰는 HWP·PDF는 붙여 넣은 공백을 정리하고, 그 형식에 쓸 수 없는 문자가 남은 답은 AI 호출 전에 미기입으로 돌려
+        // 한 글자 때문에 문서 전체가 실패하지 않게 한다.
+        val prepared = if (original.format.lowercase() in setOf("hwp", "pdf")) facts.map { it.copy(value = editor.writableText(it.value)) } else facts
+        val unsupportedIds = editor.unsupportedCharacterFactIds(original.format, prepared)
+        if (unsupportedIds.size == facts.size) throw ApplicationDocumentException("APPLICATION_DOCUMENT_NO_WRITABLE_INPUT", UNSUPPORTED_CHARACTER_MESSAGE)
         onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.MAPPING)
         val binding = try {
             documentMapping.ensure(manifest, original.bytes, original.format, captureChange = true, onAiStart = ::beginAiOnce)
@@ -209,12 +214,18 @@ class ApplicationDocumentService(
         // 넣을 칸을 찾지 못한 답변은 필수 여부와 관계없이 미기입 목록으로 알리고, 칸이 확인된 답변만 기입한다.
         val fieldMappings = manifest.fieldMappings(binding)
         val mappedFactIds = fieldMappings.filter { it.writable }.map { it.fieldId }.toSet()
-        val writableFacts = facts.filter { it.id in mappedFactIds }
-        val unfilledAnswers = facts.filterNot { it.id in mappedFactIds }.map {
-            ApplicationDocumentUnfilledAnswer(it.id, it.label, it.value, "INPUT_LOCATION_NOT_FOUND")
+        val writableFacts = prepared.filter { it.id in mappedFactIds && it.id !in unsupportedIds }
+        val unfilledAnswers = facts.mapNotNull { fact ->
+            when {
+                fact.id !in mappedFactIds -> ApplicationDocumentUnfilledAnswer(fact.id, fact.label, fact.value, "INPUT_LOCATION_NOT_FOUND")
+                fact.id in unsupportedIds -> ApplicationDocumentUnfilledAnswer(fact.id, fact.label, fact.value, "UNSUPPORTED_CHARACTER")
+                else -> null
+            }
         }
         if (writableFacts.isEmpty())
-            throw ApplicationDocumentException("APPLICATION_DOCUMENT_NO_WRITABLE_INPUT", "자동 기입할 수 있는 답변이 없어 초안을 생성하지 않았습니다. 원본 문서에서 직접 작성해 주세요.")
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_NO_WRITABLE_INPUT",
+                if (unsupportedIds.any { it in mappedFactIds }) UNSUPPORTED_CHARACTER_MESSAGE
+                else "자동 기입할 수 있는 답변이 없어 초안을 생성하지 않았습니다. 원본 문서에서 직접 작성해 주세요.")
         val writableFactIds = writableFacts.map(ApplicationDocumentFact::id).toSet()
         val writableBindings = binding.bindings.filter { it.factId in writableFactIds }
         val inspection = if (original.format.lowercase() in setOf("pdf", "hwp")) editor.inspect(original.bytes, original.format) else null
@@ -278,7 +289,7 @@ class ApplicationDocumentService(
             filled
         } else output
         val unfilled = unfilledAnswers + skipped.map { item ->
-            val fact = writableFacts.single { it.id == item.factId }
+            val fact = facts.single { it.id == item.factId }
             ApplicationDocumentUnfilledAnswer(fact.id, fact.label, fact.value,
                 if (item.reason == "UNRESOLVED") "INPUT_LOCATION_NOT_FOUND" else item.reason, item.capacity)
         }
@@ -315,5 +326,10 @@ class ApplicationDocumentService(
     private fun <T> callMcp(block: () -> T): T = try { block() }
     catch (error: ApplicationDocumentMcpException) {
         throw ApplicationDocumentException(error.code, requireNotNull(error.message), error.cause)
+    }
+
+    private companion object {
+        const val UNSUPPORTED_CHARACTER_MESSAGE = "답변에 이 문서 형식에 쓸 수 없는 문자(이모지·한자·일부 기호)가 있어 초안을 생성하지 않았습니다. " +
+            "해당 문자를 바꾸거나 원본 문서에서 직접 작성해 주세요."
     }
 }

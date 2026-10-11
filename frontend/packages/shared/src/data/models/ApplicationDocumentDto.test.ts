@@ -14,7 +14,7 @@ test('migration and availability remain explicit producer contracts', () => {
 })
 
 test('preserves current producer overflow, slot mismatch and remaining example metadata', () => {
-  for (const reason of ['OVERFLOW', 'AMBIGUOUS_SLOT', 'SLOT_MISMATCH']) {
+  for (const reason of ['OVERFLOW', 'AMBIGUOUS_SLOT', 'SLOT_MISMATCH', 'UNSUPPORTED_CHARACTER']) {
     const updated = { ...file, remainingExampleCount: 2, unfilledAnswers: [{ ...file.unfilledAnswers[0], reason, capacity: 12 }] }
     expect(applicationDocumentsSchema.parse([updated])[0]).toEqual(updated)
   }

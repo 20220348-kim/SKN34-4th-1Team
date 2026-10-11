@@ -44,7 +44,9 @@ class BizInfoAttachmentClientTest {
         assertEquals(pageUrl, result.sourcePageUrl)
         assertEquals(1, result.files.size)
         assertArrayEquals(byteArrayOf(1,2,3), result.files.single().bytes)
-        assertTrue(result.warnings.isNotEmpty())
+        // 모든 첨부를 받았으면 빠진 범위 경고는 비어 있고, 수집 범위 안내는 경고와 따로 옵니다.
+        assertEquals(emptyList<String>(), result.warnings)
+        assertTrue(result.collectionNotice!!.contains("직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집"))
         server.verify()
     }
 
@@ -58,7 +60,9 @@ class BizInfoAttachmentClientTest {
         assertEquals(1, result.files.size)
         assertEquals("XLSX", result.files.single().format)
         assertArrayEquals(byteArrayOf(1,2,3), result.files.single().bytes)
-        assertTrue(result.warnings.isNotEmpty())
+        // 모든 첨부를 받았으면 빠진 범위 경고는 비어 있고, 수집 범위 안내는 경고와 따로 옵니다.
+        assertEquals(emptyList<String>(), result.warnings)
+        assertTrue(result.collectionNotice!!.contains("직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집"))
         server.verify()
     }
 

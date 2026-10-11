@@ -200,6 +200,7 @@ class ApplicationPreparationApiIntegrationTest {
                     bytes,
                 )),
                 listOf("과기정통부 원문 대조 필요"),
+                collectionNotice = "과기정통부 수집 범위 안내",
             ),
         )
         val hwpBytes = requireNotNull(javaClass.getResourceAsStream("/applicationpreparation/checkbox-form.hwp")).readBytes()
@@ -393,7 +394,8 @@ class ApplicationPreparationApiIntegrationTest {
             .andExpect(jsonPath("$.items[0].sourceCode").value("MSIT"))
             .andExpect(jsonPath("$.items[0].sourceProgramId").value(MSIT_PROGRAM_ID))
             .andExpect(jsonPath("$.items[0].sourceUrl").value(MSIT_SOURCE_URL))
-            .andExpect(jsonPath("$.warnings[0]").value("과기정통부 원문 대조 필요"))
+            .andExpect(jsonPath("$.warnings[0]").value("과기정통부 수집 범위 안내"))
+            .andExpect(jsonPath("$.warnings[1]").value("과기정통부 원문 대조 필요"))
         verify(msitAttachments).collect("MSIT", MSIT_PROGRAM_ID, MSIT_SOURCE_URL)
     }
 
@@ -939,6 +941,80 @@ class ApplicationPreparationApiIntegrationTest {
             mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(other)).andExpect(status().isNotFound())
             assertEquals("HWPLIB_VERIFIED", jdbc.queryForObject("SELECT JSON_UNQUOTE(JSON_EXTRACT(placements_json, '$.mcp.verification.stage')) FROM application_document_file WHERE id = ?", String::class.java, fileId))
         }
+    }
+
+    @Test
+    fun leavesOutHwpAnswersHwplibCannotWriteBeforeCallingAiAndFoldsPastedSpaces() {
+        val native = kr.dogfoot.hwplib.tool.blankfilemaker.BlankFileMaker.make()
+        repeat(2) {
+            native.bodyText.sectionList[0].addNewParagraph().apply {
+                createText(); text.addString("____"); createCharShape(); charShape.addParaCharShape(0, 0)
+            }
+        }
+        val original = java.io.ByteArrayOutputStream().also { kr.dogfoot.hwplib.writer.HWPWriter.toStream(native, it) }.toByteArray()
+        val targets = documentEditor.inspect(original, "hwp").targets.filter { it.text == "____" }
+        assertEquals(2, targets.size)
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwp", "HWP", original)), emptyList()))
+        `when`(documentParser.parse(original, "HWP")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        val discovered = json.readValue(resource("discovery-contract-response.json"), AiApplicationFormDiscoveryPayload::class.java)
+        val overview = discovered.forms.single().sections.single().fields.single()
+        val slogan = overview.copy(fieldKey = "slogan", label = "홍보 문구", guidance = "홍보 문구를 입력합니다.", required = false, evidenceQuote = "지원 대상")
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscoveryRequest())).thenReturn(discovered.copy(forms = listOf(
+            discovered.forms.single().copy(sections = listOf(discovered.forms.single().sections.single().copy(fields = listOf(overview, slogan))))
+        )))
+        stubDocumentMapping(documentMcp)
+        val mappingFallback = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwp", scope = "test", fields = emptyList())
+        `when`(documentMcp.map(any(AiDocumentMappingRequest::class.java) ?: mappingFallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentMappingRequest>(0)
+            val placements = listOf(ApplicationDocumentPlacement("business-plan:business-overview", targets[0].id),
+                ApplicationDocumentPlacement("business-plan:slogan", targets[1].id))
+            AiDocumentMappingPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, "native-map-v2", "test-stub",
+                placements, targets.map { it.id }, mapOf("sourceSha256" to request.sourceSha256,
+                    "targets" to targets.map { mapOf("targetId" to it.id, "editable" to true, "currentText" to "") }))
+        }
+        val fallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "hwp", answerRevision = 1, facts = emptyList(), scope = "test")
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            // 이모지가 있는 답은 AI에 보내지 않고, 붙여 넣은 탭·NBSP는 공백으로 정리해 보낸다.
+            assertEquals(listOf("business-plan:business-overview" to "가상 & 연구소"), request.facts.map { it.id to it.value })
+            assertEquals(listOf("business-plan:business-overview"), request.bindings.map { it.factId }.distinct())
+            val op = sortedMapOf<String, Any?>("targetId" to targets[0].id, "operation" to "replace_range", "expectedText" to "____",
+                "start" to 0, "end" to 4, "valueRef" to "business-plan:business-overview", "box" to null, "reason" to "공식 입력란", "stylePolicy" to "preserve")
+            val plan = sortedMapOf<String, Any?>("sourceSha256" to request.sourceSha256, "mapVersion" to "native-map-v2",
+                "answerRevision" to request.answerRevision, "operations" to listOf(op), "scopeTargetIds" to targets.map { it.id }, "unresolvedTargets" to emptyList<String>())
+            fun hash(bytes: ByteArray) = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val planHash = hash(json.writeValueAsBytes(plan))
+            plan["planHash"] = planHash
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, request.answerRevision,
+                java.util.Base64.getEncoder().encodeToString(original), hash(original), planHash, "native-map-v2", "kr.dogfoot/hwplib@1.1.11",
+                mapOf("stage" to "HWPLIB_REQUIRED"), listOf(ApplicationDocumentPlacement("business-plan:business-overview", targets[0].id)), emptyMap(), plan)
+        }
+        val discovery = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}""")).andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discovery.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(mapOf("expectedRevision" to 1, "facts" to listOf(
+                mapOf("fieldKey" to "business-overview", "status" to "PROVIDED", "value" to "가상\t&\u00a0연구소", "sourceText" to "가상 & 연구소"),
+                mapOf("fieldKey" to "slogan", "status" to "PROVIDED", "value" to "함께 성장해요 🚀", "sourceText" to "함께 성장해요 🚀"))))))
+            .andExpect(status().isOk())
+        val generated = mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2}""")).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].filledAnswerCount").value(1))
+            .andExpect(jsonPath("$[0].unfilledAnswers[0].fieldId").value("business-plan:slogan"))
+            .andExpect(jsonPath("$[0].unfilledAnswers[0].value").value("함께 성장해요 🚀"))
+            .andExpect(jsonPath("$[0].unfilledAnswers[0].reason").value("UNSUPPORTED_CHARACTER"))
+            .andReturn().response
+        val fileId = json.readTree(generated.contentAsString).path(0).path("id").asLong()
+        val downloaded = mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(owner)).andExpect(status().isOk()).andReturn().response.contentAsByteArray
+        val written = documentEditor.inspect(downloaded, "hwp").targets
+        assertEquals("가상 & 연구소", written.single { it.id == targets[0].id }.text)
+        assertEquals("____", written.single { it.id == targets[1].id }.text)
     }
 
     @org.junit.jupiter.params.ParameterizedTest

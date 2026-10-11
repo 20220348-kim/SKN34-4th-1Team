@@ -189,6 +189,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       ? `칸보다 길어 넣지 못했어요.${answer.capacity ? ` 약 ${answer.capacity}자 이내로 줄여 주세요.` : ''}`
       : answer.reason === 'AMBIGUOUS_SLOT' ? '빈칸이 여러 개라 위치를 확인하지 못했어요. 원본 파일에서 직접 작성해 주세요.'
         : answer.reason === 'SLOT_MISMATCH' ? '인쇄된 선택지·날짜와 달라요. 원본 파일에서 직접 작성해 주세요.'
+        : answer.reason === 'UNSUPPORTED_CHARACTER' ? '이 문서에 쓸 수 없는 문자(이모지·한자·㈜·① 등)가 있어요. 문자를 바꾸거나 원본 파일에서 직접 작성해 주세요.'
           : '원본 파일에서 직접 작성해 주세요.'}</Notice><Text style={styles.body}>{answer.value}</Text>
       <Button label="답변 복사" accessibilityLabel={`${answer.fieldLabel} 답변 복사`} variant="ghost" onPress={() => void Clipboard.setStringAsync(answer.value).then(() => setNotice('답변을 복사했어요.')).catch(() => setError('답변을 복사하지 못했어요.'))} /></View>)}
     <Button label="초안 다운로드" accessibilityLabel={`초안 다운로드: ${file.fileName}`} disabled={busy !== null} busy={busy === `save:${file.id}`} onPress={() => void download(file)} />

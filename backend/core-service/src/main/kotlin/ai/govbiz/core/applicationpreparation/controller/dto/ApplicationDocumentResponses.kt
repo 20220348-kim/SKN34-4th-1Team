@@ -3,7 +3,10 @@ package ai.govbiz.core.applicationpreparation.controller.dto
 import jakarta.validation.constraints.Min
 
 data class GenerateApplicationDocumentsRequest(@field:Min(1) val expectedRevision: Long)
-/** reason: INPUT_LOCATION_NOT_FOUND, AUTO_FILL_UNSUPPORTED, OVERFLOW(capacity: 칸에 들어가는 대략의 글자 수), AMBIGUOUS_SLOT, SLOT_MISMATCH */
+/**
+ * reason: INPUT_LOCATION_NOT_FOUND, AUTO_FILL_UNSUPPORTED, OVERFLOW(capacity: 칸에 들어가는 대략의 글자 수), AMBIGUOUS_SLOT, SLOT_MISMATCH,
+ * UNSUPPORTED_CHARACTER(HWP·PDF에 쓸 수 없는 이모지·한자·일부 기호가 있는 답)
+ */
 data class ApplicationDocumentUnfilledAnswerResponse(val fieldId: String, val fieldLabel: String, val value: String, val reason: String, val capacity: Int? = null)
 data class ApplicationDocumentResponse(
     val id: Long,

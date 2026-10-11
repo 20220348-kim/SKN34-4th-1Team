@@ -254,6 +254,27 @@ class ApplicationDocumentEditorTest {
     }
 
     @Test
+    fun foldsPastedSpacesAndFindsAnswersThatHwpOrPdfCannotWriteBeforeGeneration() {
+        // 붙여 넣은 NBSP·전각 공백·탭·CR·폭 없는 공백만 정리하고 보이는 글자는 그대로 둡니다.
+        assertEquals("가상 기업 연구소\n둘째 줄 끝", editor.writableText("가상 기업　연구소\r\n둘째\t줄​ 끝"))
+        assertEquals("㈜가상기업 ①", editor.writableText("㈜가상기업 ①"))
+
+        fun facts(vararg values: String) = values.mapIndexed { index, value -> ApplicationDocumentFact("f$index", "질문 $index", editor.writableText(value)) }
+        val hwp = facts("가상\t기업\r\n연구소", "개발자 👩‍💻", "제어\u0001문자", "㈜가상기업 大韓 ①")
+        assertEquals(setOf("f1", "f2"), editor.unsupportedCharacterFactIds("HWP", hwp))
+        val pdf = facts("가상 기업\n○ ■ ※ → · ㆍ …", "㈜가상기업", "株式會社", "회의실 30㎡", "😀", "Café", "3∼5명")
+        assertEquals(setOf("f1", "f2", "f3", "f4", "f5", "f6"), editor.unsupportedCharacterFactIds("pdf", pdf))
+        assertEquals(emptySet<String>(), editor.unsupportedCharacterFactIds("hwpx", pdf))
+
+        // 검사를 통과한 답은 실제 PDF에 쓰이고, 걸러 낸 답은 그대로 쓰면 문서 전체가 실패하던 답입니다.
+        val original = PDDocument().use { doc -> doc.addPage(PDPage()); ByteArrayOutputStream().also { doc.save(it) }.toByteArray() }
+        val box = ApplicationDocumentBox(.1f, .1f, .8f, .3f)
+        val written = editor.fill(original, "PDF", listOf(pdf[0]), listOf(ApplicationDocumentPlacement("f0", "page-0", box)))
+        Loader.loadPDF(written).use { doc -> assertEquals(pdf[0].value, (doc.documentCatalog.acroForm.fields.single() as PDTextField).value) }
+        assertThrows(ApplicationDocumentException::class.java) { editor.fill(original, "PDF", listOf(pdf[1]), listOf(ApplicationDocumentPlacement("f1", "page-0", box))) }
+    }
+
+    @Test
     fun fillsHwpAndReopensAsAnEditableHwpWithOriginalParagraphs() {
         val file = BlankFileMaker.make()
         val paragraph = file.bodyText.sectionList[0].addNewParagraph()

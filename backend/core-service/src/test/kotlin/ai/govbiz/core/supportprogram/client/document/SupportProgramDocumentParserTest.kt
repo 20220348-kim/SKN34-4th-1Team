@@ -8,6 +8,11 @@ import java.nio.ByteOrder
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory
+import java.awt.image.BufferedImage
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.poi.hpsf.PropertySetFactory
 import org.apache.poi.poifs.filesystem.POIFSFileSystem
@@ -156,6 +161,45 @@ class SupportProgramDocumentParserTest {
             ByteArrayOutputStream().also { pdf.save(it) }.toByteArray()
         }
         assertEquals(Reason.UNSUPPORTED, assertThrows(SupportProgramDocumentException::class.java) { mapper.parse(bytes, "PDF") }.reason)
+    }
+
+    @Test
+    fun keepsBlankAndDividerPagesButStillRefusesImageOnlyPages() {
+        val text = "This official notice page has enough readable text for the parser to keep it."
+        fun document(vararg pages: (PDDocument) -> PDPage): ByteArray = PDDocument().use { pdf ->
+            pages.forEach { pdf.addPage(it(pdf)) }
+            ByteArrayOutputStream().also { pdf.save(it) }.toByteArray()
+        }
+        fun textPage(value: String): (PDDocument) -> PDPage = { pdf ->
+            PDPage().also { page ->
+                PDPageContentStream(pdf, page).use { content ->
+                    content.beginText()
+                    content.setFont(PDType1Font(Standard14Fonts.FontName.HELVETICA), 12f)
+                    content.newLineAtOffset(72f, 700f)
+                    content.showText(value)
+                    content.endText()
+                }
+            }
+        }
+        val blankPage: (PDDocument) -> PDPage = { PDPage() }
+        val imagePage: (PDDocument) -> PDPage = { pdf ->
+            PDPage().also { page ->
+                val image = LosslessFactory.createFromImage(pdf, BufferedImage(40, 40, BufferedImage.TYPE_INT_RGB))
+                PDPageContentStream(pdf, page).use { it.drawImage(image, 72f, 600f) }
+            }
+        }
+
+        // 빈 쪽과 짧은 구분 쪽은 잃을 내용이 없어 받아들이고, 쪽 번호는 원본 그대로 둡니다.
+        val withBlank = document(textPage(text), blankPage, textPage("Annex 1"), textPage(text))
+        val blocks = mapper.parse(withBlank, "PDF")
+        assertEquals(listOf("PDF page 1 part 1", "PDF page 3 part 1", "PDF page 4 part 1"), blocks.map { it.locator })
+        assertEquals("Annex 1", blocks[1].text)
+        assertEquals(listOf(1, 3, 4), mapper.parseEvidence(withBlank, "PDF").map { it.locator.substringAfter("PDF page ").substringBefore(" ").toInt() }.distinct())
+
+        // 그림만 있고 글자가 없는 쪽은 스캔일 수 있어 문서를 거부합니다.
+        val withScan = document(textPage(text), imagePage, textPage(text))
+        assertEquals(Reason.UNSUPPORTED, assertThrows(SupportProgramDocumentException::class.java) { mapper.parse(withScan, "PDF") }.reason)
+        assertEquals(Reason.UNSUPPORTED, assertThrows(SupportProgramDocumentException::class.java) { mapper.parseEvidence(withScan, "PDF") }.reason)
     }
 
     @Test

@@ -128,12 +128,13 @@ export type ApplicationContentVersion = {
 }
 
 /** OVERFLOW: 칸보다 길어 넣지 않은 답(capacity: 그 칸에 들어가는 대략의 글자 수), AMBIGUOUS_SLOT: 한 칸에 빈칸이 여럿이라
- * 위치를 정하지 못한 답, SLOT_MISMATCH: 인쇄된 선택지·날짜와 맞지 않는 답 */
+ * 위치를 정하지 못한 답, SLOT_MISMATCH: 인쇄된 선택지·날짜와 맞지 않는 답,
+ * UNSUPPORTED_CHARACTER: HWP·PDF에 쓸 수 없는 문자(이모지·한자·㈜·① 같은 일부 기호)가 있는 답 */
 export type ApplicationDocumentUnfilledAnswer = {
   fieldId: string
   fieldLabel: string
   value: string
-  reason: 'INPUT_LOCATION_NOT_FOUND' | 'AUTO_FILL_UNSUPPORTED' | 'OVERFLOW' | 'AMBIGUOUS_SLOT' | 'SLOT_MISMATCH'
+  reason: 'INPUT_LOCATION_NOT_FOUND' | 'AUTO_FILL_UNSUPPORTED' | 'OVERFLOW' | 'AMBIGUOUS_SLOT' | 'SLOT_MISMATCH' | 'UNSUPPORTED_CHARACTER'
   capacity?: number | null
 }
 export type ApplicationDocument = {

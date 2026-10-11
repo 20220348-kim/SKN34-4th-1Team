@@ -374,8 +374,13 @@ V16은 문항별 확인 사실과 AI 해석 실행의 요청 키·입력/출력 
 각 제공처의 공식 상세에 직접 연결된 PDF/HWP/HWPX/DOCX/XLSX만 읽고 제공처와 원문 호스트·공고 ID가 일치하는지 다시 검증합니다.
 K-Startup은 API의 `detl_pg_url`과 같은 공고 ID의 모집중·마감 상세만, 충남은 API 제목·본문과 단 하나로 일치하는 공식 게시판
 상세만 사용합니다. 사용자 임의 URL·스캔 PDF/OCR·ZIP 내부 탐색·암호화 문서는 지원하지 않습니다.
+PDF는 글자가 10자 미만인데 그림이 있는 쪽(스캔일 수 있음)이 있으면 그 파일을 읽지 않고, 그림도 없는 빈 쪽·짧은 구분 쪽은
+건너뛰거나 그대로 읽습니다(내용 스트림이 없는 빈 쪽도 쪽 번호를 원본대로 유지).
 같은 공고에 읽을 수 있는 공식 문서가 있으면 크기 제한을 넘거나 텍스트를 추출할 수 없는 첨부는 제외 사유와 파일명을
 `coverageWarnings`에 남기고 분석을 계속합니다. 공고 하나의 모든 지원 형식 첨부가 제외되면 기존처럼 기술 실패로 종료합니다.
+`coverageWarnings`에는 실제로 빠진 범위(건너뛴·읽지 못한 첨부)만 담습니다. 제공처 수집기의 "직접 연결한 첨부만 수집" 같은 고정 안내는
+`SupportProgramAttachments.collectionNotice`로 따로 두어, 모든 첨부를 읽은 실행이 누락 경고를 띄우거나 AI에 누락으로 전달되지 않게 합니다.
+양식 찾기 화면은 이 안내를 경고 목록 앞에 그대로 보여 줍니다.
 중복 지원 검토 한 실행에서 보존하는 원본은 최대 12개이며, 초과 조합은 일부만 분석하지 않고 `SOURCE_TOO_LARGE`로 종료합니다.
 원문·입력·결과는 실행마다 보존하며 기존 검색 Qdrant 색인과 분리됩니다. 공식 공고 상세 주소와 실제로 수집한 첨부 주소도
 구분해 보존하고, 자동 수집 근거를 사람 검수 완료로 표시하지 않습니다.
@@ -1299,8 +1304,12 @@ Repository의 행 잠금·실행권 갱신 transaction과 공개 오류 계약�
 `ApplicationFormManifest.fieldMappings(snapshot)`은 공식 `sectionKey:fieldKey` 문항과 FILE binding에서
 `ApplicationFieldMapping`을 계산한다. `ApplicationDocumentService`는 이 업무 projection의 writable로
 기입/미기입 답변을 분리하며 필수 binding 누락도 생성을 중단하지 않고 `INPUT_LOCATION_NOT_FOUND` 미기입 답변으로 알린다.
+HWP·PDF는 AI 요청 전에 `ApplicationDocumentEditor.writableText`로 붙여 넣은 공백·탭·CR·서식 문자만 정리하고,
+`unsupportedCharacterFactIds`가 그 형식에 쓸 수 없는 문자(HWP: hwplib이 깨뜨리는 보조 평면 문자·제어 문자, PDF: 입력란 글꼴
+나눔고딕에 없는 한자·이모지·㈜·①·㎡ 등)가 남은 답을 골라 AI 요청에서 빼고 `UNSUPPORTED_CHARACTER`로 알립니다. 이 답 하나 때문에
+문서 전체가 실패하지 않으며, 모든 답이 해당하면 매핑 AI 호출 전에 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT`으로 이유를 알립니다.
 AI Service가 칸 규칙·넘침 검사로 남긴 답(`skippedFacts`)과 PDF 상자에 들어가지 않아 `fillPdfFitting`이 뺀 답은 나머지 답으로 만든
-초안과 함께 미기입 답변(`reason`: `OVERFLOW`·`AMBIGUOUS_SLOT`·`SLOT_MISMATCH`·`INPUT_LOCATION_NOT_FOUND`, 넘침이면 `capacity`)으로
+초안과 함께 미기입 답변(`reason`: `OVERFLOW`·`AMBIGUOUS_SLOT`·`SLOT_MISMATCH`·`UNSUPPORTED_CHARACTER`·`INPUT_LOCATION_NOT_FOUND`, 넘침이면 `capacity`)으로
 저장·응답하고, HWP는 `applyHwpPlan`이 계획의 `skippedFacts`·`literal`을 함께 검증합니다. AI Service가 답이 없는 표·칸에 남긴
 작성 예시의 칸 수(`remainingExampleCount`, 0..3000)는 파일 메타데이터 `answerSummary`에 저장해 문서 목록 응답으로 돌려주며, 이전 초안은 0입니다.
 label/required/status와 targetId/box 참조만 전달하며 raw native 지도·버전·scope는 복제하거나 저장하지 않는다.

@@ -41,7 +41,9 @@ class CnTradeNoticeAttachmentClientTest {
         assertEquals("신청서.pdf", result.files.single().fileName)
         assertEquals("PDF", result.files.single().format)
         assertArrayEquals(byteArrayOf(4, 5, 6), result.files.single().bytes)
-        assertTrue(result.warnings.single().contains("교차 검증"))
+        // 수집 범위 안내는 빠진 범위 경고와 따로 옵니다.
+        assertEquals(emptyList<String>(), result.warnings)
+        assertTrue(result.collectionNotice!!.contains("교차 검증"))
         server.verify()
     }
 
