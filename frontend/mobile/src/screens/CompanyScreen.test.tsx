@@ -87,3 +87,14 @@ test('partner settings load after company registration and are absent from the r
   await view.findByLabelText('협업·파트너 설정 수정')
   expect(apiRequest).toHaveBeenCalledWith('/api/v1/me/company/partner-profile', expect.objectContaining({ accessToken: 'test-token' }))
 })
+
+test('the signed-out company guide points to the current Menu and My Profile entry', () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null } as unknown as ReturnType<typeof useAuth>)
+  const login = jest.fn()
+  const view = render(<CompanyScreen onLogin={login} />)
+  expect(view.getByText('메뉴 → 내 프로필에서 로그인한 뒤 기업 정보를 등록해 주세요.')).toBeTruthy()
+  expect(view.queryByText(/전체 →/)).toBeNull()
+  fireEvent.press(view.getByRole('button', { name: '로그인하기' }))
+  expect(login).toHaveBeenCalledTimes(1)
+  expect(apiRequest).not.toHaveBeenCalled()
+})

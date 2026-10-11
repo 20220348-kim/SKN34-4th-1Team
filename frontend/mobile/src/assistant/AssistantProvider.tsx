@@ -25,7 +25,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const handle = useRef<AssistantHandle>(null)
   const available = auth.status === 'signedIn' && auth.session !== null
   const owner = available ? `${auth.session!.account.email}:${auth.session!.accessToken}` : null
-  const origin = useMemo(() => assistantOrigin(pathname, params), [pathname, params.sourceCode, params.sourceProgramId])
+  const origin = useMemo(() => assistantOrigin(pathname, params), [pathname, params.sourceCode, params.sourceProgramId, params.management, params.step, params.runId])
   const block = useCallback(() => {
     setBlocked(value => value + 1)
     let released = false

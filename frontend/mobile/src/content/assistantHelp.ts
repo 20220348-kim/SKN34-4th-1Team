@@ -1,4 +1,5 @@
 import type { AssistantHelpEntryInput } from '@govbiz/shared/domain/repositories/AssistantRepository'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 
 export type AssistantHelpTopic = '검색' | '관심 공고' | '리포트' | '신청문서' | '협업' | '계정'
 export type MobileAssistantHelp = AssistantHelpEntryInput & { topic: AssistantHelpTopic; companyAction?: boolean; contextual?: 'program-question' }
@@ -24,32 +25,32 @@ export const assistantHelpEntries: MobileAssistantHelp[] = [
     summary: '리포트의 수신 설정에서 알림 설정을 열어 이메일과 기기 앱 알림을 각각 선택하세요.', body: ['리포트의 수신 설정을 펼치고 알림 설정을 누르세요. 관심 공고 마감 알림과 리포트 이메일·앱 알림을 설정할 수 있어요. 저장 결과와 기기의 알림 권한을 함께 확인하세요.'],
     limitation: '앱 알림을 켜도 기기 권한이나 서버 발송 설정이 준비되지 않으면 받을 수 없어요.', audience: 'member', status: 'available', action: { label: '리포트 열기', to: '/app/reports' } },
   { id: 'mobile-application-documents', topic: '신청문서', title: '신청문서 초안 작성', question: '신청문서 초안은 어떻게 만드나요?',
-    summary: '공고·공식 양식 선택, 문항 답변, 검토를 거쳐 초안을 생성해요.', body: ['메뉴의 신청 문서에서 새 신청을 시작하세요. 공고와 공식 양식을 선택하고 문항별 답변을 저장한 뒤 검토 화면에서 직접 초안 생성을 요청하세요.'],
-    limitation: '생성 파일은 초안이에요. 최종 제출은 공식 신청 경로에서 직접 진행하세요.', audience: 'member', status: 'available', action: { label: '새 신청 시작', to: '/app/application-preparations/new' } },
+    summary: '공고·공식 양식 선택, 문항 답변, 검토를 거쳐 초안을 생성해요.', body: [`메뉴의 ${screenTitles.applicationPreparations}에서 ${screenTitles.applicationPreparationNew}를 시작하세요. 공고와 공식 양식을 선택하고 문항별 답변을 저장한 뒤 검토 화면에서 직접 초안 생성을 요청하세요.`],
+    limitation: '생성 파일은 초안이에요. 최종 제출은 공식 신청 경로에서 직접 진행하세요.', audience: 'member', status: 'available', action: { label: `${screenTitles.applicationPreparationNew} 시작`, to: '/app/application-preparations/new' } },
   { id: 'mobile-document-job', topic: '신청문서', title: '문서 생성 결과 확인', question: '문서 생성 결과를 확인하지 못했어요.',
-    summary: '기존 작업 상태를 먼저 확인하고 같은 요청을 중복 생성하지 마세요.', body: ['신청 문서의 결과 화면에서 작업 상태 확인을 이용하세요. 접수 여부가 불명확하면 보관된 요청으로 기존 작업을 확인하고, 완료된 파일은 초안 다운로드로 받으세요.'],
-    limitation: '도우미에서 문서 생성을 대신 실행하지 않아요.', audience: 'member', status: 'available', action: { label: '신청문서 목록 열기', to: '/app/application-preparations' } },
+    summary: '기존 작업 상태를 먼저 확인하고 같은 요청을 중복 생성하지 마세요.', body: [`${screenTitles.applicationPreparationDocuments} 화면에서 작업 상태 확인을 이용하세요. 접수 여부가 불명확하면 보관된 요청으로 기존 작업을 확인하고, 완료된 파일은 초안 다운로드로 받으세요.`],
+    limitation: '도우미에서 문서 생성을 대신 실행하지 않아요.', audience: 'member', status: 'available', action: { label: `${screenTitles.applicationPreparations} 열기`, to: '/app/application-preparations' } },
   { id: 'mobile-document-answers', topic: '신청문서', title: '신청문서 답변 저장과 검토', question: '작성한 답변은 어떻게 저장하고 검토하나요?',
-    summary: '답변 작성 화면의 저장 상태를 확인하고 필수 문항을 검토한 뒤 초안을 생성하세요.', body: ['입력한 답변은 자동 저장합니다. 저장 오류나 충돌이 있으면 현재 입력을 유지한 채 저장 상태를 먼저 확인하세요. 모르는 내용은 미정으로 표시하고, 검토 화면에서 필수 입력과 저장된 답변을 확인하세요.'],
-    limitation: '도우미가 빈 답변을 기업 사실로 만들어 채우거나 문서를 자동 제출하지 않아요.', audience: 'member', status: 'available', action: { label: '신청문서 목록 열기', to: '/app/application-preparations' } },
+    summary: `${screenTitles.applicationPreparationEditor} 화면의 저장 상태를 확인하고 필수 문항을 검토한 뒤 초안을 생성하세요.`, body: ['입력한 답변은 자동 저장합니다. 저장 오류나 충돌이 있으면 현재 입력을 유지한 채 저장 상태를 먼저 확인하세요. 모르는 내용은 미정으로 표시하고, 검토 화면에서 필수 입력과 저장된 답변을 확인하세요.'],
+    limitation: '도우미가 빈 답변을 기업 사실로 만들어 채우거나 문서를 자동 제출하지 않아요.', audience: 'member', status: 'available', action: { label: `${screenTitles.applicationPreparations} 열기`, to: '/app/application-preparations' } },
   { id: 'mobile-online-form', topic: '신청문서', title: '구글폼 입력 도우미', question: '구글폼 제출도 자동으로 되나요?',
     summary: '저장된 답변을 복사하거나 내보내고 공식 구글폼에서 직접 제출해요.', body: ['구글폼 입력 도우미에서 저장된 답변을 확인하고 복사·TXT 내보내기를 이용하세요. 공식 구글폼을 열어 입력 내용을 확인한 뒤 직접 제출하세요.'],
     limitation: '지원되는 구글폼 신청 경로에서만 제공하며 자동 제출하지 않아요.', audience: 'member', status: 'available', action: null },
-  { id: 'mobile-combination-review', topic: '신청문서', title: '중복 지원 검토', question: '두 공고의 중복 지원은 어떻게 검토하나요?',
-    summary: '메뉴의 중복 검토에서 공고를 선택하고 검토를 요청하세요.', body: ['검토 결과의 근거와 확인 필요 항목을 함께 읽으세요. 최종 중복 지원·수혜 허용 여부는 공식 공고와 담당 기관에 확인하세요.'],
-    limitation: '검토 결과는 최종 승인이나 법적 판단이 아니에요.', audience: 'member', status: 'available', action: { label: '중복 검토 열기', to: '/app/combination-reviews' } },
+  { id: 'mobile-combination-review', topic: '신청문서', title: screenTitles.combinationReviews, question: '두 공고의 중복 지원은 어떻게 검토하나요?',
+    summary: `메뉴의 ${screenTitles.combinationReviews}에서 공고를 선택하고 검토를 요청하세요.`, body: ['검토 결과의 근거와 확인 필요 항목을 함께 읽으세요. 최종 중복 지원·수혜 허용 여부는 공식 공고와 담당 기관에 확인하세요.'],
+    limitation: '검토 결과는 최종 승인이나 법적 판단이 아니에요.', audience: 'member', status: 'available', action: { label: `${screenTitles.combinationReviews} 열기`, to: '/app/combination-reviews' } },
   { id: 'mobile-partners', topic: '협업', title: '파트너와 제안 관리', question: '파트너와 받은 제안은 어디서 보나요?',
-    summary: '메뉴의 모집글과 파트너 관리에서 협업을 이어가세요.', body: ['모집글에서 함께할 파트너를 찾아보세요. 파트너 관리에서 받은 제안·보낸 제안과 내 모집글을 확인할 수 있어요.'],
+    summary: `메뉴의 ${screenTitles.publicPartners}과 ${screenTitles.partnerManagement}에서 협업을 이어가세요.`, body: [`${screenTitles.publicPartners}에서 함께할 파트너를 찾아보세요. ${screenTitles.partnerManagement}에서 받은 제안·보낸 제안과 내 모집글을 확인할 수 있어요.`],
     limitation: '모집글 작성 등 기업 기능은 기업 등록 상태를 확인해요.', audience: 'member', status: 'available', action: { label: '받은 제안 열기', to: '/app/proposals' } },
   { id: 'mobile-company-profile', topic: '계정', title: '기업 정보와 계정 관리', question: '기업 정보는 어디서 수정하나요?',
-    summary: '내 계정 또는 리포트에서 기업 정보를 열어 등록·수정할 수 있어요.', body: ['메뉴의 내 계정에서 이메일과 로그인 정보를 확인하세요. 기업 정보에서 사업자 조회와 기업 프로필 등록·수정을 진행하세요.'],
-    limitation: '도우미가 계정이나 기업 정보를 임의로 변경하지 않아요.', audience: 'member', status: 'available', action: { label: '기업 정보 열기', to: '/app/profile' }, companyAction: true },
+    summary: `${screenTitles.profile} 또는 리포트에서 기업 프로필을 열어 등록·수정할 수 있어요.`, body: [`메뉴의 ${screenTitles.profile}에서 이메일과 로그인 정보를 확인하세요. ${screenTitles.companyProfile}에서 사업자 조회와 기업 정보 등록·수정을 진행하세요.`],
+    limitation: '도우미가 계정이나 기업 정보를 임의로 변경하지 않아요.', audience: 'member', status: 'available', action: { label: `${screenTitles.companyProfile} 열기`, to: '/app/profile' }, companyAction: true },
   { id: 'mobile-company-registration', topic: '계정', title: '기업 정보 등록', question: '기업 등록은 어떻게 하나요?',
-    summary: '기업 정보에서 사업자 정보를 조회하고 기업 프로필을 등록하세요.', body: ['내 계정이나 리포트에서 기업 정보를 열고 사업자 조회 결과를 확인하세요. 등록·수정 결과를 저장한 뒤 맞춤 리포트 등 기업 기능을 이용하세요.'],
-    limitation: '사업자 상태에 따라 등록 가능 여부를 확인하며 조회 실패를 임의 기업 정보로 대체하지 않아요.', audience: 'member', status: 'available', action: { label: '기업 정보 열기', to: '/app/profile' }, companyAction: true },
+    summary: '기업 프로필에서 사업자 정보를 조회하고 기업 정보를 등록하세요.', body: [`${screenTitles.profile}이나 리포트에서 기업 프로필을 열고 사업자 조회 결과를 확인하세요. 등록·수정 결과를 저장한 뒤 기업 맞춤 리포트 등 기업 기능을 이용하세요.`],
+    limitation: '사업자 상태에 따라 등록 가능 여부를 확인하며 조회 실패를 임의 기업 정보로 대체하지 않아요.', audience: 'member', status: 'available', action: { label: `${screenTitles.companyProfile} 열기`, to: '/app/profile' }, companyAction: true },
   { id: 'mobile-account', topic: '계정', title: '로그인과 계정 관리', question: '비밀번호와 계정 정보는 어디서 관리하나요?',
-    summary: '메뉴의 내 계정에서 로그인 정보와 비밀번호·탈퇴 항목을 확인하세요.', body: ['내 계정에서 필요한 항목을 선택하고 본인 확인을 진행하세요. 계정 삭제는 삭제 대상을 확인하고 명시적으로 요청한 뒤 처리합니다.'],
-    limitation: '도우미에서 비밀번호를 받거나 계정 삭제를 대신 실행하지 않아요.', audience: 'member', status: 'available', action: { label: '내 계정 열기', to: '/app/profile' } },
+    summary: `메뉴의 ${screenTitles.profile}에서 로그인 정보와 비밀번호·탈퇴 항목을 확인하세요.`, body: [`${screenTitles.profile}에서 필요한 항목을 선택하고 본인 확인을 진행하세요. 계정 삭제는 삭제 대상을 확인하고 명시적으로 요청한 뒤 처리합니다.`],
+    limitation: '도우미에서 비밀번호를 받거나 계정 삭제를 대신 실행하지 않아요.', audience: 'member', status: 'available', action: { label: `${screenTitles.profile} 열기`, to: '/app/profile' } },
   { id: 'mobile-pricing', topic: '계정', title: '요금제 기능 안내', question: '요금제별 기능은 어디서 확인하나요?',
     summary: '요금제 화면에서 각 요금제의 기능과 이용 안내를 확인하세요.', body: ['메뉴의 요금제에서 표시된 기능과 최신 안내를 비교하세요. 실제 제공 상태와 준비 중인 항목을 구분해서 읽어 주세요.'],
     limitation: '도우미에서 결제나 요금제 변경을 처리하지 않아요.', audience: 'member', status: 'available', action: { label: '요금제 열기', to: '/app/pricing' } },
@@ -57,22 +58,25 @@ export const assistantHelpEntries: MobileAssistantHelp[] = [
 
 /** 열린 페이지의 주요 질문만 먼저 보여 주고 전체 주제는 별도로 제공합니다. */
 export function assistantPageHelp(path: string, programSelected: boolean) {
-  let label = '메뉴', ids = ['mobile-search-confirm', 'mobile-application-documents', 'mobile-account']
-  if (path === '/' || path === '/chat') { label = '지원사업 검색'; ids = ['mobile-search-confirm', 'mobile-search-score'] }
-  else if (path === '/program') { label = '공고 상세'; ids = programSelected ? ['mobile-program-question', 'mobile-search-score', 'mobile-application-documents'] : ['mobile-search-score', 'mobile-search-confirm'] }
-  else if (path === '/saved') { label = '관심 공고함'; ids = ['mobile-saved-programs', 'mobile-report-settings', 'mobile-application-documents'] }
-  else if (path === '/report') { label = '맞춤 리포트'; ids = ['mobile-reports', 'mobile-report-settings', 'mobile-company-profile'] }
-  else if (path === '/all/settings') { label = '알림 설정'; ids = ['mobile-report-settings', 'mobile-reports'] }
-  else if (path === '/company' || path === '/all/company') { label = '기업 정보'; ids = ['mobile-company-registration', 'mobile-company-profile'] }
-  else if (path === '/account' || path === '/all/account') { label = '내 계정'; ids = ['mobile-account', 'mobile-company-profile'] }
-  else if (path === '/pricing' || path === '/all/pricing') { label = '요금제'; ids = ['mobile-pricing', 'mobile-account'] }
-  else if (path === '/all/preparation' || path === '/all/preparation/new') { label = path.endsWith('/new') ? '공고·양식 선택' : '신청문서 목록'; ids = ['mobile-application-documents', 'mobile-document-job'] }
+  let label: string = screenTitles.menu, ids = ['mobile-search-confirm', 'mobile-application-documents', 'mobile-account']
+  if (path === '/' || path === '/chat') { label = screenTitles.supportProgramSearch; ids = ['mobile-search-confirm', 'mobile-search-score'] }
+  else if (path === '/program') { label = screenTitles.supportProgramDetail; ids = programSelected ? ['mobile-program-question', 'mobile-search-score', 'mobile-application-documents'] : ['mobile-search-score', 'mobile-search-confirm'] }
+  else if (path === '/saved') { label = screenTitles.savedPrograms; ids = ['mobile-saved-programs', 'mobile-report-settings', 'mobile-application-documents'] }
+  else if (path === '/report') { label = screenTitles.reports; ids = ['mobile-reports', 'mobile-report-settings', 'mobile-company-profile'] }
+  else if (path === '/all/settings') { label = screenTitles.notificationSettings; ids = ['mobile-report-settings', 'mobile-reports'] }
+  else if (path === '/company' || path === '/all/company') { label = screenTitles.companyProfile; ids = ['mobile-company-registration', 'mobile-company-profile'] }
+  else if (path === '/account' || path === '/all/account') { label = screenTitles.profile; ids = ['mobile-account', 'mobile-company-profile'] }
+  else if (path === '/pricing' || path === '/all/pricing') { label = screenTitles.pricing; ids = ['mobile-pricing', 'mobile-account'] }
+  else if (path === '/all/preparation' || path === '/all/preparation/new') { label = path.endsWith('/new') ? screenTitles.applicationPreparationNew : screenTitles.applicationPreparations; ids = ['mobile-application-documents', 'mobile-document-job'] }
   else if (path.startsWith('/all/preparation/')) {
     const result = path.endsWith('/documents'), online = path.endsWith('/online')
-    label = result ? '문서 결과' : online ? '구글폼 입력 도우미' : path.endsWith('/review') ? '답변 검토' : '답변 작성'
+    label = result ? screenTitles.applicationPreparationDocuments : online ? screenTitles.onlineInputGuide : path.endsWith('/review') ? screenTitles.applicationPreparationReview : screenTitles.applicationPreparationEditor
     ids = result ? ['mobile-document-job', 'mobile-document-answers'] : online ? ['mobile-online-form', 'mobile-document-answers'] : ['mobile-document-answers', 'mobile-application-documents']
-  } else if (path.startsWith('/all/reviews')) { label = '중복 검토'; ids = ['mobile-combination-review', 'mobile-search-score'] }
-  else if (path === '/collab' || path === '/all/collab' || path.startsWith('/partner/')) { label = '협업'; ids = ['mobile-partners', 'mobile-company-profile'] }
+  } else if (path.startsWith('/all/reviews')) { label = path.endsWith('/new') ? screenTitles.combinationReviewNew : path === '/all/reviews' ? screenTitles.combinationReviews : screenTitles.combinationReviewDetail; ids = ['mobile-combination-review', 'mobile-search-score'] }
+  else if (path === '/collab' || path === '/all/collab' || path.startsWith('/partner/')) {
+    label = path === '/partner/new' ? screenTitles.partnerRecruitmentNew : path === '/partner/edit' ? screenTitles.partnerRecruitmentEdit : path.startsWith('/partner/') ? screenTitles.partnerRecruitmentDetail : screenTitles.publicPartners
+    ids = ['mobile-partners', 'mobile-company-profile']
+  }
   return { label, questions: ids.map(id => {
     const entry = assistantHelpEntries.find(value => value.id === id)
     if (!entry) throw new Error(`Missing assistant help: ${id}`)

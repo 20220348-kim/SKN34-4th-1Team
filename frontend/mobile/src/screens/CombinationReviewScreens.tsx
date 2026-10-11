@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, Alert, AppState, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect, useRouter } from 'expo-router'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, type ReviewProgram } from '@govbiz/shared/domain/entities/CombinationReview'
@@ -20,7 +21,7 @@ import { Button, Card, Field, Notice, Page, StatusBadge, Title, colors, styles }
 
 function ReviewLogin({ onLogin }: { onLogin(): void }) {
   const auth = useAuth()
-  return <Page><Title>중복 지원·수혜 검토</Title>
+  return <Page><Title>{screenTitles.combinationReviews}</Title>
     {auth.status === 'loading' ? <ActivityIndicator accessibilityLabel="로그인 상태 확인 중" />
       : auth.status === 'unavailable' ? <><Notice error>로그인 상태를 확인하지 못했어요.</Notice><Button label="로그인 상태 다시 확인" onPress={() => void auth.refreshSession()} /></>
         : <><Notice>로그인하면 본인의 검토와 참여 이력을 관리할 수 있어요. 기업 등록 없이 직접 입력할 수 있습니다.</Notice><Button label="로그인하고 시작" onPress={onLogin} /></>}
@@ -65,7 +66,7 @@ function OwnedReviewList({ token, onNew }: { token: string; onNew(): void }) {
     <Text style={styles.muted}>공고 2개를 비교해 신청·수혜 조건을 확인해요.</Text>
     {loading && items === null && <ActivityIndicator color={colors.primary} accessibilityLabel="검토 목록 불러오는 중" />}
     {error && <><Notice error>{error}</Notice><Button label="검토 목록 다시 확인" onPress={refresh} /></>}
-    {items !== null && <Text style={styles.label}>중복 검토 {items.length}</Text>}
+    {items !== null && <Text style={styles.label}>{screenTitles.combinationReviews} {items.length}</Text>}
     {items?.length === 0 && !error && <Card><Text style={styles.heading}>아직 저장한 검토가 없어요</Text><Text style={styles.body}>공고 2개를 고르면 바로 분석할 수 있어요.</Text></Card>}
     {items?.map(item => <ReviewRow key={item.review.id} item={item} />)}
     <Button label="새 검토 시작" onPress={onNew} />

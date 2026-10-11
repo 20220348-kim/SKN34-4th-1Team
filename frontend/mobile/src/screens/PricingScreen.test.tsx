@@ -124,7 +124,7 @@ test('refreshing identifies the previous information and the account action only
   const onAccount = jest.fn()
   render(<PricingScreen onSearch={jest.fn()} signedIn usage={trial} loading onAccount={onAccount} />)
   expect(screen.getByText('이용 상태를 다시 확인하고 있어요. 아래는 이전에 확인한 정보예요.')).toBeTruthy()
-  fireEvent.press(screen.getByRole('button', { name: '내 계정에서 이용량 보기' }))
+  fireEvent.press(screen.getByRole('button', { name: '내 프로필에서 이용량 보기' }))
   expect(onAccount).toHaveBeenCalledTimes(1)
   expect(screen.queryByRole('button', { name: /체험 시작|요금제 바꾸기|결제|구독/ })).toBeNull()
 })

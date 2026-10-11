@@ -43,7 +43,7 @@ export function AssistantScreen({ origin, messages, draft, onDraft, onSend, onCl
       <Button label={busy ? '중지·닫기' : '닫기'} accessibilityLabel="도우미 닫기" variant="ghost" size="small" onPress={onClose} />
     </View>
     {showHelp && <View style={local.pageHelp}>
-      <Text style={local.pageLabel}>{pageHelp.label}에서 열었어요</Text>
+      <Text style={local.pageLabel}>{origin.pageLabel ?? pageHelp.label}에서 열었어요</Text>
       <View style={local.quickQuestions}>{pageHelp.questions.map(entry => <Button key={entry.id} label={entry.question}
         variant="secondary" size="small" style={local.quickQuestion} disabled={busy} onPress={() => chooseHelp(entry.id)} />)}</View>
       <Pressable accessibilityRole="button" accessibilityLabel="다른 주제 보기" accessibilityState={{ expanded: otherTopics, disabled: busy }}

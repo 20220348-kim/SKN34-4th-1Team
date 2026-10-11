@@ -41,9 +41,9 @@ test('All removes duplicate entries and combines proposal destinations into part
   for (const name of ['메뉴 검색', '기업 정보 등록', '기업 정보', '알림 설정', '내 정보 열기', '받은 제안', '보낸 제안', '내 모집글']) expect(screen.queryByLabelText(name)).toBeNull()
   fireEvent.press(screen.getByLabelText('파트너 관리'))
   expect(open).toHaveBeenCalledWith('partners')
-  fireEvent.press(screen.getByLabelText('모집글'))
+  fireEvent.press(screen.getByLabelText('파트너 모집'))
   expect(open).toHaveBeenCalledWith('recruitments')
-  expect(screen.getAllByLabelText('내 계정')).toHaveLength(1)
+  expect(screen.getAllByLabelText('내 프로필')).toHaveLength(1)
 })
 
 test('profile uses the session company or real email and removes them on logout', () => {
@@ -99,14 +99,26 @@ test('the introduction reset is unavailable for signed-in accounts', () => {
 
 test('guest All retains all feature destinations and labels private ones as requiring login', () => {
   render(<MenuScreen onOpen={jest.fn()} />)
-  expect(screen.getByLabelText('내 계정')).toBeTruthy()
-  expect(screen.getByLabelText('공고 검색')).toBeTruthy()
-  expect(screen.getByLabelText('AI 검색')).toBeTruthy()
-  expect(screen.getByLabelText('모집글')).toBeTruthy()
+  expect(screen.getByLabelText('내 프로필')).toBeTruthy()
+  expect(screen.getByLabelText('필터 검색')).toBeTruthy()
+  expect(screen.getByLabelText('AI 대화 검색')).toBeTruthy()
+  expect(screen.getByLabelText('파트너 모집')).toBeTruthy()
   expect(screen.getAllByText('로그인 후 이용').length).toBeGreaterThan(0)
-  for (const name of ['관심 공고함', '맞춤 리포트', '신청 문서', '중복 검토', '파트너 관리']) {
+  for (const name of ['관심 공고함', '기업 맞춤 리포트', '신청 문서 작성', '중복 지원·수혜 검토', '파트너 관리']) {
     expect(screen.getByLabelText(name)).toBeTruthy()
   }
+})
+
+test.each([
+  ['내 프로필', 'account'], ['AI 대화 검색', 'ai'], ['필터 검색', 'filter'],
+  ['기업 맞춤 리포트', 'report'], ['신청 문서 작성', 'documents'], ['중복 지원·수혜 검토', 'reviews'],
+  ['파트너 모집', 'recruitments'], ['파트너 관리', 'partners'],
+])('the web-aligned menu label %s still opens the existing %s destination', (label, destination) => {
+  auth({ email: 'member@example.test', company: null })
+  const open = jest.fn()
+  render(<MenuScreen onOpen={open} />)
+  fireEvent.press(screen.getByLabelText(label))
+  expect(open).toHaveBeenCalledWith(destination)
 })
 
 test('policy documents remain public when session restoration is unavailable', () => {

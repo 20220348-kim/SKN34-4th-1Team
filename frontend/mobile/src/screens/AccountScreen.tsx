@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, Text, View } from 'react-native'
 import type { SignupEmailVerification } from '@govbiz/shared/domain/entities/Account'
 import type { AccountDeletionPreview } from '@govbiz/shared/domain/entities/AccountDeletionPreview'
@@ -164,7 +165,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   if (auth.status === 'unavailable') return <Page><Notice error>{auth.restoreError}</Notice><Button label="로그인 상태 다시 확인" onPress={() => void auth.refreshSession()} /><Button label="저장된 로그인 정보 지우기" variant="ghost" onPress={() => void run(() => auth.signOut())} />{error && <Notice error>{error}</Notice>}</Page>
   if (auth.session && authOnly) return <Page><ActivityIndicator accessibilityLabel="보던 화면으로 돌아가는 중" /></Page>
   if (auth.session) return <Page>
-    <Text style={{ fontSize: 26, fontWeight: '700', color: colors.text }}>내 계정</Text>
+    <Text style={{ fontSize: 26, fontWeight: '700', color: colors.text }}>{screenTitles.profile}</Text>
     <Card><Text style={{ color: colors.text, fontSize: 18 }}>{auth.session.account.email}</Text><Text style={{ color: colors.muted, marginTop: 8 }}>{auth.session.account.company?.companyName ?? '기업 정보를 등록하면 맞춤 서비스를 이용할 수 있습니다.'}</Text></Card>
     <PlanUsageSection token={auth.session.accessToken} enabled={usageEnabled} />
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}

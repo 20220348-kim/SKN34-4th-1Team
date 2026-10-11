@@ -1,9 +1,10 @@
 import type { Href } from 'expo-router'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import type { AssistantCard } from '@govbiz/shared/domain/entities/AssistantAnswer'
 import type { AssistantScreenContext } from '@govbiz/shared/domain/repositories/AssistantRepository'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 
-export type AssistantOrigin = { path: string; context: AssistantScreenContext; program: SupportProgramIdentity | null }
+export type AssistantOrigin = { path: string; context: AssistantScreenContext; program: SupportProgramIdentity | null; pageLabel?: string }
 export function programIdentity(sourceCode: unknown, sourceProgramId: unknown): SupportProgramIdentity | null {
   return typeof sourceCode === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(sourceCode)
     && typeof sourceProgramId === 'string' && sourceProgramId.trim() === sourceProgramId
@@ -11,7 +12,7 @@ export function programIdentity(sourceCode: unknown, sourceProgramId: unknown): 
     ? { sourceCode, sourceProgramId } : null
 }
 
-export function assistantOrigin(path: string, params: { sourceCode?: unknown; sourceProgramId?: unknown }): AssistantOrigin {
+export function assistantOrigin(path: string, params: { sourceCode?: unknown; sourceProgramId?: unknown; management?: unknown; step?: unknown; runId?: unknown }): AssistantOrigin {
   const program = path === '/program' ? programIdentity(params.sourceCode, params.sourceProgramId) : null
   const routes: Record<string, string> = { '/': '/app/chat', '/chat': '/app/chat', '/saved': '/app/saved-programs',
     '/report': '/app/reports', '/all': '/app', '/all/account': '/app/profile', '/all/company': '/app/profile',
@@ -19,7 +20,9 @@ export function assistantOrigin(path: string, params: { sourceCode?: unknown; so
     '/collab': '/app/partners', '/all/pricing': '/app/pricing', '/pricing': '/app/pricing' }
   const route = routes[path] ?? (path.startsWith('/all/preparation') ? '/app/application-preparations'
     : path.startsWith('/all/reviews') ? '/app/combination-reviews' : path.startsWith('/partner/') ? '/app/partners' : '/app')
-  return { path, context: { route, programSelected: program !== null }, program }
+  const pageLabel = path === '/all/collab' ? params.management === '1' ? screenTitles.partnerManagement : screenTitles.publicPartners
+    : path.startsWith('/all/reviews/') && !path.endsWith('/new') && (params.step === 'analysis' || (params.step === undefined && params.runId !== undefined)) ? screenTitles.combinationReviewRunResult : undefined
+  return { path, context: { route, programSelected: program !== null }, program, ...(pageLabel ? { pageLabel } : {}) }
 }
 
 /** 서버의 웹 의미 경로를 명시적인 네이티브 경로로만 변환합니다. */

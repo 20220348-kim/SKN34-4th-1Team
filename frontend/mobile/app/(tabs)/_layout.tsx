@@ -1,4 +1,5 @@
 import { useEffect, type Ref } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import type { View } from 'react-native'
 import { Tabs, usePathname, useRouter } from 'expo-router'
 import { StackActions, type NavigationState } from 'expo-router/react-navigation'
@@ -24,13 +25,13 @@ export default function TabLayout() {
       android_ripple={{ color: `${colors.text}0A`, borderless: false, radius: 18 }}
       style={({ pressed }) => [style, pressed && { opacity: 0.9 }]} />,
     tabBarLabelStyle: { fontSize: 11, fontWeight: '500' }, tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, elevation: 0 } }}>
-    <Tabs.Screen name="index" options={{ title: '검색', tabBarAccessibilityLabel: '검색', headerTitle: '지원사업 검색', tabBarIcon: ({ color, focused }) => <AppIcon name="search" color={color} selected={focused} /> }} />
-    <Tabs.Screen name="collab" options={{ href: signedIn ? null : undefined, title: '협업', tabBarAccessibilityLabel: '협업', headerTitle: '협업 모집글',
+    <Tabs.Screen name="index" options={{ title: '검색', tabBarAccessibilityLabel: '검색', headerTitle: screenTitles.supportProgramSearch, tabBarIcon: ({ color, focused }) => <AppIcon name="search" color={color} selected={focused} /> }} />
+    <Tabs.Screen name="collab" options={{ href: signedIn ? null : undefined, title: '협업', tabBarAccessibilityLabel: '협업', headerTitle: screenTitles.publicPartners,
       tabBarIcon: ({ color, focused }) => <AppIcon name="collaboration" color={color} selected={focused} /> }} />
     <Tabs.Screen name="pricing" options={{ href: signedIn ? null : undefined, title: '요금제', tabBarAccessibilityLabel: '요금제',
       tabBarIcon: ({ color, focused }) => <AppIcon name="creditCard" color={color} selected={focused} /> }} />
-    <Tabs.Screen name="saved" options={{ href: signedIn ? undefined : null, title: '관심함', tabBarAccessibilityLabel: '관심함', headerTitle: '관심 공고함', tabBarIcon: ({ color, focused }) => <AppIcon name="bookmark" color={color} selected={focused} /> }} />
-    <Tabs.Screen name="report" options={{ href: signedIn ? undefined : null, title: '리포트', tabBarAccessibilityLabel: '리포트', headerTitle: '맞춤 리포트',
+    <Tabs.Screen name="saved" options={{ href: signedIn ? undefined : null, title: '관심함', tabBarAccessibilityLabel: '관심함', headerTitle: screenTitles.savedPrograms, tabBarIcon: ({ color, focused }) => <AppIcon name="bookmark" color={color} selected={focused} /> }} />
+    <Tabs.Screen name="report" options={{ href: signedIn ? undefined : null, title: '리포트', tabBarAccessibilityLabel: '리포트', headerTitle: screenTitles.reports,
       headerRight: () => <ReportHeaderAction />, tabBarIcon: ({ color, focused }) => <AppIcon name="report" color={color} selected={focused} /> }} />
     <Tabs.Screen name="all" listeners={({ navigation, route }) => ({ tabPress: (event) => {
       const stack = (navigation.getState() as NavigationState).routes.find(item => item.key === route.key)?.state
@@ -45,7 +46,7 @@ export default function TabLayout() {
       event.preventDefault()
       navigation.dispatch({ ...StackActions.popTo('index'), source, target: stack.key })
       if (!navigation.isFocused()) navigation.navigate(route.name)
-    } })} options={{ title: '메뉴', tabBarAccessibilityLabel: '메뉴', headerShown: false,
+    } })} options={{ title: screenTitles.menu, tabBarAccessibilityLabel: screenTitles.menu, headerShown: false,
       tabBarIcon: ({ color }) => <AppIcon name="menu" color={color} /> }} />
     <Tabs.Screen name="account" options={{ href: null }} />
     <Tabs.Screen name="chat" options={{ href: null }} />

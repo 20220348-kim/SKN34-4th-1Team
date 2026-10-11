@@ -78,8 +78,8 @@ test('guided help and reopening preserve the signed-in conversation without any 
 test.each([
   ['/', '지원사업 검색', '검색이 왜 바로 안 되나요?'],
   ['/saved', '관심 공고함', '저장한 공고는 어디서 보나요?'],
-  ['/report', '맞춤 리포트', '맞춤 리포트는 어떻게 확인하나요?'],
-  ['/all/preparation/3/documents', '문서 결과', '문서 생성 결과를 확인하지 못했어요.'],
+  ['/report', '기업 맞춤 리포트', '맞춤 리포트는 어떻게 확인하나요?'],
+  ['/all/preparation/3/documents', '신청 문서 초안', '문서 생성 결과를 확인하지 못했어요.'],
   ['/all/preparation/3/review', '답변 검토', '작성한 답변은 어떻게 저장하고 검토하나요?'],
 ] as const)('opening from %s directly displays the corresponding page questions', async (path, label, question) => {
   mockPath = path; render(<App />); await open()
@@ -96,6 +96,19 @@ test('other topics and free text remain accessible alongside page recommendation
   fireEvent.press(screen.getByLabelText('리포트'))
   fireEvent.press(screen.getByLabelText('맞춤 리포트는 어떻게 확인하나요?'))
   expect(screen.getByText(/등록한 기업 정보를 바탕으로/)).toBeTruthy()
+  expect(execute).not.toHaveBeenCalled()
+})
+
+test('collaboration title follows the current view without changing the route or invoking AI', async () => {
+  mockPath = '/all/collab'; mockParams = { management: '0' }
+  const view = render(<App />)
+  await open()
+  expect(screen.getByText('파트너 모집에서 열었어요')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('도우미 닫기'))
+  mockParams = { management: '1' }; view.rerender(<App />)
+  await open()
+  expect(screen.getByText('파트너 관리에서 열었어요')).toBeTruthy()
+  expect(mockNavigate).not.toHaveBeenCalled()
   expect(execute).not.toHaveBeenCalled()
 })
 
@@ -166,7 +179,7 @@ test('reopening on a different page changes recommendations while retaining the 
   expect(screen.queryByLabelText('검색이 왜 바로 안 되나요?')).toBeNull()
   fireEvent.press(screen.getByLabelText('도우미 닫기'))
   mockPath = '/report'; view.rerender(<App />); await open()
-  expect(screen.getByText('맞춤 리포트에서 열었어요')).toBeTruthy()
+  expect(screen.getByText('기업 맞춤 리포트에서 열었어요')).toBeTruthy()
   expect(screen.getByLabelText('맞춤 리포트는 어떻게 확인하나요?')).toBeTruthy()
   expect(screen.getByText(/AI가 정리한 조건을 확인한 뒤/)).toBeTruthy()
   expect(execute).not.toHaveBeenCalled()

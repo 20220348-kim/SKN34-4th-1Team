@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
@@ -27,12 +28,12 @@ export default function RootLayout() {
     <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerTitleStyle: { fontSize: 17, fontWeight: '600' },
       headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="program" options={{ title: '공고 상세' }} />
-      <Stack.Screen name="partner/new" options={{ title: '모집글 작성' }} />
-      <Stack.Screen name="partner/edit" options={{ title: '모집글 수정' }} />
-      <Stack.Screen name="partner/[id]" options={{ title: '모집글 상세' }} />
-      <Stack.Screen name="company" options={{ title: '기업 프로필' }} />
-      <Stack.Screen name="oauth/complete" options={{ title: '로그인' }} />
+      <Stack.Screen name="program" options={{ title: screenTitles.supportProgramDetail }} />
+      <Stack.Screen name="partner/new" options={{ title: screenTitles.partnerRecruitmentNew }} />
+      <Stack.Screen name="partner/edit" options={{ title: screenTitles.partnerRecruitmentEdit }} />
+      <Stack.Screen name="partner/[id]" options={{ title: screenTitles.partnerRecruitmentDetail }} />
+      <Stack.Screen name="company" options={{ title: screenTitles.companyProfile }} />
+      <Stack.Screen name="oauth/complete" options={{ title: screenTitles.login }} />
     </Stack>
   </AppEntryGate></LoginFlowProvider></DailyReportPushProvider></AssistantProvider></AuthProvider></AppErrorBoundary></SafeAreaProvider>
 }

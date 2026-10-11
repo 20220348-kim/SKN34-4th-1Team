@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import type { Company } from '@govbiz/shared/domain/entities/Company'
@@ -30,7 +31,7 @@ const programKey = (identity: SupportProgramIdentity) => JSON.stringify([identit
 
 function reportDateLabel(date: string) {
   const [, , month, day] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date) ?? []
-  return month && day ? `${Number(month)}월 ${Number(day)}일 리포트` : '맞춤 리포트'
+  return month && day ? `${Number(month)}월 ${Number(day)}일 리포트` : screenTitles.reports
 }
 
 function generatedTimeLabel(value: string | null) {
@@ -266,7 +267,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
   if (!token) return <Page><GuestFeatureNotice title={settingsOnly ? '알림 설정' : '우리 기업에 맞는 기회를 받아보세요'} icon="report"
     description={settingsOnly ? '로그인하면 관심 공고 마감 알림과 리포트 수신 설정을 바꿀 수 있어요.' : '로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.'}
     onLogin={onLogin} /></Page>
-  if (visible.loading) return <Page><ActivityIndicator accessibilityLabel="맞춤 리포트 불러오는 중" color={colors.primary} /></Page>
+  if (visible.loading) return <Page><ActivityIndicator accessibilityLabel={`${screenTitles.reports} 불러오는 중`} color={colors.primary} /></Page>
   if (visible.error && !visible.settings) return <Page><Notice error>{visible.error}</Notice><Button label="다시 시도" onPress={refresh} /></Page>
   if (!settings) return <Page><Notice error>리포트 수신 설정을 확인하지 못했습니다.</Notice><Button label="다시 시도" onPress={refresh} /></Page>
 

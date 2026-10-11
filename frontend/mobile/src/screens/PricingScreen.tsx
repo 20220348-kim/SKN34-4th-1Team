@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { pricingFrequentlyAskedQuestions, pricingPlans, pricingSearchSteps, pricingTitle, pricingUnlimitedNote,
   type PricingPlanId } from '@govbiz/shared/design/pricingContent'
@@ -54,7 +55,7 @@ export function PricingScreen({ onSearch, signedIn = false, usage = null, loadin
         <Text accessibilityLiveRegion="polite" style={local.error}>현재 요금제를 불러오지 못했어요.</Text>
         {onRetry && <Button label="다시 불러오기" variant="secondary" size="small" onPress={onRetry} />}
       </>}
-      {onAccount && <Button label="내 계정에서 이용량 보기" variant="secondary" size="small" onPress={onAccount} />}
+      {onAccount && <Button label={`${screenTitles.profile}에서 이용량 보기`} variant="secondary" size="small" onPress={onAccount} />}
     </View>}
     <SegmentedControl label="요금제 선택" options={planOptions} value={selected} onChange={choose} />
     <View accessibilityLiveRegion="polite" style={[local.plan, emphasized && local.featured, isCurrent && local.current]}>

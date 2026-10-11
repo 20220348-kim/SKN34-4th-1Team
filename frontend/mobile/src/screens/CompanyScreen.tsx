@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import {
   type BusinessLookup, type Company, type CompanyProfileInput, companyRegions, companyIndustries,
@@ -103,11 +104,11 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
 
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice><Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><Title>기업 프로필</Title><Notice>전체 → 내 계정에서 로그인한 뒤 기업 정보를 등록해 주세요.</Notice>{onLogin && <Button label="로그인하기" onPress={onLogin} />}</Page>
+  if (!token) return <Page><Title>{screenTitles.companyProfile}</Title><Notice>메뉴 → {screenTitles.profile}에서 로그인한 뒤 기업 정보를 등록해 주세요.</Notice>{onLogin && <Button label="로그인하기" onPress={onLogin} />}</Page>
   if (state.token !== token || state.loading) return <Page><ActivityIndicator accessibilityLabel="기업 프로필 불러오는 중" /></Page>
-  if (state.loadError) return <Page><Title>기업 프로필</Title><Notice error>{state.loadError}</Notice><Button label="다시 불러오기" onPress={() => setRevision((value) => value + 1)} /></Page>
+  if (state.loadError) return <Page><Title>{screenTitles.companyProfile}</Title><Notice error>{state.loadError}</Notice><Button label="다시 불러오기" onPress={() => setRevision((value) => value + 1)} /></Page>
   return <Page>
-    <Title>{state.company ? '기업 프로필' : '기업 등록'}</Title>
+    <Title>{state.company ? screenTitles.companyProfile : screenTitles.welcomeCompany}</Title>
     <Text style={styles.muted}>웹과 앱에서 같은 기업 정보를 사용합니다.</Text>
     {state.company ? <Card><Text style={styles.heading}>{state.company.companyName}</Text><Text style={styles.body}>{formatBusinessNumber(state.company.businessNumber)} · {state.company.businessStatus}</Text></Card> : <>
       <Field label="사업자등록번호" value={businessNumber} onChangeText={(value) => { setBusinessNumber(formatBusinessNumberInput(value)); setLookup(null); setError(null) }} keyboardType="number-pad" maxLength={12} editable={!busy} />

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { StyleSheet, View } from 'react-native'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -11,7 +12,7 @@ import { Button, Notice } from '../ui'
 import type { AssistantDraft } from '../assistant/context'
 
 export type SearchMode = 'ai' | 'filter'
-const modes = [{ value: 'ai', label: 'AI 대화 검색' }, { value: 'filter', label: '필터 검색' }] as const
+const modes = [{ value: 'ai', label: screenTitles.aiSearch }, { value: 'filter', label: screenTitles.filterSearch }] as const
 
 export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin, assistantDraft, onDraftConsumed }: {
   mode: SearchMode; headerHeight?: number; onModeChange(mode: SearchMode): void
