@@ -89,11 +89,12 @@ govbiz.vercel.app /api/*
 5. 관리자 로그인 → Ops session/이력/보고서 조회 → 일반 회원 접근 거절 → 로그아웃 후 차단을
    확인한다. 승인된 무료 쓰기 1건으로 CSRF 누락 거절·정상 요청 성공·기존 이력 보존을 검증한다.
    이 단계에서 모델 호출·스케줄을 활성화하지 않는다.
-6. 전체 API 검증·최신 main CI 통과·AWS OIDC 권한 확보 후에만 [CD 활성화](continuous-deployment.md)를 진행한다.
+6. 전체 API 검증·최신 main CI 통과·CodeConnections/CodeBuild 연결 확인 후에만 [CD 활성화](continuous-deployment.md)를 진행한다.
    네트워크·CloudFront·게이트웨이 설정은 앱 이미지 교체용 CD가 자동 적용하지 않으며 별도 검토한다.
 
-현재 AWS의 관리형 조직 정책이 GitHub OIDC provider 조회를 거절하므로 자동 배포는 비활성 상태다.
-수동으로 배포한 ALB·CloudFront·서비스는 이 자동 배포 제한과 별도로 실행된다.
+GitHub OIDC provider 조회가 제한되어 자동 배포 경로를 CodeConnections·CodeBuild 서비스 역할로
+전환한다. 연결 승인과 첫 실행 검증 전에는 자동 배포를 비활성으로 유지한다.
+이미 수동 배포한 ALB·CloudFront·서비스는 계속 실행된다.
 
 ## 제한 및 복구
 

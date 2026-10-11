@@ -16,20 +16,35 @@ AWS 스택·GitHub environment·Vercel 프로젝트 설정과 최초 EKS 데이�
 개인 GitHub의 `eks-production` 환경은 main 브랜치만 허용하도록 만들고,
 해당 Vercel 프로젝트의 `VERCEL_ORG_ID`·`VERCEL_PROJECT_ID` 변수를 등록했다.
 2026-10-11 `VERCEL_TOKEN` Secret 등록도 확인했다. 값과 실제 배포 권한은 읽지 않았다.
-repository variable **`EKS_RELEASE_ENABLED=false`를 유지**한다. AWS의 관리형 조직 정책(SCP)이
-GitHub OIDC provider 조회(`ListOpenIDConnectProviders`, `GetOpenIDConnectProvider`)를 거절했다.
-사용자는 수동 배포 우선을 선택했으며 유료 플랜 전환·장기 AWS 키 발급은 수행하지 않았다.
-자동 배포용 `release-stack.yaml`·CodeBuild는 생성하지 않았다. OIDC 권한 문제 해결과 배포 전용
-역할 연결 후 첫 자동 실행을 검증해야 한다. EKS 데이터 복원·수동 운영 상태는
-[실배포 기록](sydney-demo.md#2026-10-12-수동-배포-기록)을 참고한다.
+당시 AWS 조직 정책(SCP)이 GitHub OIDC provider 조회를 거절해 수동 배포했다.
+후속 자동 배포는 **CodeConnections + CodeBuild 임시 GitHub Actions 실행기**로 전환한다.
+GitHub의 AWS OIDC·장기 AWS 키·계정 플랜 변경 없이 CodeBuild 서비스 역할로 AWS에 접근한다.
+이는 3차의 AWS 내부 CodeBuild 인증 방식을 EKS에 적용한 구성이다. GitHub Actions가 CI 완료와
+웹 배포를 조율하고, 이미지 빌드·EKS 배포 작업은 VPC 안의 CodeBuild에서 실행한다.
+
+연결·스택 생성만으로 자동 배포가 완료되지는 않는다. 아래 최초 연결, 새 코드의 main 반영,
+해당 커밋의 필수 CI, 실제 자동 실행을 확인하기 전까지 `EKS_RELEASE_ENABLED=false`를 유지한다.
+현재 EKS 데이터 복원·수동 운영 상태는 [실배포 기록](sydney-demo.md#2026-10-12-수동-배포-기록)을 참고한다.
+
+### 2026-10-12 연결 검증
+
+- `govbiz-eks-github` CodeConnections의 `AVAILABLE` 상태를 확인했다.
+- `govbiz-eks-release` 스택에서 ECR 5개·배포 전용 IAM·CodeBuild·EKS 접근 권한을 구성했다.
+- `govbiz-eks-release-deploy`의 읽기 전용 preflight
+  `796b0377-5ca1-4fb9-8658-c209c5322ce2`에서 GitHub 소스 다운로드, Python 3.13·Docker·GitHub CLI,
+  체크섬 검증한 kubectl, EKS 사설 API 연결, 기존 서비스 Ready 조회를 확인했다.
+- 서비스 조회·갱신 권한은 허용되고 Secret 조회·PVC 삭제 권한은 거절됐다.
+- 사전 검증은 이미지 발행·앱 교체·DB migration·모델 호출을 수행하지 않았다.
+- 이 연결 검증은 최초 자동 배포 완료를 뜻하지 않는다. 변경 코드의 main 반영·필수 CI와
+  webhook을 통한 실제 배포 작업·Vercel 전환 결과는 별도 확인해야 한다.
 
 ## 배포 흐름
 
 ```mermaid
 flowchart LR
     A[main 병합] --> B[5개 필수 CI 확인]
-    B --> C[검증된 SHA로 ECR 이미지 발행]
-    C --> D[CodeBuild: EKS 사설망 접속]
+    B --> C[CodeConnections가 CodeBuild 임시 실행기 기동]
+    C --> D[검증된 SHA 이미지 빌드·ECR 발행·EKS 접속]
     D --> E[평가 접수 잠시 중지·실행 중 여부 확인]
     E --> F[Ops migration·서비스 교체·Ready 확인]
     F --> G[Vercel Production 빌드]
@@ -42,13 +57,25 @@ flowchart LR
 학교 저장소나 다른 포크, main의 이전 SHA, 필수 검증 누락·실패·취소는 발행·배포를 허용하지 않는다.
 정책이 영향 없음을 별도로 입증한 job의 생략만 기존 CI 정책대로 처리한다.
 
-- GitHub Actions: AWS OIDC 임시 자격 증명으로 5개 ECR 이미지를 발행한다. AWS 장기 키를
-  GitHub Secret에 넣지 않는다. Git에 기록된 지정 경로만 빌드하고 로컬 `.env`·데이터는 제외한다.
-- ECR: Core·Catalog·AI·Ops·evaluation-runner를 `git-<전체 SHA>`의 immutable 태그로 발행한다.
+- GitHub Actions: 동일 main SHA의 필수 CI가 통과한 뒤에만 `backend` job을 요청한다.
+  `runs-on: codebuild-${{ vars.EKS_DEPLOY_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}`로
+  지정한 CodeBuild 프로젝트가 이 job 하나를 실행하고 종료한다. CI 대기 중에는 CodeBuild를 기동하지 않는다.
+- CodeConnections: 개인 저장소의 GitHub App 연결이다. AWS 콘솔에서 GitHub 설치를 승인해
+  `Available` 상태로 만들어야 한다. 새 연결의 `Pending`은 승인 완료가 아니다.
+- CodeBuild: 기존 EKS private subnet에서 AWS 서비스 역할로 이미지 빌드와 배포를 수행한다.
+  Docker 빌드 때문에 privileged 모드를 사용하며 동시 실행은 1개, 실행 상한은 120분이다.
+  상시 실행하는 EC2 GitHub runner나 두 번째 배포용 CodeBuild, S3 소스 ZIP은 만들지 않는다.
+  GitHub runner를 위해 EKS API를 `0.0.0.0/0`에 열지 않는다.
+- 권한·트리거: webhook은 지정 저장소의 `WORKFLOW_JOB_QUEUED`, 정확한 workflow 이름,
+  설정한 운영자 GitHub 숫자 ID를 **하나의 필터 그룹**에서 모두 만족해야 한다.
+  GitHub `eks-production` 환경도 main만 허용한다. 허용 운영자 변경은 배포 권한 변경이다.
+  PR·다른 운영자가 시작한 실행은 배포 실행기에 연결하지 않는다.
+- ECR: Core·Catalog·AI·Ops·evaluation-runner를 `git-<전체 SHA>` immutable 태그로 발행한다.
   같은 태그가 있으면 digest를 재사용하며, Kubernetes에는 태그가 아닌 digest를 전달한다.
-- CodeBuild: 기존 EKS의 private subnet에서 실행한다. GitHub runner를 위해 EKS API를
-  `0.0.0.0/0`에 열지 않는다. 버전이 고정된 S3 ZIP에는 배포 코드·CI 정책과 이미지 명세만 들어간다.
-  CodeBuild도 공개 GitHub API로 해당 SHA의 CI를 다시 검사하며 API 오류·한도 초과 시 중단한다.
+  `git archive`로 추적된 지정 경로만 빌드해 로컬 `.env`·데이터를 제외한다.
+- CI 재확인: CodeBuild 내부에서도 GitHub Actions가 제공한 수명이 짧은 읽기 토큰으로
+  동일 SHA·최신 main·필수 CI를 다시 확인한다. 토큰은 로그·이미지·AWS Secret으로 저장하지 않는다.
+  CI 실패·재실행·누락·API 오류는 발행·배포를 중단한다.
 - 배포 대상: Core·Catalog·AI·Ops(ops-sync 포함), 평가 실행기, 보고서 서비스다. 보고서 서비스는
   같은 Ops 이미지를 사용한다. DB·큐·검색 엔진·Langfuse·PVC·네트워크 구성은 자동 교체하지 않는다.
 - Vercel: 동일 커밋의 웹·shared 소스만 Production 설정으로 빌드하고 `--skip-domain`으로
@@ -65,21 +92,21 @@ EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflo
 
 1. [시드니 EKS 구성](sydney-demo.md)으로 클러스터를 만들고 최초 데이터 복원·백엔드 기동을
    끝낸다. 웹은 Vercel을 유지한다. 이 CD는 빈 클러스터를 설치하거나 데이터를 이전하는 도구가 아니다.
-2. AWS 계정의 GitHub OIDC provider(`https://token.actions.githubusercontent.com`, audience
-   `sts.amazonaws.com`)를 확인한다. 이미 있으면 재생성하지 않는다.
+2. 시드니 CodeConnections에서 GitHub 연결을 생성하고, AWS 콘솔의 **보류 중인 연결 업데이트**로
+   GitHub 설치를 승인한다. 허용 저장소는 `ilil1/SKN34-4th-1Team`으로 제한한다.
+   연결 상태가 `Available`인지 AWS API로 확인한다. CLI 로그인은 브라우저 콘솔 로그인을 대신하지 않는다.
 3. [`release-stack.yaml`](release-stack.yaml)의 CloudFormation 변경 세트를 검토하고 적용한다.
    입력은 `ClusterName`, `VpcId`, `PrivateSubnetIds`, `ClusterSecurityGroupId`,
-   `GitHubOidcProviderArn`이다. **실제 생성은 비용을 포함한 배포 단계에서 수행한다.**
-   ECR 5개, S3 입력 버킷, CodeBuild·로그·전용 IAM 역할·SG, EKS access entry가 만들어진다.
-   ECR을 최초 이미지 이전보다 먼저 만들거나, 이미 같은 이름의 저장소가 있으면 소유권을 확인해
-   CloudFormation에 import한다. 기존 저장소를 삭제해서 맞추지 않는다.
+   `GitHubConnectionArn`, `GitHubActorId`, `EnableWebhook`이다.
+   최초에는 `EnableWebhook=false`로 ECR 5개·CodeBuild·로그·전용 IAM 역할·SG·EKS access entry만 준비한다.
+   새 VPC·노드·DB·OIDC provider는 만들지 않는다. 기존 동명 ECR 저장소를 삭제해서 맞추지 않는다.
 4. 관리자 kubeconfig로 [`release-rbac.yaml`](release-rbac.yaml)을 새 EKS에 적용한다.
    CodeBuild access entry의 `govbiz-eks-release` 그룹을 두 namespace의 배포 권한에 연결한다.
    클러스터 관리자 역할이나 DB/PVC 삭제 권한은 부여하지 않는다. 단, Ops Pod exec와 migration
    Job 생성은 애플리케이션 자격 증명으로 코드를 실행할 수 있으므로 전용 배포 역할로만 사용한다.
 5. 개인 GitHub 저장소 `ilil1/SKN34-4th-1Team`의 **Settings → Environments → `eks-production`**을 만들고
-   deployment branch를 **`main`만** 허용한다. OIDC trust가 이 저장소·environment에 한정되어 있다.
-   승인자 없이 실행하려면 required reviewer를 두지 않되 main 보호 규칙의 필수 CI는 유지한다.
+   deployment branch를 **`main`만** 허용한다. CodeBuild 프로젝트와 GitHub App도 이 저장소로 제한한다.
+   main 보호 규칙의 필수 CI를 유지한다. 운영자 ID 필터를 통과하는 사용자만 배포를 시작한다.
    문서를 수정하는 것만으로 원격 environment·브랜치 보호가 설정되지는 않는다.
 6. 아래 변수·Secret을 등록하고 Vercel 프로젝트를 같은 저장소에 연결한다. 처음 만드는 경우
    [Vercel 최초 설정](#vercel-최초-설정)을 먼저 따른다. Root Directory는
@@ -87,10 +114,20 @@ EKS 배포는 다시 중지·migration하지 않는다. Vercel은 후속 workflo
    Core/Ops 프록시와 OAuth·쿠키 설정은 [웹 연결 절차](sydney-demo.md#웹-배포와-api-연결)를 따른다.
    [외부 API 구성](api-entrypoint.md)을 검증한 뒤 `GOVBIZ_OPS_PROXY_ENABLED=true`로 열어야 한다.
    미연결 Ops의 기본 503 차단은 CD 추가만으로 해제되지 않는다.
-7. 클러스터·원본 데이터·Vercel 외부 API 경로를 확인한 뒤 마지막에 repository variable
-   `EKS_RELEASE_ENABLED=true`를 설정한다. workflow가 main에 병합되어 있어야 한다.
-   첫 실행은 main의 모든 CI가 끝난 뒤 수동 dispatch로 확인할 수 있으며 이후 CI 완료 시 자동 실행된다.
-   수동 실행도 같은 SHA·CI·권한 검사를 통과해야 한다.
+7. CodeBuild의 읽기 전용 preflight로 GitHub 연결, Docker·Python·GitHub CLI·kubectl,
+   AWS 계정, EKS 사설 API 연결과 제한된 RBAC를 확인한다. 이 단계에서는 이미지를 발행하거나
+   애플리케이션을 교체하지 않는다. GitHub 변수 `EKS_DEPLOY_PROJECT`는 스택 출력과 일치시킨다.
+8. preflight 통과 후 `EnableWebhook=true`로 스택을 갱신하고 webhook의 운영자·workflow
+   필터를 실제 조회한다. 이때 `EKS_RELEASE_ENABLED=false`를 유지한다.
+   새 workflow·배포 코드가 main에 병합되고 필수 CI가 모두 통과한 뒤에만
+   repository variable `EKS_RELEASE_ENABLED=true`로 활성화한다.
+9. main에서 첫 workflow dispatch를 실행한다. CodeBuild job 기동 → 고정 digest ECR 발행 →
+   Ops migration·전체 rollout 성공 → Vercel Ready·promote를 확인해야 첫 자동 배포가 완료된다.
+   이후 main 병합의 CI 완료 이벤트가 같은 경로를 실행한다. 오래된 SHA는 배포하지 않는다.
+
+`workflow_run`의 실행 주체가 허용한 GitHub ID와 다르면 CodeBuild가 시작되지 않을 수 있다.
+webhook 전달 기록의 sender·workflow·요청 label을 확인한다. 필터를 모든 사용자로 넓히는 대신
+허용 운영자가 main의 배포 workflow를 수동 재실행한다. 실패한 CI를 이 방법으로 우회할 수는 없다.
 
 ## Vercel 최초 설정
 
@@ -156,14 +193,12 @@ Vercel 프로젝트 생성·요금제 선택은 개인 계정에서 진행한다
 | Repository variable | `EKS_RELEASE_ENABLED` | 최초 연결 완료 전 `false`, 완료 후 `true` |
 | `eks-production` variable | `AWS_ACCOUNT_ID` | 실제 AWS 계정 ID |
 | 같은 위치 | `EKS_CLUSTER_NAME` | 생성한 EKS 이름 |
-| 같은 위치 | `EKS_RELEASE_ROLE_ARN` | 스택 출력 `ReleaseRoleArn` |
-| 같은 위치 | `EKS_RELEASE_BUCKET` | 스택 출력 `ReleaseBucketName` |
-| 같은 위치 | `EKS_DEPLOY_PROJECT` | 스택 출력 `DeployProjectName` |
-| 같은 위치 | `VERCEL_ORG_ID` | Vercel 소유 팀·계정 ID |
+| Repository variable | `EKS_DEPLOY_PROJECT` | 스택 출력 `DeployProjectName`; runner 선택 전에 필요 |
+| `eks-production` variable | `VERCEL_ORG_ID` | Vercel 소유 팀·계정 ID |
 | 같은 위치 | `VERCEL_PROJECT_ID` | 위에서 만든 웹 프로젝트 ID |
 | 같은 environment의 Secret | `VERCEL_TOKEN` | 해당 프로젝트 배포 권한의 토큰. Git·채팅에 기록하지 않음 |
 
-리전은 이 시연의 `ap-southeast-2`로 고정한다. CodeBuild·ECR·S3·로그와 Vercel 이용량은
+리전은 이 시연의 `ap-southeast-2`로 고정한다. CodeBuild·ECR·로그와 Vercel 이용량은
 기존 EKS 노드 비용 외에 발생할 수 있으므로 시연 예산에 추가한다.
 
 ## 배포 실패와 데이터 보호
@@ -196,7 +231,8 @@ Infra CI는 `cfn-lint==1.46.0`으로 CloudFormation 타입·참조·IAM 구문�
 CloudFormation 구문 검사·단위 테스트는 실제 AWS 역할 인수, ECR push, 사설망 접속, MySQL migration,
 Vercel 프로젝트 배포를 대신하지 않는다. 최초 실배포 후 정확한 SHA의 배포 이력을 별도로 확인해야 한다.
 
-참고: [AWS OIDC](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws),
+참고: [CodeConnections GitHub 연결](https://docs.aws.amazon.com/codebuild/latest/userguide/connections-github-app.html),
+[CodeBuild 임시 Actions 실행기](https://docs.aws.amazon.com/codebuild/latest/userguide/action-runner.html),
 [CodeBuild VPC 연결](https://docs.aws.amazon.com/codebuild/latest/userguide/vpc-support.html),
 [Vercel staged production](https://vercel.com/docs/cli/deploy#skip-domain),
 [Vercel Git trigger 설정](https://vercel.com/docs/project-configuration/git-configuration).
