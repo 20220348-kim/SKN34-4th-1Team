@@ -7,6 +7,7 @@
 Core·Ops의 웹 주소를 설정한다. Vercel과 EKS 사이의 외부 API·Ops 프록시 연결은 후속 배포 작업이다.
 개인 저장소 `ilil1/SKN34-4th-1Team` main의 필수 CI 통과 후 ECR·EKS·Vercel을 갱신하는 코드와
 [Vercel 최초 설정·자동 배포 연결 절차](continuous-deployment.md)를 준비했다.
+[CloudFront·내부 ALB·Core/Ops 프록시](api-entrypoint.md)의 배포 설정과 무료 격리 검증도 준비했다.
 실제 AWS 스택·GitHub 변수와 권한·Vercel 프로젝트를 연결하기 전에는 자동 배포를 활성화하지 않는다.
 
 아래는 **다른 원본 클러스터의 기존 Argo CD 이전 절차와 기록**이다. 아래의 PVC 14개·Argo 앱

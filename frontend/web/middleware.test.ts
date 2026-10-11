@@ -8,6 +8,7 @@ describe('Vercel 운영 API 라우팅', () => {
     vi.stubEnv('GOVBIZ_API_ORIGIN', 'https://test-distribution.cloudfront.net')
     vi.stubEnv('GOVBIZ_FRONTEND_ORIGIN', 'https://govbiz-test.vercel.app')
     vi.stubEnv('GOVBIZ_PROXY_SECRET', 'a'.repeat(64))
+    vi.stubEnv('GOVBIZ_OPS_PROXY_ENABLED', 'false')
   })
   afterEach(() => vi.unstubAllEnvs())
 
@@ -89,5 +90,46 @@ describe('Vercel 운영 API 라우팅', () => {
     const response = middleware(request('203.0.113.12', 'https://govbiz-test.vercel.app/api/v1/ops/session'))
     expect(response.status).toBe(503)
     expect(response.headers.get('x-middleware-rewrite')).toBeNull()
+  })
+  it.each(['/api/v1/ops', '/api/v1/ops/session', '/api/v1/ops/evaluations/test/review'])('활성화한 Ops 경로 %s에 세션·CSRF·본문을 보존한다', (path) => {
+    vi.stubEnv('GOVBIZ_OPS_PROXY_ENABLED', 'true')
+    const incoming = new Request(`https://govbiz-test.vercel.app${path}?page=2`, {
+      method: 'POST', body: '{"decision":"approved"}', headers: {
+        'x-vercel-forwarded-for': '203.0.113.12', cookie: 'govbiz_ops_csrf=test; session=member',
+        origin: 'https://govbiz-test.vercel.app', 'x-csrftoken': 'csrf-test',
+        'content-type': 'application/json', 'x-forwarded-proto': 'http',
+      },
+    })
+    const response = middleware(incoming)
+    expect(response.headers.get('x-middleware-rewrite')).toBe(`https://test-distribution.cloudfront.net${path}?page=2`)
+    expect(response.headers.get('x-middleware-request-x-csrftoken')).toBe('csrf-test')
+    expect(response.headers.get('x-middleware-request-cookie')).toBe('govbiz_ops_csrf=test; session=member')
+    expect(response.headers.get('x-middleware-request-origin')).toBe('https://govbiz-test.vercel.app')
+    expect(response.headers.get('x-middleware-request-x-forwarded-proto')).toBeNull()
+    expect(response.headers.get('cache-control')).toContain('no-store')
+    expect(incoming.bodyUsed).toBe(false)
+  })
+  it.each(['', '1', 'TRUE'])('명시적인 true가 아닌 Ops 활성화 값 %s는 차단한다', (value) => {
+    vi.stubEnv('GOVBIZ_OPS_PROXY_ENABLED', value)
+    expect(middleware(request('203.0.113.12', 'https://govbiz-test.vercel.app/api/v1/ops')).status).toBe(503)
+  })
+  it('Ops를 활성화해도 Preview와 비밀값 누락은 차단한다', () => {
+    vi.stubEnv('GOVBIZ_OPS_PROXY_ENABLED', 'true')
+    const incoming = request('203.0.113.12', 'https://govbiz-test.vercel.app/api/v1/ops/session')
+    vi.stubEnv('VERCEL_ENV', 'preview')
+    expect(middleware(incoming).status).toBe(403)
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('GOVBIZ_PROXY_SECRET', '')
+    expect(middleware(incoming).status).toBe(503)
+  })
+  it('Ops와 접두사만 비슷한 일반 API는 비활성화 대상이 아니다', () => {
+    expect(middleware(request('203.0.113.12', 'https://govbiz-test.vercel.app/api/v1/ops-other')).headers.get('x-middleware-rewrite'))
+      .toBe('https://test-distribution.cloudfront.net/api/v1/ops-other')
+  })
+  it.each(['/api/v1/%6fps/session', '/api/v1/ops%2Fsession', '/api/v1/test%2F..%2Fops/session'])('Ops 차단을 인코딩 경로 %s로 우회하지 못한다', (path) => {
+    expect(middleware(request('203.0.113.12', `https://govbiz-test.vercel.app${path}`)).status).toBe(503)
+  })
+  it.each(['/api/v1//ops/session', '/api/v1/ops%5Csession', '/api/v1/%ZZ'])('모호하거나 잘못된 경로 %s는 거절한다', (path) => {
+    expect(middleware(request('203.0.113.12', `https://govbiz-test.vercel.app${path}`)).status).toBe(400)
   })
 })

@@ -40,7 +40,9 @@ Root Directory는 `frontend/web`, Node 24.x/pnpm 11.22.x를 사용합니다. Ver
 현재 AWS 이전 계획도 **웹은 Vercel, 백엔드는 EKS**로 분리합니다.
 [EKS 시연 구성](../../infrastructure/eks/sydney-demo.md#웹-배포와-api-연결)의 `--vercel-origin`으로
 EKS 웹 Pod를 제외하고 Core·Ops에 실제 웹 주소를 반영합니다. AWS의 외부 HTTPS API 진입점과
-현재 503인 Vercel Ops 프록시는 별도로 연결해야 합니다.
+Vercel Ops 프록시는 [EKS API 진입점](../../infrastructure/eks/api-entrypoint.md)을 검증한 뒤
+Production의 `GOVBIZ_OPS_PROXY_ENABLED=true`로 활성화합니다. 기본값은 503 차단이며,
+활성화해도 운영 origin·프록시 비밀값 검사는 유지하고 쿠키·Origin·CSRF 헤더를 전달합니다.
 
 ### Docker Compose
 
@@ -197,8 +199,9 @@ Core API와 함께 켠 뒤 저장소 루트에서 Node 24.x/pnpm 11.22.x로 `pnp
 - 원본 Evidently HTML은 기존 인증 API·무결성 검증·sandbox 보안 정책을 유지하며 해설 하단에서 새 탭으로 엽니다. 비교 기록이 없는 과거 실행은 원본을 안내하며, 질문 자료 조회 실패는 별도로 표시합니다. Langfuse·Prefect의 자체 UI는 해당 링크로 이동합니다.
 
 개발 프록시는 정적 배포에 포함되지 않습니다. 운영 환경에는 `/ops/*` SPA 라우팅과
-`/api/v1/ops/*` → Django 프록시를 별도로 연결해야 합니다. 현재 Vercel 미들웨어는 미연결 Ops 요청을
-503으로 반환하며 Core API에 잘못 전달하지 않습니다.
+`/api/v1/ops/*` → Django 프록시를 별도로 연결해야 합니다. Vercel 미들웨어는
+`GOVBIZ_OPS_PROXY_ENABLED=true`를 설정하기 전 Ops 요청을 503으로 반환합니다.
+활성화 전 [EKS API 연결](../../infrastructure/eks/api-entrypoint.md)의 경로 분기·인증·CSRF를 확인합니다.
 
 Kubernetes용 [Dockerfile](Dockerfile)은 정적 번들과 [Nginx](nginx.conf)를 한 이미지로 빌드합니다.
 `/ops/*`를 포함한 SPA 새로고침과 같은 origin의 Core·Ops API를 처리하며, Vercel 미들웨어나
