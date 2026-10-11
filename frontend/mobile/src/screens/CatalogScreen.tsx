@@ -34,6 +34,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
   const defaults = { ...initialFilters, status: selection ? 'ALL' as const : initialFilters.status }
   const [keyword, setKeyword] = useState('')
   const [applied, setApplied] = useState(defaults)
+  const [draft, setDraft] = useState(defaults)
   const [catalog, setCatalog] = useState<SupportProgramCatalog | null>(null)
   const available = useRef<SupportProgramCatalog | null>(null)
   const [loading, setLoading] = useState(true)
@@ -41,6 +42,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
   const [filterOpen, setFilterOpen] = useState(false)
   const [retry, setRetry] = useState(0)
   const regions = split(applied.region), categories = split(applied.category)
+  const draftRegions = split(draft.region), draftCategories = split(draft.category)
   const activeConditions = [
     ...regions.map(value => ({ key: 'region' as const, value, label: value })),
     ...categories.map(value => ({ key: 'category' as const, value, label: value })),
@@ -76,16 +78,32 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
     else if (item.key === 'sourceCode') change('sourceCode', '')
     else change(item.key, '')
   }
-  function reset() { setKeyword(''); apply({ ...defaults }) }
+  function openFilters() { setDraft({ ...applied }); setFilterOpen(true) }
+  function closeFilters() { setDraft({ ...applied }); setFilterOpen(false) }
+  function changeDraft<K extends keyof SupportProgramCatalogFilters>(key: K, value: SupportProgramCatalogFilters[K]) {
+    setDraft(previous => ({ ...previous, [key]: value,
+      ...(key === 'sourceCode' && value !== 'KSTARTUP' ? { startupStage: '', applicantType: '', founderAge: '' } : {}) }))
+  }
+  function toggleDraft(key: 'region' | 'category', value: string) {
+    setDraft(previous => {
+      const selected = split(previous[key])
+      return { ...previous, [key]: (selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value]).join(',') }
+    })
+  }
+  function applyDraft() {
+    // The sheet keeps the submitted keyword; resetting clears it only on Apply.
+    if (draft.keyword !== applied.keyword) setKeyword(draft.keyword)
+    apply({ ...draft, page: 1 }); setFilterOpen(false)
+  }
   const cached = available.current
-  const periodMissing = applied.sourceCode === 'MSIT' || applied.sourceCode === 'CNTRADE_NOTICE'
+  const periodMissing = draft.sourceCode === 'MSIT' || draft.sourceCode === 'CNTRADE_NOTICE'
   return <Page keyboardOffset={keyboardOffset}>
     {header}
     <View style={local.search}><View style={local.keyword}>
       <Field label="공고명·기관명" value={keyword} onChangeText={setKeyword} maxLength={100} placeholder="공고명 또는 기관명"
         returnKeyType="search" onSubmitEditing={() => apply({ ...applied, keyword: keyword.trim(), page: 1 })} />
     </View><Pressable accessibilityRole="button" accessibilityLabel="공고 필터 열기" accessibilityState={{ expanded: filterOpen }}
-      onPress={() => setFilterOpen(true)} style={local.filterButton}><AppIcon name="filter" color={colors.primary} size={19} />
+      onPress={openFilters} style={local.filterButton}><AppIcon name="filter" color={colors.primary} size={19} />
       <Text style={local.filterText}>필터{activeConditions.length ? ` ${activeConditions.length}` : ''}</Text></Pressable></View>
     {keyword.trim() !== applied.keyword && <Text style={styles.muted}>검색어는 키보드의 검색을 눌러 적용해 주세요.</Text>}
     <View testID="catalog-condition-summary" style={local.conditions}>
@@ -112,26 +130,25 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
         <Button label="다음" variant="secondary" disabled={applied.page >= catalog.totalPages} onPress={() => apply({ ...applied, page: applied.page + 1 })} />
       </View>}
     </>}
-    <PartnerSheet visible={filterOpen} title="공고 검색 필터" onClose={() => setFilterOpen(false)} actions={<>
-      <Button label="초기화" variant="secondary" onPress={reset} />
-      <Button label={loading ? '결과 조회 중' : error ? '결과 확인하기' : `결과 ${catalog?.total.toLocaleString() ?? '—'}건 보기`}
-        disabled={loading} onPress={() => setFilterOpen(false)} />
+    <PartnerSheet visible={filterOpen} title="공고 검색 필터" onClose={closeFilters} actions={<>
+      <Button label="초기화" variant="secondary" onPress={() => setDraft({ ...defaults })} />
+      <Button label="적용" onPress={applyDraft} />
     </>}>
-      <FilterMultiChoices label="지역" selected={regions} options={mergeCatalogFilterOptions(defaultCatalogRegions, [...(cached?.regions ?? []), ...regions])}
-        onToggle={value => toggle('region', value)} onClear={() => change('region', '')} />
-      <FilterMultiChoices label="분야" selected={categories} options={mergeCatalogFilterOptions(defaultCatalogCategories, [...(cached?.categories ?? []), ...categories])}
-        onToggle={value => toggle('category', value)} onClear={() => change('category', '')} />
-      <ChoiceField label="출처" value={applied.sourceCode} options={catalogSourceCodes.map(value => ({ value, label: catalogSourceLabels[value] }))}
-        onChange={value => change('sourceCode', value as SupportProgramCatalogFilters['sourceCode'])} />
-      <ChoiceField label="접수 상태" value={applied.status} options={statusOptions} onChange={value => change('status', value as SupportProgramCatalogFilters['status'])} />
+      <Text style={styles.muted}>필터를 고른 뒤 적용을 눌러 주세요. 닫으면 변경한 조건은 반영되지 않아요.</Text>
+      <FilterMultiChoices label="지역" selected={draftRegions} options={mergeCatalogFilterOptions(defaultCatalogRegions, [...(cached?.regions ?? []), ...draftRegions])}
+        onToggle={value => toggleDraft('region', value)} onClear={() => changeDraft('region', '')} />
+      <FilterMultiChoices label="분야" selected={draftCategories} options={mergeCatalogFilterOptions(defaultCatalogCategories, [...(cached?.categories ?? []), ...draftCategories])}
+        onToggle={value => toggleDraft('category', value)} onClear={() => changeDraft('category', '')} />
+      <ChoiceField label="출처" value={draft.sourceCode} options={catalogSourceCodes.map(value => ({ value, label: catalogSourceLabels[value] }))}
+        onChange={value => changeDraft('sourceCode', value as SupportProgramCatalogFilters['sourceCode'])} />
+      <ChoiceField label="접수 상태" value={draft.status} options={statusOptions} onChange={value => changeDraft('status', value as SupportProgramCatalogFilters['status'])} />
       {periodMissing && <Notice>접수 기간을 제공하지 않는 공고는 상태 확인 필요에 표시됩니다. 전체 접수 상태 또는 상태 확인 필요로 검색해 주세요.</Notice>}
-      {applied.sourceCode === 'KSTARTUP' && <>
+      {draft.sourceCode === 'KSTARTUP' && <>
         <Text style={styles.heading}>K-Startup 추가 조건</Text>
-        <ChoiceField label="창업 업력" value={applied.startupStage} options={options(defaultCatalogStartupStages, cached?.startupStages)} onChange={value => change('startupStage', value)} />
-        <ChoiceField label="신청 대상" value={applied.applicantType} options={options(defaultCatalogApplicantTypes, cached?.applicantTypes)} onChange={value => change('applicantType', value)} />
-        <ChoiceField label="대표자 연령" value={applied.founderAge} options={options(defaultCatalogFounderAges, cached?.founderAges)} onChange={value => change('founderAge', value)} />
+        <ChoiceField label="창업 업력" value={draft.startupStage} options={options(defaultCatalogStartupStages, cached?.startupStages)} onChange={value => changeDraft('startupStage', value)} />
+        <ChoiceField label="신청 대상" value={draft.applicantType} options={options(defaultCatalogApplicantTypes, cached?.applicantTypes)} onChange={value => changeDraft('applicantType', value)} />
+        <ChoiceField label="대표자 연령" value={draft.founderAge} options={options(defaultCatalogFounderAges, cached?.founderAges)} onChange={value => changeDraft('founderAge', value)} />
       </>}
-      {error && <Notice error>{error}</Notice>}
       <Text style={styles.muted}>공고 분류 기준입니다. 실제 신청 자격은 공고 원문에서 확인해 주세요.</Text>
       {selection && <Text style={styles.muted}>공고 상세 조회와 작성·비교 대상 선택은 별도 동작입니다.</Text>}
     </PartnerSheet>
