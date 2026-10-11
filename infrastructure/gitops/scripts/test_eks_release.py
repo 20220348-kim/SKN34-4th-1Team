@@ -7,7 +7,6 @@ import os
 import subprocess
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -181,82 +180,53 @@ class EksReleaseTests(unittest.TestCase):
             ):
                 release.digest("govbiz-demo/core-service", "git-" + SHA)
 
-    def dispatch_simulation(
-        self, *, version="version-123", state="SUCCEEDED", stale=False
-    ):
-        calls = []
-
-        def aws(*args):
-            calls.append(args)
-            if args[:2] == ("s3api", "put-object"):
-                with zipfile.ZipFile(args[args.index("--body") + 1]) as bundle:
-                    self.assertEqual(json.loads(bundle.read("release.json")), receipt())
-                    self.assertEqual(len(bundle.namelist()), 5)
-                    self.assertIn("infrastructure/eks/deploy.py", bundle.namelist())
-                return {"VersionId": version}
-            if args[:2] == ("codebuild", "start-build"):
-                return {"build": {"id": "govbiz-deploy:test"}}
-            return {"builds": [{"buildStatus": state}]}
-
+    def test_rollout_requires_current_ci_and_matching_receipt_before_mutation(self):
         with tempfile.TemporaryDirectory() as temp:
-            file = Path(temp) / "receipt.json"
+            file = Path(temp) / "release.json"
             file.write_text(json.dumps(receipt()))
             with (
-                patch.dict(
-                    os.environ,
-                    {
-                        **ENV,
-                        "EKS_RELEASE_BUCKET": "govbiz-release-test",
-                        "EKS_DEPLOY_PROJECT": "govbiz-deploy",
-                        "GITHUB_RUN_ID": "12",
-                        "GITHUB_RUN_ATTEMPT": "2",
-                    },
-                ),
-                patch.object(
-                    release,
-                    "check",
-                    side_effect=[None, ValueError("superseded")] if stale else None,
-                ),
-                patch.object(
-                    release,
-                    "settings",
-                    return_value=(
-                        ENV["AWS_ACCOUNT_ID"],
-                        ENV["AWS_REGION"],
-                        ENV["EKS_CLUSTER_NAME"],
-                    ),
-                ),
-                patch.object(
-                    release.subprocess,
-                    "check_output",
-                    return_value=b"tracked deployment source",
-                ),
-                patch.object(release, "aws", side_effect=aws),
+                patch.object(release, "check") as check,
+                patch.dict("sys.modules", {"deploy": deploy}),
+                patch.object(deploy, "deploy") as apply,
             ):
-                try:
-                    release.dispatch(SHA, file)
-                except ValueError as error:
-                    return calls, error
-        return calls, None
+                release.rollout(SHA, file)
+                check.assert_called_once_with(SHA)
+                apply.assert_called_once_with(receipt())
+                apply.reset_mock()
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    release.rollout("c" * 40, file)
+                apply.assert_not_called()
+                check.side_effect = ValueError("CI rerun pending")
+                with self.assertRaisesRegex(ValueError, "CI rerun pending"):
+                    release.rollout(SHA, file)
+                apply.assert_not_called()
 
-    def test_dispatch_uses_exact_s3_version_and_does_not_accept_failed_build(self):
-        calls, error = self.dispatch_simulation()
-        self.assertIsNone(error)
-        start = next(c for c in calls if c[:2] == ("codebuild", "start-build"))
-        self.assertEqual(start[start.index("--source-version") + 1], "version-123")
-        self.assertEqual(
-            start[start.index("--source-location-override") + 1],
-            f"govbiz-release-test/releases/{SHA}/12-2.zip",
-        )
-        self.assertEqual(start[start.index("--idempotency-token") + 1], "12-2")
-        _calls, error = self.dispatch_simulation(state="FAILED")
-        self.assertIn("deployment failed", str(error))
+    def test_rollout_failures_are_not_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            file = Path(temp) / "release.json"
+            file.write_text(json.dumps(receipt()))
+            with (
+                patch.object(release, "check"),
+                patch.dict("sys.modules", {"deploy": deploy}),
+                patch.object(
+                    deploy, "deploy", side_effect=ValueError("migration failed")
+                ),
+                self.assertRaisesRegex(ValueError, "migration failed"),
+            ):
+                release.rollout(SHA, file)
 
-    def test_dispatch_rejects_unversioned_bundle_and_changed_ci_before_start(self):
-        for options in ({"version": None}, {"version": "null"}, {"stale": True}):
-            calls, error = self.dispatch_simulation(**options)
-            self.assertIsInstance(error, ValueError)
-            self.assertFalse(any(c[:2] == ("codebuild", "start-build") for c in calls))
+    def test_codebuild_uses_actions_token_for_ci_and_preserves_failure(self):
+        with (
+            patch.dict(os.environ, {"GH_TOKEN": "test-only"}),
+            patch.object(deploy, "current") as current,
+            patch.object(deploy.gate, "ci_blocked_reason", return_value=None) as ci,
+        ):
+            deploy.check_ci(SHA)
+            self.assertIs(ci.call_args.args[2], deploy.gate.api)
+            current.assert_called_once_with(SHA)
+            ci.return_value = "ci_jobs_not_successful_or_incomplete:ci.yml"
+            with self.assertRaisesRegex(ValueError, "CI changed"):
+                deploy.check_ci(SHA)
 
     def test_receipt_rejects_other_account_registry_tag_and_missing_runner(self):
         deploy.validate(receipt(), ENV)
@@ -473,7 +443,24 @@ class EksReleaseTests(unittest.TestCase):
             "github.repository == 'ilil1/SKN34-4th-1Team'", w["jobs"]["gate"]["if"]
         )
         self.assertNotIn("id-token", w["permissions"])
-        self.assertEqual(w["jobs"]["backend"]["permissions"]["id-token"], "write")
+        backend = w["jobs"]["backend"]
+        self.assertNotIn("id-token", backend["permissions"])
+        self.assertEqual(backend["environment"], "eks-production")
+        self.assertEqual(backend["needs"], "gate")
+        self.assertEqual(backend["if"], "needs.gate.outputs.ready == 'true'")
+        self.assertEqual(
+            backend["runs-on"],
+            "codebuild-${{ vars.EKS_DEPLOY_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}",
+        )
+        commands = "\n".join(step.get("run", "") for step in backend["steps"])
+        self.assertIn("release.py rollout", commands)
+        self.assertNotIn("release.py dispatch", commands)
+        self.assertFalse(
+            any(
+                "configure-aws-credentials" in step.get("uses", "")
+                for step in backend["steps"]
+            )
+        )
         web = w["jobs"]["web"]
         self.assertIn("backend", web["needs"])
         steps = "\n".join(s.get("run", "") for s in web["steps"])
@@ -488,33 +475,59 @@ class EksReleaseTests(unittest.TestCase):
         config = json.loads((ROOT / "frontend/web/vercel.json").read_text())
         self.assertIs(config["git"]["deploymentEnabled"]["main"], False)
 
-    def test_stack_uses_versioned_private_source_and_project_scoped_permissions(self):
+    def test_stack_uses_connection_runner_and_scoped_service_role_without_oidc(self):
         stack = yaml.load(
             (ROOT / "infrastructure/eks/release-stack.yaml").read_text(),
             Loader=yaml.BaseLoader,
         )
         resources = stack["Resources"]
+        self.assertNotIn("GitHubReleaseRole", resources)
+        self.assertNotIn("ReleaseBucket", resources)
+        self.assertNotIn("GitHubOidcProviderArn", stack["Parameters"])
+        self.assertEqual(stack["Parameters"]["EnableWebhook"]["Default"], "false")
         project = resources["DeployProject"]["Properties"]
         self.assertEqual(project["ConcurrentBuildLimit"], "1")
-        self.assertEqual(project["Environment"]["PrivilegedMode"], "false")
+        self.assertEqual(project["Environment"]["PrivilegedMode"], "true")
         self.assertIn("VpcConfig", project)
+        self.assertEqual(project["Source"]["Type"], "GITHUB")
         self.assertEqual(
-            resources["ReleaseBucket"]["Properties"]["VersioningConfiguration"][
-                "Status"
-            ],
-            "Enabled",
+            project["Source"]["Location"], f"https://github.com/{release.SOURCE}.git"
         )
-        role = resources["GitHubReleaseRole"]["Properties"]
-        trust = role["AssumeRolePolicyDocument"]["Statement"][0]["Condition"][
-            "StringEquals"
-        ]
+        self.assertEqual(project["Source"]["Auth"]["Type"], "CODECONNECTIONS")
+        self.assertEqual(project["SourceVersion"], "refs/heads/main")
+        self.assertIn("exit 1", project["Source"]["BuildSpec"])
+        conditional = project["Triggers"]["FilterGroups"]
+        self.assertEqual(conditional[0], "WebhookEnabled")
+        self.assertEqual(conditional[2], "AWS::NoValue")
+        filters = conditional[1]
         self.assertEqual(
-            trust["token.actions.githubusercontent.com:sub"],
-            f"repo:{release.SOURCE}:environment:eks-production",
+            len(filters), 1
+        )  # Conditions are ANDed, never separate OR groups.
+        self.assertEqual(
+            {f["Type"]: f["Pattern"] for f in filters[0]},
+            {
+                "EVENT": "WORKFLOW_JOB_QUEUED",
+                "WORKFLOW_NAME": "^EKS and Vercel release$",
+                "ACTOR_ACCOUNT_ID": "^${GitHubActorId}$",
+            },
         )
-        for rule in role["Policies"][0]["PolicyDocument"]["Statement"]:
-            if "codebuild:BatchGetBuilds" in rule["Action"]:
-                self.assertEqual(rule["Resource"], "DeployProject.Arn")
+        role = resources["DeployRole"]["Properties"]
+        trust = role["AssumeRolePolicyDocument"]["Statement"][0]
+        self.assertEqual(trust["Principal"], {"Service": "codebuild.amazonaws.com"})
+        self.assertIn("aws:SourceArn", trust["Condition"]["ArnEquals"])
+        statements = role["Policies"][0]["PolicyDocument"]["Statement"]
+        publish = next(r for r in statements if "ecr:PutImage" in r["Action"])
+        self.assertEqual(len(publish["Resource"]), 5)
+        connection = next(
+            r for r in statements if "codeconnections:GetConnectionToken" in r["Action"]
+        )
+        self.assertEqual(connection["Resource"], "GitHubConnectionArn")
+        self.assertFalse(
+            any(
+                "iam:*" in r["Action"] or "sts:AssumeRoleWithWebIdentity" in r["Action"]
+                for r in statements
+            )
+        )
         self.assertEqual(
             resources["DeployAccess"]["Properties"]["KubernetesGroups"],
             ["govbiz-eks-release"],
