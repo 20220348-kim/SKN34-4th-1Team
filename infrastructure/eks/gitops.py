@@ -47,6 +47,67 @@ SOURCE_PATHS = (
 )
 
 
+def read_settings(root=None, sha=None):
+    path = "infrastructure/eks/gitops-values.yaml"
+    root = root or ROOT
+    contents = git_bytes(root, "show", f"{sha}:{path}") if sha else (root / path).read_bytes()
+    return yaml.safe_load(contents)
+
+
+def replica_bounds(settings):
+    """Only opted-in stateless services delegate replica ownership to HPA."""
+    bounds = {}
+    for name, value in settings["services"].items():
+        scaling = value.get("autoscaling", {})
+        enabled = scaling.get("enabled", False)
+        release.require(type(enabled) is bool, "Autoscaling enabled must be a boolean")
+        if not enabled:
+            continue
+        minimum = scaling.get("minReplicas", 1)
+        maximum = scaling.get("maxReplicas", 3)
+        target = scaling.get("targetCPUUtilizationPercentage", 70)
+        release.require(
+            name in ("core-service", "ai-service")
+            and all(type(n) is int for n in (minimum, maximum, target))
+            and 1 <= minimum <= maximum <= 10
+            and 1 <= target <= 100,
+            "Autoscaling requires a supported stateless service and bounded replicas/CPU target",
+        )
+        bounds[name] = (minimum, maximum)
+    return bounds
+
+
+def replica_ignores(settings):
+    return [
+        {
+            "group": "apps",
+            "kind": "Deployment",
+            "namespace": "govbiz-msa",
+            "name": name,
+            "jsonPointers": ["/spec/replicas"],
+        }
+        for name in sorted(replica_bounds(settings))
+    ]
+
+
+def running_replicas(row, bounds):
+    desired = row["spec"].get("replicas")
+    minimum, maximum = bounds.get(row["metadata"]["name"], (1, 1))
+    return type(desired) is int and minimum <= desired <= maximum
+
+
+def deployment_ready(row, bounds):
+    status = row.get("status", {})
+    return (
+        running_replicas(row, bounds)
+        and status.get("observedGeneration", 0) >= row["metadata"]["generation"]
+        and all(
+            status.get(key) == row["spec"]["replicas"]
+            for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas")
+        )
+    )
+
+
 def validate_record(record, sha, env=os.environ):
     deploy.validate(record, env)
     release.require(record["sourceSha"] == sha, "Receipt source does not match the tested checkout")
@@ -68,7 +129,8 @@ def bundle(root, record, tag, helm="helm"):
         checkout = Path(directory).resolve()
         write_files(checkout, source)
         gitops = checkout / PREFIX
-        settings = yaml.safe_load((checkout / "infrastructure/eks/gitops-values.yaml").read_text())
+        settings = read_settings(checkout)
+        replica_bounds(settings)
 
         def values(path):
             return yaml.safe_load((gitops / path).read_text())
@@ -109,7 +171,12 @@ def bundle(root, record, tag, helm="helm"):
                 stderr=subprocess.PIPE,
             )
             rows = [r for r in yaml.safe_load_all(output) if r]
-            errors = policy_errors(name, rows, ops_sync_enabled=name == "ops-service")
+            errors = policy_errors(
+                name,
+                rows,
+                ops_sync_enabled=name == "ops-service",
+                autoscaling=value.get("autoscaling"),
+            )
             release.require(not errors, "EKS service policy failed: " + "; ".join(errors))
             if name == "ops-service":
                 migration = next(r for r in rows if r["kind"] == "Job")
@@ -178,12 +245,15 @@ def bundle(root, record, tag, helm="helm"):
     return result
 
 
-def application(runtime):
+def application(runtime, settings=None):
     """Adopt current settings privately, with no image/command overrides or data ownership."""
     release.require(
         runtime.get("cluster") == "govbiz-eks.ap-southeast-2.eksctl.io",
         "Export the selected Sydney cluster, not a local cluster",
     )
+    settings = read_settings() if settings is None else settings
+    bounds = replica_bounds(settings)
+    ignores = replica_ignores(settings)
     rows = runtime["items"]
     release.require(len(rows) == len(WORKLOADS), "Export only the six application Deployments")
     for row in rows:
@@ -205,13 +275,15 @@ def application(runtime):
             row["spec"]["selector"] == {"matchLabels": labels},
             "Immutable selector differs from the Helm contract",
         )
-        pool = "observability" if name == "ai-service" else "application"
+        pool = settings["placement"][name]
         release.require(
             row["spec"]["template"]["spec"].get("nodeSelector")
             == {"govbiz.io/workload-pool": pool},
             "Unexpected EKS workload placement",
         )
-    patches = runtime_patches(runtime, WORKLOADS, preserve_placement=True)
+    patches = runtime_patches(
+        runtime, WORKLOADS, preserve_placement=True, replica_bounds=bounds
+    )
     return [
         {
             "apiVersion": "argoproj.io/v1alpha1",
@@ -231,6 +303,7 @@ def application(runtime):
                         ("", "Service"),
                         ("batch", "Job"),
                         ("networking.k8s.io", "NetworkPolicy"),
+                        ("autoscaling", "HorizontalPodAutoscaler"),
                     )
                 ],
             },
@@ -241,6 +314,7 @@ def application(runtime):
             "metadata": {"name": NAME, "namespace": "argocd"},
             "spec": {
                 "project": NAME,
+                **({"ignoreDifferences": ignores} if ignores else {}),
                 "destination": {
                     "server": "https://kubernetes.default.svc",
                     "namespace": "govbiz-msa",
@@ -254,7 +328,8 @@ def application(runtime):
                 },
                 "syncPolicy": {
                     "automated": {"enabled": True, "prune": False, "selfHeal": False},
-                    "syncOptions": ["FailOnSharedResource=true"],
+                    "syncOptions": ["FailOnSharedResource=true"]
+                    + (["RespectIgnoreDifferences=true"] if ignores else []),
                     "retry": {
                         "limit": 5,
                         "backoff": {"duration": "30s", "factor": 2, "maxDuration": "5m"},
@@ -299,7 +374,9 @@ def connect():
     )
 
 
-def check_application(app):
+def check_application(app, settings=None):
+    settings = read_settings() if settings is None else settings
+    ignores = replica_ignores(settings)
     spec = app["spec"]
     source = spec.get("source", {})
     release.require(
@@ -325,7 +402,9 @@ def check_application(app):
     release.require(
         spec.get("syncPolicy", {}).get("automated")
         == {"enabled": True, "prune": False, "selfHeal": False}
-        and spec.get("syncPolicy", {}).get("syncOptions") == ["FailOnSharedResource=true"],
+        and spec.get("syncPolicy", {}).get("syncOptions")
+        == ["FailOnSharedResource=true"] + (["RespectIgnoreDifferences=true"] if ignores else [])
+        and spec.get("ignoreDifferences", []) == ignores,
         "Unexpected Argo sync policy",
     )
     # Preserve only installation-time environment, placement and claim references.
@@ -342,8 +421,10 @@ def check_application(app):
 
 def preflight():
     connect()
+    settings = read_settings()
+    bounds = replica_bounds(settings)
     app = kube("argocd", "application", NAME)
-    check_application(app)
+    check_application(app, settings)
     release.require(
         not app.get("operation")
         and app.get("status", {}).get("operationState", {}).get("phase") != "Running",
@@ -353,8 +434,8 @@ def preflight():
     for namespace, name, _ in deploy.TARGETS:
         row = kube(namespace, "deployment", name)
         release.require(
-            row["spec"].get("replicas") == 1,
-            "A stopped workload must not be restarted by a release",
+            running_replicas(row, bounds),
+            "A stopped or out-of-bounds workload must not be changed by a release",
         )
         release.require(
             not row["metadata"].get("annotations", {}).get("govbiz.io/release-in-progress"),
@@ -425,7 +506,7 @@ def publish(sha, receipt, helm="helm"):
                 ),
                 "ECR receipt differs from the published immutable image",
             )
-        check_application(kube("argocd", "application", NAME))
+        check_application(kube("argocd", "application", NAME), read_settings(ROOT, sha))
 
     revision = publish_tag(
         ROOT, Fork(release.SOURCE), sha, tag, files, recheck, tag_prefix=TAG_PREFIX
@@ -436,8 +517,10 @@ def publish(sha, receipt, helm="helm"):
     print("Published immutable EKS release: " + tag)
 
 
-def synced(app, record, deployments):
-    check_application(app)
+def synced(app, record, deployments, settings=None):
+    settings = read_settings() if settings is None else settings
+    bounds = replica_bounds(settings)
+    check_application(app, settings)
     status = app.get("status", {})
     revision = record["gitopsRevision"]
     operation = status.get("operationState", {})
@@ -467,15 +550,7 @@ def synced(app, record, deployments):
         return False
     for _, name, mapping in deploy.TARGETS:
         row = deployments[name]
-        s = row.get("status", {})
-        if (
-            row["spec"].get("replicas") != 1
-            or s.get("observedGeneration", 0) < row["metadata"]["generation"]
-            or any(
-                s.get(key) != 1
-                for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas")
-            )
-        ):
+        if not deployment_ready(row, bounds):
             return False
         pod = row["spec"]["template"]
         if (
@@ -504,6 +579,7 @@ def wait(sha, receipt, timeout=1200):
     )
     connect()
     release.check(sha)
+    settings = read_settings(ROOT, sha)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         release.require(
@@ -512,7 +588,7 @@ def wait(sha, receipt, timeout=1200):
         )
         app = kube("argocd", "application", NAME)
         deployments = {name: kube(ns, "deployment", name) for ns, name, _ in deploy.TARGETS}
-        if synced(app, record, deployments):
+        if synced(app, record, deployments, settings):
             release.check(sha)
             print("Argo CD synced the exact release; both hooks and all six Deployments succeeded.")
             return

@@ -56,6 +56,11 @@ class EksGitOpsTests(unittest.TestCase):
             for item in [path] if path.is_file() else path.rglob("*"):
                 if item.is_file():
                     files[item.relative_to(ROOT).as_posix()] = item.read_bytes()
+        cls.settings = yaml.safe_load(files["infrastructure/eks/gitops-values.yaml"])
+        for value in cls.settings["services"].values():
+            value.pop("autoscaling", None)
+        files["infrastructure/eks/gitops-values.yaml"] = yaml.safe_dump(cls.settings).encode()
+        cls.source_files = files
         cls.sha = commit_tree(cls.root, files)
         git_bytes(cls.root, "update-ref", "HEAD", cls.sha)
         cls.record = receipt(cls.sha)
@@ -66,6 +71,29 @@ class EksGitOpsTests(unittest.TestCase):
             if name.endswith(".yaml") and "kustomization" not in name
             for r in yaml.safe_load_all(payload)
         ]
+
+    def setUp(self):
+        read_settings = gitops.read_settings
+        mock = patch.object(
+            gitops,
+            "read_settings",
+            side_effect=lambda root=None, sha=None: (
+                copy.deepcopy(self.settings) if root is None else read_settings(root, sha)
+            ),
+        )
+        mock.start()
+        self.addCleanup(mock.stop)
+
+    def scaling_settings(self):
+        settings = copy.deepcopy(self.settings)
+        for name in ("core-service", "ai-service"):
+            settings["services"][name]["autoscaling"] = {
+                "enabled": True,
+                "minReplicas": 1,
+                "maxReplicas": 3,
+                "targetCPUUtilizationPercentage": 70,
+            }
+        return settings
 
     def runtime(self):
         rows = copy.deepcopy([r for r in self.rows if r["kind"] == "Deployment"])
@@ -151,6 +179,118 @@ class EksGitOpsTests(unittest.TestCase):
         path.parent.mkdir(parents=True)
         path.write_text("invalid dirty configuration")
         self.assertEqual(gitops.bundle(self.root, self.record, TAG), self.files)
+
+    def test_opted_in_release_renders_hpa_and_shared_pool_from_tested_source(self):
+        settings = self.scaling_settings()
+        settings["placement"] = {name: "workloads" for name in gitops.WORKLOADS}
+        files = dict(self.source_files)
+        files["infrastructure/eks/gitops-values.yaml"] = yaml.safe_dump(settings).encode()
+        sha = commit_tree(self.root, files)
+        rendered = gitops.bundle(self.root, receipt(sha), TAG)
+        rows = [
+            row
+            for name, contents in rendered.items()
+            if name.endswith(".yaml") and "kustomization" not in name
+            for row in yaml.safe_load_all(contents)
+        ]
+        self.assertEqual(
+            {r["metadata"]["name"] for r in rows if r["kind"] == "HorizontalPodAutoscaler"},
+            {"core-service", "ai-service"},
+        )
+        for row in rows:
+            if row["kind"] in ("Deployment", "Job"):
+                self.assertEqual(
+                    row["spec"]["template"]["spec"]["nodeSelector"],
+                    {"govbiz.io/workload-pool": "workloads"},
+                )
+            if row["kind"] == "Deployment":
+                if row["metadata"]["name"] in ("core-service", "ai-service"):
+                    self.assertNotIn("replicas", row["spec"])
+                else:
+                    self.assertEqual(row["spec"]["replicas"], 1)
+
+    def test_scaled_adoption_preserves_only_bounded_stateless_replica_ownership(self):
+        settings = self.scaling_settings()
+        settings["placement"] = {name: "workloads" for name in gitops.WORKLOADS}
+        runtime = self.runtime()
+        for row in runtime["items"]:
+            row["spec"]["template"]["spec"]["nodeSelector"] = {
+                "govbiz.io/workload-pool": "workloads"
+            }
+            if row["metadata"]["name"] == "core-service":
+                row["spec"]["replicas"] = 2
+        project, app = gitops.application(runtime, settings)
+        gitops.check_application(app, settings)
+        self.assertIn(
+            {"group": "autoscaling", "kind": "HorizontalPodAutoscaler"},
+            project["spec"]["namespaceResourceWhitelist"],
+        )
+        self.assertEqual(
+            {rule["name"] for rule in app["spec"]["ignoreDifferences"]},
+            {"core-service", "ai-service"},
+        )
+        self.assertTrue(
+            all(rule["jsonPointers"] == ["/spec/replicas"] for rule in app["spec"]["ignoreDifferences"])
+        )
+        # The shared helper retains its strict local single-writer default.
+        with self.assertRaises(ValueError):
+            local_release.runtime_patches(runtime, gitops.WORKLOADS, preserve_placement=True)
+        for name, replicas in (("core-service", 0), ("core-service", 4), ("ops-artifacts", 2)):
+            wrong = copy.deepcopy(runtime)
+            next(r for r in wrong["items"] if r["metadata"]["name"] == name)["spec"]["replicas"] = replicas
+            with self.subTest(name=name, replicas=replicas), self.assertRaises(ValueError):
+                gitops.application(wrong, settings)
+
+    def test_hpa_cannot_hide_images_or_non_scalable_workloads(self):
+        settings = self.scaling_settings()
+        for mutate in (
+            lambda a: a["spec"]["ignoreDifferences"][0].update(jsonPointers=["/spec/template"]),
+            lambda a: a["spec"]["ignoreDifferences"][0].update(name="*"),
+            lambda a: a["spec"]["ignoreDifferences"][0].update(managedFieldsManagers=["argocd"]),
+            lambda a: a["spec"]["syncPolicy"].update(syncOptions=["FailOnSharedResource=true"]),
+        ):
+            app = gitops.application(self.runtime(), settings)[1]
+            mutate(app)
+            with self.assertRaisesRegex(ValueError, "sync policy"):
+                gitops.check_application(app, settings)
+        for name, change in (
+            ("catalog-service", {"enabled": True}),
+            ("ops-service", {"enabled": True}),
+            ("core-service", {"enabled": True, "minReplicas": 0}),
+            ("core-service", {"enabled": True, "maxReplicas": 11}),
+            ("core-service", {"enabled": True, "maxReplicas": True}),
+            ("core-service", {"enabled": "true"}),
+        ):
+            settings = self.scaling_settings()
+            settings["services"][name]["autoscaling"] = change
+            with self.subTest(name=name, change=change), self.assertRaises(ValueError):
+                gitops.replica_bounds(settings)
+
+    def test_sync_requires_all_scaled_replicas_ready_and_exact_images_and_source(self):
+        settings = self.scaling_settings()
+        app, record, deployments = self.success()
+        configured = gitops.application(self.runtime(), settings)[1]
+        app["spec"] = configured["spec"]
+        core = deployments["core-service"]
+        core["spec"]["replicas"] = 2
+        for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas"):
+            core["status"][key] = 2
+        self.assertTrue(gitops.synced(app, record, deployments, settings))
+        for mutate in (
+            lambda d: d["core-service"]["spec"].update(replicas=4),
+            lambda d: d["core-service"]["status"].update(readyReplicas=1),
+            # A RollingUpdate surge is transient; wait rather than declaring success/failure.
+            lambda d: d["core-service"]["status"].update(
+                replicas=3, readyReplicas=3, updatedReplicas=3, availableReplicas=3
+            ),
+            lambda d: d["core-service"]["status"].update(observedGeneration=1),
+            lambda d: d["core-service"]["spec"]["template"]["metadata"].update(annotations={}),
+            lambda d: d["core-service"]["spec"]["template"]["spec"]["containers"][0].update(image="old"),
+            lambda d: d["evaluation-runner"]["spec"].update(replicas=2),
+        ):
+            wrong = copy.deepcopy(deployments)
+            mutate(wrong)
+            self.assertFalse(gitops.synced(app, record, wrong, settings))
 
     def test_application_preserves_env_and_pvc_without_hiding_image_updates(self):
         runtime = self.runtime()
@@ -375,12 +515,45 @@ class EksGitOpsTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         gitops.preflight()
 
+    def test_preflight_accepts_bounded_hpa_scaling_without_restarting_stopped_workloads(self):
+        settings = self.scaling_settings()
+        app, _, deployments = self.success()
+        app["spec"] = gitops.application(self.runtime(), settings)[1]["spec"]
+        core = deployments["core-service"]
+        core["spec"]["replicas"] = 2
+        for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas"):
+            core["status"][key] = 2
+        with (
+            patch.object(gitops, "read_settings", return_value=settings),
+            patch.object(gitops, "connect"),
+            patch.object(
+                gitops,
+                "kube",
+                side_effect=lambda namespace, *args: (
+                    app if namespace == "argocd" else deployments[args[1]]
+                ),
+            ),
+            patch.object(gitops.subprocess, "run", return_value=Mock(returncode=1, stdout="no\n")),
+        ):
+            gitops.preflight()
+            core["status"]["readyReplicas"] = 1
+            # HPA may still be provisioning capacity; final readiness belongs to wait().
+            gitops.preflight()
+            core["status"]["readyReplicas"] = 2
+            core["spec"]["replicas"] = 0
+            with self.assertRaisesRegex(ValueError, "stopped"):
+                gitops.preflight()
+
     def test_timeout_and_superseded_main_do_not_report_success(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, ENV):
             _, record, _ = self.success()
             path = Path(temp) / "receipt.json"
             path.write_text(json.dumps(record))
-            with patch.object(gitops, "connect"), patch.object(gitops.release, "check") as check:
+            with (
+                patch.object(gitops, "ROOT", self.root),
+                patch.object(gitops, "connect"),
+                patch.object(gitops.release, "check") as check,
+            ):
                 with self.assertRaisesRegex(ValueError, "timed out"):
                     gitops.wait(self.sha, path, timeout=0)
                 check.side_effect = ValueError("Source superseded")

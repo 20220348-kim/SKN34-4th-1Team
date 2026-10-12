@@ -320,7 +320,9 @@ def bundle(root, fork, sha, tag, receipts, helm="helm"):
     return files
 
 
-def runtime_patches(runtime, workloads=WORKLOADS, *, preserve_placement=False):
+def runtime_patches(
+    runtime, workloads=WORKLOADS, *, preserve_placement=False, replica_bounds=None
+):
     """Keep installed environment/Secret references and results PVC, never images."""
     deployments = [
         row
@@ -337,9 +339,12 @@ def runtime_patches(runtime, workloads=WORKLOADS, *, preserve_placement=False):
         namespace = (
             "govbiz-evaluation" if name in (RUNNER, "ops-artifacts") else "govbiz-msa"
         )
+        minimum, maximum = (replica_bounds or {}).get(name, (1, 1))
+        desired = row["spec"].get("replicas")
         if (
             row["metadata"]["namespace"] != namespace
-            or row["spec"].get("replicas") != 1
+            or type(desired) is not int
+            or not minimum <= desired <= maximum
         ):
             raise ValueError("Only an installed, running local stack can be adopted")
         pod = row["spec"]["template"]["spec"]

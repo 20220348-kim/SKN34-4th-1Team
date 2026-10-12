@@ -8,6 +8,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.config import LangfuseSettings
 from app.tracing import LLMTracing
@@ -412,13 +413,18 @@ class SupportProgramEvidenceService:
 
     async def _ensure_collection(self) -> None:
         if not await self.qdrant_client.collection_exists(self.collection_name):
-            await self.qdrant_client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
-                    size=self.embedding_dimensions,
-                    distance=models.Distance.COSINE,
-                ),
-            )
+            try:
+                await self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=models.VectorParams(
+                        size=self.embedding_dimensions,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+            except UnexpectedResponse as error:
+                # Another replica may create it after our existence check. Validate its schema below.
+                if error.status_code != 409:
+                    raise
         collection = await self.qdrant_client.get_collection(self.collection_name)
         vector_config = collection.config.params.vectors
         if (

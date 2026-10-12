@@ -1,6 +1,29 @@
 {{- $image := include "govbiz.image" . -}}
+{{- if not (kindIs "bool" .Values.autoscaling.enabled) -}}
+  {{- fail "autoscaling.enabled must be a boolean" -}}
+{{- end -}}
 {{- if ne (int .Values.replicas) 1 -}}
-  {{- fail "replicas must remain 1 until distributed writers and admission are verified" -}}
+  {{- fail "replicas must remain 1; use autoscaling for reviewed stateless services" -}}
+{{- end -}}
+{{- if .Values.autoscaling.enabled -}}
+  {{- if not (has .Values.serviceName (list "core-service" "ai-service" "web")) -}}
+    {{- fail "autoscaling is only supported by reviewed Core, AI or web HTTP services" -}}
+  {{- end -}}
+  {{- range $key := list "minReplicas" "maxReplicas" "targetCPUUtilizationPercentage" -}}
+    {{- if not (regexMatch `^[1-9][0-9]*$` (toString (index $.Values.autoscaling $key))) -}}
+      {{- fail (printf "autoscaling.%s must be a positive integer" $key) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if or (gt (int .Values.autoscaling.minReplicas) (int .Values.autoscaling.maxReplicas)) (gt (int .Values.autoscaling.maxReplicas) 10) -}}
+    {{- fail "autoscaling requires 1 <= minReplicas <= maxReplicas <= 10" -}}
+  {{- end -}}
+  {{- if gt (int .Values.autoscaling.targetCPUUtilizationPercentage) 100 -}}
+    {{- fail "autoscaling.targetCPUUtilizationPercentage must be between 1 and 100" -}}
+  {{- end -}}
+  {{- $cpu := toString (dig "requests" "cpu" "" .Values.resources) -}}
+  {{- if or (not (regexMatch `^([0-9]+([.][0-9]+)?|[.][0-9]+)m?$` $cpu)) (le (float64 (trimSuffix "m" $cpu)) 0.0) -}}
+    {{- fail "autoscaling requires a positive resources.requests.cpu" -}}
+  {{- end -}}
 {{- end -}}
 {{- if not (has .Values.serviceName (list "core-service" "catalog-service" "ai-service" "ops-service" "web")) -}}
   {{- fail "Unknown GovBiz serviceName" -}}
@@ -37,10 +60,17 @@ metadata:
   name: {{ .Values.serviceName }}
   namespace: {{ .Release.Namespace }}
 spec:
+  {{- if .Values.autoscaling.enabled }}
+  # The HPA owns replicas; GitOps must not reset them on every release.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  {{- else }}
   replicas: 1
-  revisionHistoryLimit: 3
   # RollingUpdate can overlap writers even with replica=1. Accept brief downtime.
   strategy: {type: Recreate}
+  {{- end }}
+  revisionHistoryLimit: 3
   minReadySeconds: 3
   progressDeadlineSeconds: 600
   selector:
@@ -54,13 +84,25 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       automountServiceAccountToken: false
+      {{- if .Values.autoscaling.enabled }}
+      # Prefer spreading when another node exists, but allow one-node operation.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.serviceName }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- range . }}
         - name: {{ required "imagePullSecrets entry requires a name" .name | quote }}
         {{- end }}
       {{- end }}
-      terminationGracePeriodSeconds: 60
+      # Allow in-flight AI/Core requests to finish during scale-down.
+      terminationGracePeriodSeconds: {{ ternary 300 60 .Values.autoscaling.enabled }}
       securityContext:
         runAsNonRoot: true
         runAsUser: {{ .Values.runAsUser }}
@@ -71,6 +113,11 @@ spec:
         - name: {{ .Values.serviceName }}
           image: {{ $image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.autoscaling.enabled }}
+          lifecycle:
+            preStop:
+              sleep: {seconds: 10}
+          {{- end }}
           ports:
             - {name: http, containerPort: {{ .Values.port }}}
           {{- if or .Values.env .Values.secretKeys }}

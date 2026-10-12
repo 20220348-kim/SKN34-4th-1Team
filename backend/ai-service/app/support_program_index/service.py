@@ -9,7 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 from httpx import TimeoutException as HttpxTimeoutException
 from openai import APITimeoutError, AsyncOpenAI
 from qdrant_client import AsyncQdrantClient, models
-from qdrant_client.http.exceptions import ResponseHandlingException
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from app.config import LangfuseSettings
 from app.tracing import LLMTracing
@@ -241,10 +241,15 @@ class SupportProgramIndexService:
 
     async def _ensure_collection(self) -> None:
         if not await self.qdrant_client.collection_exists(self.collection_name):
-            await self.qdrant_client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(size=self.embedding_dimensions, distance=models.Distance.COSINE),
-            )
+            try:
+                await self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=models.VectorParams(size=self.embedding_dimensions, distance=models.Distance.COSINE),
+                )
+            except UnexpectedResponse as error:
+                # Another replica may create it after our existence check. Validate its schema below.
+                if error.status_code != 409:
+                    raise
         collection = await self.qdrant_client.get_collection(self.collection_name)
         vector_config = collection.config.params.vectors
         if not isinstance(vector_config, models.VectorParams) or vector_config.size != self.embedding_dimensions or vector_config.distance != models.Distance.COSINE:

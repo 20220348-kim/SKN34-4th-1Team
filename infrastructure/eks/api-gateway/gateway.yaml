@@ -3,7 +3,10 @@ kind: Deployment
 metadata:
   name: api-gateway
 spec:
-  replicas: 1
+  # HorizontalPodAutoscaler owns replicas.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
   revisionHistoryLimit: 2
   selector:
     matchLabels: {app.kubernetes.io/name: api-gateway}
@@ -12,7 +15,14 @@ spec:
       labels: {app.kubernetes.io/name: api-gateway}
     spec:
       automountServiceAccountToken: false
-      nodeSelector: {govbiz.io/workload-pool: application}
+      nodeSelector: {govbiz.io/workload-pool: workloads}
+      terminationGracePeriodSeconds: 620
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: api-gateway}
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
@@ -23,6 +33,11 @@ spec:
         - name: nginx
           image: nginx@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
           command: [/bin/sh, /etc/govbiz/start.sh]
+          lifecycle:
+            preStop:
+              exec:
+                # Allow endpoint removal to propagate, then gracefully drain Nginx.
+                command: [/bin/sh, -c, 'sleep 10; nginx -c /tmp/nginx.conf -s quit; while kill -0 1 2>/dev/null; do sleep 1; done']
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

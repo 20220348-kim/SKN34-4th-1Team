@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: govbiz-msa
 resources:
   - gateway.yaml
+  - hpa.yaml
   - ingress.yaml
   - network-policy.yaml
 configMapGenerator:

@@ -64,6 +64,12 @@ Application을 다시 생성할 때 이 Job 배치도 반영해야 합니다. `g
 
 ## 최초 인계 순서
 
+공용 `workloads` 풀로 전환할 때는 [자동 확장 안내](autoscaling/README.md)를 먼저 따른다.
+Core·AI는 HPA가 replica 수를 관리하므로 Application의 해당 두 Deployment에만
+`/spec/replicas` 무시와 `RespectIgnoreDifferences=true`를 적용한다. 기존 비공개 patch의
+노드 선택과 Core graceful shutdown 환경값도 함께 갱신한다. 자동 배포는 평가·DB의
+단일 실행 조건과 정확한 이미지·소스·최종 준비 상태 검증을 계속 유지한다.
+
 1. `EKS_RELEASE_ENABLED=false`를 유지하고 기존 CodeBuild 배포가 종료됐는지 확인합니다.
    진행 평가와 수동 배포 실패 표시 `govbiz.io/release-in-progress`가 있으면 먼저 복구합니다.
    운영 DB·결과 PVC의 백업 및 복구 경로를 확인합니다. 원본 로컬 클러스터나 데이터를 정리하지 않습니다.

@@ -3,6 +3,7 @@
 import argparse
 import copy
 from pathlib import Path
+import re
 import subprocess
 from urllib.parse import urlsplit
 
@@ -26,7 +27,8 @@ def render(service, helm="helm", extra=()):
     return list(yaml.safe_load_all(result.stdout))
 
 
-def policy_errors(service, resources, *, require_ops_migration=True, ops_sync_enabled=None):
+def policy_errors(service, resources, *, require_ops_migration=True, ops_sync_enabled=None,
+                  autoscaling=None):
     errors = []
 
     def require(condition, message):
@@ -35,6 +37,11 @@ def policy_errors(service, resources, *, require_ops_migration=True, ops_sync_en
 
     jobs = [r for r in resources if r["kind"] == "Job"]
     resources = [r for r in resources if r["kind"] != "Job"]
+    autoscaling = autoscaling or {}
+    scaled = autoscaling.get("enabled") is True
+    hpas = [r for r in resources if r["kind"] == "HorizontalPodAutoscaler"]
+    resources = [r for r in resources if r["kind"] != "HorizontalPodAutoscaler"]
+    require(len(hpas) == (1 if scaled else 0), "HPA must match explicit autoscaling opt-in")
     require(not jobs or service == "ops-service", "only Ops may own a migration Job")
     require(len(jobs) == (1 if service == "ops-service" and require_ops_migration else 0),
             "expected one required Ops migration Job and no other Jobs")
@@ -43,18 +50,55 @@ def policy_errors(service, resources, *, require_ops_migration=True, ops_sync_en
             "one service release must own only Deployment and Service")
     if set(by_kind) != {"Deployment", "Service"}:
         return errors
-    for item in resources:
+    for item in resources + hpas:
         require(item["metadata"]["name"] == service, "wrong resource name")
         require(item["metadata"]["namespace"] == NAMESPACE, "wrong namespace")
     spec = by_kind["Deployment"]["spec"]
-    require(spec["replicas"] == 1 and spec["strategy"] == {"type": "Recreate"},
-            "single writer must not overlap during rollout")
     pod = spec["template"]["spec"]
+    if scaled:
+        require(service in {"core-service", "ai-service", "web"},
+                "only reviewed HTTP services may autoscale")
+        require("replicas" not in spec and spec["strategy"] == {
+            "type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0}},
+            "HPA must own replicas and rolling updates must retain ready capacity")
+        require(pod.get("topologySpreadConstraints") == [{
+            "maxSkew": 1, "topologyKey": "kubernetes.io/hostname",
+            "whenUnsatisfiable": "ScheduleAnyway",
+            "labelSelector": {"matchLabels": spec["selector"]["matchLabels"]},
+        }], "autoscaled HTTP Pods must prefer spreading without blocking single-node use")
+        lower, upper = autoscaling.get("minReplicas", 1), autoscaling.get("maxReplicas", 3)
+        target = autoscaling.get("targetCPUUtilizationPercentage", 70)
+        require(all(type(value) is int for value in (lower, upper, target))
+                and 1 <= lower <= upper <= 10 and 1 <= target <= 100,
+                "autoscaling bounds and CPU target must be valid")
+        if hpas:
+            require(hpas[0].get("apiVersion") == "autoscaling/v2" and hpas[0]["spec"] == {
+                "scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": service},
+                "minReplicas": lower, "maxReplicas": upper,
+                "metrics": [{"type": "ContainerResource", "containerResource": {
+                    "name": "cpu", "container": service,
+                    "target": {"type": "Utilization", "averageUtilization": target},
+                }}],
+                "behavior": {
+                    "scaleUp": {"stabilizationWindowSeconds": 0,
+                                "policies": [{"type": "Pods", "value": 2, "periodSeconds": 60}]},
+                    "scaleDown": {"stabilizationWindowSeconds": 300,
+                                  "policies": [{"type": "Pods", "value": 1, "periodSeconds": 60}]},
+                },
+            }, "HPA target, bounds, metric or scaling behavior differs from reviewed settings")
+    else:
+        require(spec.get("replicas") == 1 and spec["strategy"] == {"type": "Recreate"},
+                "single writer must not overlap during rollout")
     require(pod["automountServiceAccountToken"] is False, "API token must not be mounted")
     require(pod["securityContext"]["runAsNonRoot"] is True, "non-root required")
     require(not any(k in pod for k in ("hostNetwork", "hostPID", "hostIPC")), "host isolation required")
     require(not any("hostPath" in v for v in pod["volumes"]), "no host data mounts")
     container = pod["containers"][0]
+    if scaled:
+        cpu = str(container.get("resources", {}).get("requests", {}).get("cpu", ""))
+        require(bool(re.fullmatch(r"([0-9]+([.][0-9]+)?|[.][0-9]+)m?", cpu))
+                and float(cpu.removesuffix("m")) > 0,
+                "HPA requires a positive CPU request for its target container")
     containers = pod["containers"]
     sync_enabled = len(containers) == 2 and service == "ops-service"
     if ops_sync_enabled is not None:

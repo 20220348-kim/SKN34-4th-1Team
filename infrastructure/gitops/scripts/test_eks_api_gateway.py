@@ -28,7 +28,7 @@ class EksApiGatewayTests(unittest.TestCase):
     def test_render_is_private_and_does_not_contain_secrets_or_data_workloads(self):
         self.assertEqual(
             {row["kind"] for row in self.resources},
-            {"ConfigMap", "Service", "Deployment", "Ingress", "NetworkPolicy"},
+            {"ConfigMap", "Service", "Deployment", "Ingress", "NetworkPolicy", "HorizontalPodAutoscaler"},
         )
         for row in self.resources:
             self.assertEqual(row["metadata"]["namespace"], "govbiz-msa")
@@ -65,6 +65,49 @@ class EksApiGatewayTests(unittest.TestCase):
         self.assertNotEqual(
             config, "api-gateway-config"
         )  # Config changes trigger a rollout.
+
+    def test_gateway_autoscales_ready_targets_and_drains_using_its_writable_config(self):
+        deployment = self.resource("Deployment")
+        spec = deployment["spec"]
+        pod = spec["template"]["spec"]
+        container = pod["containers"][0]
+        self.assertNotIn("replicas", spec)
+        self.assertEqual(spec["strategy"], {
+            "type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0},
+        })
+        self.assertEqual(pod["nodeSelector"], {"govbiz.io/workload-pool": "workloads"})
+        self.assertEqual(pod["topologySpreadConstraints"], [{
+            "maxSkew": 1, "topologyKey": "kubernetes.io/hostname",
+            "whenUnsatisfiable": "ScheduleAnyway",
+            "labelSelector": {"matchLabels": spec["selector"]["matchLabels"]},
+        }])
+        hpa = self.resource("HorizontalPodAutoscaler")
+        self.assertEqual(hpa["apiVersion"], "autoscaling/v2")
+        self.assertEqual(hpa["spec"]["scaleTargetRef"], {
+            "apiVersion": "apps/v1", "kind": "Deployment", "name": deployment["metadata"]["name"],
+        })
+        self.assertEqual((hpa["spec"]["minReplicas"], hpa["spec"]["maxReplicas"]), (1, 3))
+        self.assertEqual(hpa["spec"]["metrics"], [{
+            "type": "ContainerResource", "containerResource": {
+                "name": "cpu", "container": container["name"],
+                "target": {"type": "Utilization", "averageUtilization": 60},
+            },
+        }])
+        self.assertEqual(container["resources"]["requests"]["cpu"], "25m")
+        self.assertEqual(hpa["spec"]["behavior"]["scaleDown"]["stabilizationWindowSeconds"], 300)
+
+        hook = container["lifecycle"]["preStop"]["exec"]["command"]
+        self.assertEqual(hook[:2], ["/bin/sh", "-c"])
+        subprocess.run(["sh", "-n", "-c", hook[2]], check=True, capture_output=True)
+        self.assertIn("sleep 10; nginx -c /tmp/nginx.conf -s quit", hook[2])
+        self.assertIn("while kill -0 1", hook[2])
+        self.assertGreaterEqual(pod["terminationGracePeriodSeconds"], 610)
+        data = self.resource("ConfigMap")["data"]
+        self.assertIn("exec nginx -c /tmp/nginx.conf", data["start.sh"])
+        self.assertIn("pid /tmp/nginx.pid;", data["nginx.conf.template"])
+        mount = next(item for item in container["volumeMounts"] if item["mountPath"] == "/tmp")
+        self.assertFalse(mount.get("readOnly", False))
+        self.assertIn("emptyDir", next(item for item in pod["volumes"] if item["name"] == mount["name"]))
 
     def test_network_policy_only_isolates_gateway_and_allows_required_backends(self):
         policy = self.resource("NetworkPolicy")["spec"]

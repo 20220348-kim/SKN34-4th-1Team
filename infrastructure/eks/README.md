@@ -1,5 +1,10 @@
 # EKS 배포와 데이터 이전
 
+역할별 두 워커를 공용 기본 노드 한 대와 자동 확장으로 전환하는 설정은
+[단일 노드·자동 확장 안내](autoscaling/README.md)를 따른다. Core·AI·Gateway HPA와
+`workloads` 노드 풀, 기존 데이터 볼륨을 보존하는 이전 순서를 포함한다.
+아래 두 노드 구성은 최초 시드니 배포 기록이다.
+
 현재 **Vercel 웹 + Mac의 직접 배포 백엔드 → 시드니 EKS 2노드** 경로는
 [시드니 시연 배포](sydney-demo.md)를 따른다. 이 경로는 Argo CD 설치를 전제로 하지 않으며,
 `cluster.sydney-demo.yaml`과 `capture --source-mode manifests`를 사용한다.

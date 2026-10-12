@@ -6,6 +6,13 @@ image: {repository: "", digest: "", tag: "", pullPolicy: IfNotPresent}
 imagePullSecrets: []
 port: 8080
 replicas: 1
+# Opt in only for HTTP services whose background work is safe with multiple Pods.
+# Metrics Server and a node autoscaler are installed separately by the cluster owner.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
 env: {}
 secretName: ""
 secretKeys: []
