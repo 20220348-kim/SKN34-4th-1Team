@@ -1,5 +1,5 @@
-import { Text } from 'react-native'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { AppState, Text } from 'react-native'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { AppEntryGate } from './AppEntryGate'
 import { completeIntroduction, readIntroductionCompleted } from './introductionStorage'
 import { useAuth } from './session'
@@ -10,19 +10,24 @@ jest.mock('./session', () => ({ useAuth: jest.fn() }))
 jest.mock('./introductionStorage', () => ({ completeIntroduction: jest.fn(), readIntroductionCompleted: jest.fn() }))
 jest.mock('./oauth', () => ({ supportsNativeOAuth: () => false }))
 const mount = () => render(<AppEntryGate><Text>기존 화면</Text></AppEntryGate>)
+const previousAppState = AppState.currentState
 beforeEach(() => {
+  AppState.currentState = 'active'
   mockRequestLogin.mockClear()
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, refreshSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
   jest.mocked(readIntroductionCompleted).mockReset().mockResolvedValue(false)
   jest.mocked(completeIntroduction).mockReset().mockResolvedValue(undefined)
 })
-test('first launch waits for storage and offers four manual slides before public entry', async () => {
+afterEach(() => { cleanup(); AppState.currentState = previousAppState; jest.useRealTimers() })
+
+test('first launch waits for storage and offers horizontal slides before public entry', async () => {
   mount()
   await screen.findByText('맞는 지원사업을 찾아요', {}, { timeout: 4000 })
   expect(screen.queryByText('기존 화면')).toBeNull()
-  fireEvent.press(screen.getByLabelText('다음'))
+  fireEvent(screen.getByTestId('welcome-carousel'), 'layout', { nativeEvent: { layout: { width: 360 } } })
+  fireEvent(screen.getByTestId('welcome-carousel'), 'momentumScrollEnd', { nativeEvent: { contentOffset: { x: 360 } } })
   expect(screen.getByText('공고 원문 문장으로 확인해요')).toBeTruthy()
-  fireEvent.press(screen.getByLabelText('이전'))
+  fireEvent(screen.getByTestId('welcome-carousel'), 'momentumScrollEnd', { nativeEvent: { contentOffset: { x: 0 } } })
   expect(screen.getByText('맞는 지원사업을 찾아요')).toBeTruthy()
   fireEvent.press(screen.getByLabelText('로그인 없이 둘러보기'))
   await screen.findByText('기존 화면')
@@ -60,12 +65,34 @@ test('a restored account bypasses the introduction and does not open login', asy
 })
 
 test('signup and existing-account methods open independently without marking a cancelled introduction completed', async () => {
+  jest.useFakeTimers()
   mount()
   await screen.findByLabelText('회원가입하고 시작하기')
   fireEvent.press(screen.getByLabelText('회원가입하고 시작하기'))
-  expect(mockRequestLogin).toHaveBeenCalledWith({ direct: true, mode: 'signup' })
+  expect(mockRequestLogin).toHaveBeenCalledWith(expect.objectContaining({ direct: true, mode: 'signup' }))
+  act(() => { jest.advanceTimersByTime(10000) })
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  act(() => { mockRequestLogin.mock.calls[0][0].onCancel() })
+  act(() => { jest.advanceTimersByTime(1000) })
+  expect(screen.getByText('2 / 4')).toBeTruthy()
   fireEvent.press(screen.getByLabelText('이미 계정이 있습니다'))
-  expect(mockRequestLogin).toHaveBeenCalledWith({ methods: true })
+  expect(mockRequestLogin).toHaveBeenCalledWith(expect.objectContaining({ methods: true }))
+  act(() => { jest.advanceTimersByTime(10000) })
+  expect(screen.getByText('2 / 4')).toBeTruthy()
   expect(completeIntroduction).not.toHaveBeenCalled()
-  expect(screen.getByText('맞는 지원사업을 찾아요')).toBeTruthy()
+  expect(screen.getByText('공고 원문 문장으로 확인해요')).toBeTruthy()
+})
+
+test('automatic advancement finishes on the last slide and only an entry choice persists completion', async () => {
+  jest.useFakeTimers()
+  mount()
+  await screen.findByText('맞는 지원사업을 찾아요')
+  for (let step = 0; step < 3; step++) act(() => { jest.advanceTimersByTime(1000) })
+  expect(screen.getByText('4 / 4')).toBeTruthy()
+  act(() => { jest.advanceTimersByTime(10000) })
+  expect(completeIntroduction).not.toHaveBeenCalled()
+  expect(screen.queryByText('기존 화면')).toBeNull()
+  fireEvent.press(screen.getByLabelText('로그인 없이 둘러보기'))
+  await screen.findByText('기존 화면')
+  expect(completeIntroduction).toHaveBeenCalledTimes(1)
 })
