@@ -7,9 +7,9 @@
 현재 저장소의 운영 설정을 표시하고 실제 배포·자동 축소 관찰 결과는 아래 기록과 구분합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=b44cfd2d5888)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=3729d08aeb9e)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=b44cfd2d5888) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=399f0a8505c0) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=3729d08aeb9e) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=366cba82f9bb) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
@@ -21,13 +21,13 @@
 |---|---|---|
 | 웹·API 진입 | Vercel React 웹 → 서버 미들웨어 → CloudFront VPC origin → 내부 ALB → EKS Nginx | [실배포 기록](../../../infrastructure/eks/sydney-demo.md), [API 진입점](../../../infrastructure/eks/api-entrypoint.md), [Vercel 미들웨어](../../../frontend/web/middleware.ts) |
 | 컴퓨팅·네트워크 | 시드니 EKS, private EC2 기본 2대·최대 3대, NAT 1개, EKS API의 사설 접근·관리 IP 제한 | [클러스터 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml), [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
-| 노드 배치 | 업무 DB·Catalog·Ops는 application, Prefect·평가 실행기·결과 저장소·Langfuse·Argo CD는 observability. 기본 두 노드에서는 Core·AI를 각각 1개씩 배치 | [EKS 서비스 설정](../../../infrastructure/eks/gitops-values.yaml), [배포 YAML 생성](../../../infrastructure/eks/gitops.py) |
+| 노드 배치 | 업무 DB·Catalog·Ops는 application, Prefect·평가 실행기·결과 저장소·Langfuse·Argo CD는 observability. 기본 두 노드에서는 Core·AI를 각각 1개씩 배치 | [EKS 서비스 설정](../../../infrastructure/eks/gitops-values.yaml), [배포 YAML 생성](../../../infrastructure/eks/gitops.py), [Argo 설치·배치 기록](../../../infrastructure/eks/argo-cd.md#현재-argo-자원-배치) |
 | 로드밸런싱 | 내부 ALB → 정상 Gateway Pod IP → Core·Ops Service. Core → AI Service로 연결하며 Core·AI Service는 준비된 Pod로 분산 | [API 진입점](../../../infrastructure/eks/api-entrypoint.md) |
 | Pod·EC2 자동확장 | HPA: CPU requests 대비 평균 사용률 60%, Core·AI 각각 2\~3개·Gateway 1\~3개. 배치 대기 Pod가 생기면 Cluster Autoscaler가 application EC2를 최대 1대 추가 | [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
 | 데이터 | 기존 DB·색인·큐·평가·관측 데이터를 EBS gp3 PVC에 복원, S3에는 암호화한 이전 백업 보관 | [이전 기록](../../../infrastructure/eks/sydney-demo.md), [StorageClass](../../../infrastructure/eks/storage-class.yaml) |
 | 변경 배포 | 같은 최신 main의 필수 CI → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel | [자동 배포 구성·검증 상태](../../../infrastructure/eks/continuous-deployment.md), [워크플로](../../../.github/workflows/eks-release.yml) |
 | Helm·Argo CD | Helm으로 만든 배포 YAML을 Git에 보관하고 Argo CD가 EKS 앱에 반영합니다. Helm은 AWS Load Balancer Controller 설치에도 사용합니다. | [Argo 최초 인계](../../../infrastructure/eks/argo-cd.md), [Controller 설치 절차](../../../infrastructure/eks/api-entrypoint.md#실제-적용-전-준비) |
-| 모바일 | React Native·Expo, 웹과 공통 계약, API origin 설정·Bearer 인증 | [모바일 안내](../../../frontend/mobile/README.md) |
+| 모바일 | React Native·Expo 화면은 기기에서 실행합니다. API origin이 Vercel이면 `/api` 서버 미들웨어를 거쳐 웹과 같은 API 진입 경로를 사용합니다. | [모바일 API 클라이언트](../../../frontend/mobile/src/api/client.ts), [모바일 안내](../../../frontend/mobile/README.md) |
 
 ## 요청·데이터 흐름
 
@@ -37,7 +37,15 @@ EKS 상단의 **EC2 표는 기본 두 노드의 역할**, 그 아래는 **로드
 Namespace 상자는 서비스의 **논리 구분**입니다.
 Namespace 상자가 오른쪽이나 왼쪽에 있다는 이유로 해당 노드에서 실행된다는 뜻은 아닙니다.
 평가 서비스는 observability 노드에서 실행하며 Namespace는 `govbiz-evaluation`을 유지합니다.
-번호 ①·②는 API 목적지, ③·④는 EBS 저장소와 ECR 이미지 공급을 연결합니다.
+번호 ①·②는 API 목적지, ③·④는 EBS 저장소와 ECR 이미지 공급, ⑤는 Argo가 조회하는 Git 배포 태그를 연결합니다.
+
+상단 모바일의 Vercel 방향 점선은 **앱의 `EXPO_PUBLIC_API_BASE_URL`을 Vercel 운영 origin으로
+설정했을 때**의 연결입니다. 앱 화면은 기기에서 실행하고, API 요청만
+`Vercel /api 미들웨어 → CloudFront → 내부 ALB → Nginx → Core`를 거칩니다.
+Vercel은 서버에서 프록시 비밀값을 추가하며 앱에는 이 값을 넣지 않습니다.
+현재 EKS의 Core는 클러스터 내부 Service이므로 외부 앱에서 직접 호출하는 구조가 아닙니다.
+로컬 개발에서는 공개한 Core 포트를 API 주소로 설정할 수 있지만, 그 경로를 운영 구성에 섞지 않습니다.
+실제 배포 앱의 API 주소와 운영 실기기 연결 완료 여부는 별도 확인 대상입니다.
 
 | 경로 | 역할 |
 |---|---|
@@ -45,17 +53,42 @@ Namespace 상자가 오른쪽이나 왼쪽에 있다는 이유로 해당 노드�
 | ALB → Gateway Pod | `target-type: ip`로 정상 상태의 Gateway Pod IP에 분산합니다. ALB가 Gateway의 ClusterIP를 경유하는 구조가 아닙니다. |
 | Nginx → Core·Ops | `/api/v1/ops`와 그 하위 경로는 Ops, 나머지 `/api/*`는 Core로 보냅니다. Ops는 Core의 관리자 세션을 확인합니다. |
 | Core·AI Service → Pod | Service는 준비된 Pod로 연결을 분산합니다. Core에서 AI를 호출할 때도 AI Service를 사용합니다. Ops는 단일 Pod입니다. |
-| 모바일 → Core | 같은 Core API·계정 데이터를 사용합니다. 운영 HTTPS origin을 지정하며, 앱 기기와 운영 프록시를 함께 거치는 검증은 별도입니다. 프록시 비밀값은 앱에 넣지 않습니다. |
+| 모바일 → API 중계 → Core | Vercel origin 사용 시 위 점선 경로로 Nginx까지 거쳐 같은 Core API·계정 데이터를 사용합니다. 사용자 Bearer 인증은 중계되며, 앱 기기와 운영 프록시를 함께 거치는 검증은 별도입니다. |
 | Core·Catalog → 저장소 | 두 서비스는 MyBatis로 각자의 MySQL을 사용합니다. Core는 Redis와 Elasticsearch를 조회하며, Catalog는 공고·색인을 준비합니다. Core의 Outbox 발행기·소비자가 RabbitMQ를 사용합니다. |
 | AI → 검색·관측 | Qdrant에서 벡터·원문 근거를 조회하고 OpenAI를 호출합니다. Langfuse SDK를 활성화한 경로의 trace를 내부 Langfuse에 보냅니다. |
 | Ops → 평가 | Prefect·실행기가 평가하고 pandas·Pandera·지표 계산·Evidently 보고서·Langfuse 점수 등록을 이어갑니다. Evidently는 실행기가 생성하는 보고서이며 별도 상시 서버가 아닙니다. |
 | 결과 → 관리자 | `ops-artifacts`는 결과 PVC를 읽기 전용으로 제공하고, `ops-sync`가 상태·결과를 반영합니다. 관리자는 같은 React 웹에서 검토·판정·비교 기준을 관리합니다. |
 | 도구 UI | Prefect·Langfuse는 공개하지 않습니다. EKS 권한을 가진 사용자가 각 PC에서 loopback port-forward를 연결합니다. |
 
+### Argo CD의 실행 위치와 배포 제어
+
+Argo CD는 **관측 도구가 아닌 배포 관리 도구**입니다. 현재 `observability` 노드 풀은
+관측·평가·배포 관리 도구가 함께 사용하는 EC2입니다. Argo를 이 노드에 배치한 것은
+별도 EC2를 추가하지 않고 기존 관리용 노드를 사용하기 위한 프로젝트의 선택이며,
+Kubernetes나 Argo CD의 필수 배치 조건이 아닙니다.
+
+[2026-10-12 설치·배치 기록](../../../infrastructure/eks/argo-cd.md#현재-argo-자원-배치)에 따르면
+Argo CD Core 3.5.3의 아래 구성 요소가 **`argocd` Namespace, `observability` 노드**에서 실행됩니다.
+`argocd`와 `govbiz-observability`는 별도 Namespace이며 물리적으로 같은 EC2를 사용할 수 있습니다.
+
+| Argo 구성 요소 | 역할 |
+|---|---|
+| `application-controller` | Git의 배포 설정과 클러스터 상태를 비교하고 Kubernetes API로 앱을 동기화합니다. |
+| `repo-server` | ⑤ Git 배포 태그의 YAML을 읽어 controller에 제공합니다. |
+| ApplicationSet controller | Application 생성·관리를 위한 설치 구성 요소입니다. |
+| Redis | Argo 내부 캐시입니다. 업무·Langfuse Redis와 별도입니다. |
+
+현재 Core 설치에는 별도의 `argocd-server` 웹 서버 Pod나 외부 LoadBalancer가 없습니다.
+그림의 하단 자동 배포 흐름과 EKS 내부 `argocd` 영역은 **동일한 Argo를 서로 다른 관점에서 표시**합니다.
+Git을 조회한 Argo controller가 EKS 관리형 Kubernetes API를 통해 위 업무·평가 워크로드를 갱신합니다.
+Kubernetes API는 AWS 관리형 제어면이며 observability EC2의 Pod가 아닙니다.
+이 주황색 선은 배포 제어 경로로, 사용자 HTTP 요청은 Argo를 거치지 않습니다.
+문서 수정 시 운영 클러스터를 다시 조회하지 않았으므로 실시간 Pod 상태 확인을 뜻하지는 않습니다.
+
 ### 외부 API 연결
 
 외부 API 제공자는 AWS·VPC·EKS 경계 밖에 표시합니다. 요청은 아래와 같이 Pod에서 시작합니다.
-이 경로는 사용자가 웹·모바일에서 들어오는 Vercel·CloudFront·ALB 경로와 별개입니다.
+이 경로는 Vercel을 API origin으로 사용하는 웹·모바일의 CloudFront·ALB 진입 경로와 별개입니다.
 
 보라색 화살표는 외부 API 요청입니다. 영역 왼쪽의 Catalog·AI와 가운데의 NAT·Internet Gateway는
 위 VPC에 있는 구성의 요청 경로를 다시 표시한 것입니다. 두 호출은 같은 NAT Gateway를 사용합니다.
@@ -178,7 +211,7 @@ node docs/assets/architecture/build-aws-eks.mjs --render
 Playwright 설치 디렉터리를 별도로 지정할 때는 `GOVBIZ_DIAGRAM_NODE_MODULES`,
 Chrome 실행 파일을 지정할 때는 `GOVBIZ_DIAGRAM_CHROME`을 사용합니다.
 렌더링은 외부 네트워크 요청을 차단하고 로고 로드·텍스트 폭·이미지 경계를 확인합니다.
-SVG는 3,000 × 4,670, PNG는 6,000 × 9,340입니다.
+SVG는 3,000 × 5,170, PNG는 6,000 × 10,340입니다.
 
 로고는 [AWS·공통 로고 출처](aws-logo-sources.json)와
 [Kubernetes·서비스 로고 출처](kubernetes-logo-sources.json)의 로컬 파일을 SHA-256으로 확인해 사용합니다.

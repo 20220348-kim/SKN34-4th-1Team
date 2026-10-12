@@ -20,8 +20,8 @@
 | 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png) · [SVG](govbiz-kubernetes-resources-platform.svg) | Argo·Control Plane·Node → EKS 진입 → Metrics Server·HPA → 대기 Pod·Cluster Autoscaler·EC2 → 기반 기능 → 설정·접근 제어. |
 
 - **파란 실선**: 생성·배포·실행 관리와 자동확장 제어. **초록 실선**: 실제 요청. **황색 점선**: 마운트·바인딩.
-- EKS Core·AI는 HPA 각각 2\~3개, Gateway는 1\~3개이며 CPU requests 대비 평균 사용률 목표는 60%입니다.
-  Cluster Autoscaler는 배치 대기 Pod에 맞춰 application 1\~2대, observability 고정 1대로 전체 2\~3대를 유지합니다.
+- EKS Core·AI는 HPA 각각 최소 2개·최대 3개, Gateway는 최소 1개·최대 3개이며 CPU requests 대비 평균 사용률 목표는 60%입니다.
+  Cluster Autoscaler는 배치 대기 Pod에 맞춰 application 최소 1대·최대 2대, observability 고정 1대로 전체 최소 2대·최대 3대를 유지합니다.
   Core·AI의 필수 노드 분산과 PDB에 따른 퇴거 제한·축소 조건을 함께 표시합니다.
 - 평가·관측은 observability에 배치하고 Catalog·Ops는 각각 업무 DB와 같은 application 노드에 배치합니다.
 - Headless Service는 중계 서버로 그리지 않습니다. CoreDNS가 알려준 Pod IP로 직접 접속합니다.
@@ -70,9 +70,9 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 
 ## Vercel + AWS EKS 전체 구성 — 2026-10-13
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=b44cfd2d5888)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=3729d08aeb9e)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=b44cfd2d5888) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=399f0a8505c0)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=3729d08aeb9e) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=366cba82f9bb)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
@@ -81,6 +81,8 @@ MySQL은 EKS 내부에 유지하며, 모바일·MyBatis·업무·평가·관측 
 Catalog → 공고 제공처 API, AI Service → OpenAI의 외부 호출은 별도 보라색 영역에서 표시합니다.
 사설 Pod의 NAT Gateway → Internet Gateway 출구와 VPC 밖 API를 구분합니다.
 개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 자동 배포 흐름을 표시합니다.
+EKS 내부 `argocd` 영역에는 observability 노드에 배치하는 Argo CD Core의 4개 Pod와
+Kubernetes API를 통한 배포 제어 경로를 표시합니다. 하단 배포 흐름의 Argo와 같은 구성입니다.
 운영 설정은 기본 EC2 2대·최대 3대, Core·AI 각각 2\~3개 분산, 평가 서비스의 observability 배치입니다.
 로드밸런싱 확대도에 ALB → Gateway Pod → Core·AI Service와 준비된 Pod의 관계를 표시합니다.
 HPA의 Pod 조절 → 배치 대기 → Cluster Autoscaler의 application EC2 추가는 녹색 제어선으로 구분합니다.

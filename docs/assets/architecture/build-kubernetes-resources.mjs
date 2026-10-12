@@ -81,8 +81,8 @@ namespace(180,420,'govbiz-msa','업무 API · Gateway · 데이터');
 card(72,262,762,224,'deploy','Deployment → ReplicaSet → Pod',[
   'core-service · catalog-service · ai-service',
   'ops-service: API + ops-sync, 같은 Pod',
-  'EKS: Core·AI 각각 2~3개 · Gateway 1~3개',
-  '로컬 web / EKS api-gateway · 별도 Deployment',
+  'EKS Core·AI: 각각 최소 2개·최대 3개',
+  'Gateway: 최소 1개·최대 3개 (로컬은 web)',
 ],{size:28});
 card(858,262,510,224,'sts','StatefulSet → Pod + PVC',[
   'core / catalog / ops MySQL',
@@ -170,7 +170,7 @@ icon('ing',80,588,45);
 text(144,620,'Ingress: api-gateway → ALB Controller가 내부 ALB를 구성',{size:27,weight:600,max:1190});
 card(80,651,272,126,null,'CloudFront',['VPC origin']);
 card(416,651,272,126,null,'내부 ALB',['AWS 리소스']);
-card(752,651,272,126,'pod','Gateway Pod',['Nginx · 1~3개'],{size:23});
+card(752,651,272,126,'pod','Gateway Pod',['최소 1개·최대 3개'],{size:23});
 card(1088,651,272,126,'svc','Core · Ops',['내부 Service'],{size:26});
 arrow(360,714,402,714,'teal'); arrow(696,714,738,714,'teal'); arrow(1032,714,1074,714,'teal');
 text(80,815,'ALB의 target-type: ip → gateway Pod로 직접 전달 · 로컬은 웹 Service·port-forward 사용',{size:24,fill:palette.muted,max:1280});
@@ -178,14 +178,14 @@ text(80,815,'ALB의 target-type: ip → gateway Pod로 직접 전달 · 로컬�
 panel(866,290,'C. Pod 자동확장 — HPA가 Deployment의 실행 개수를 조절합니다.');
 card(80,952,372,150,null,'Metrics Server',['Pod CPU 사용량 수집','리소스 metrics API 제공']);
 card(534,952,372,150,null,'HPA',['CPU requests 대비','평균 사용률 목표 60%']);
-card(988,952,372,150,'deploy','Deployment',['replicas 조절 → RS → Pod','Service는 Ready Pod 연결'],{size:25});
+card(988,952,372,150,'deploy','Deployment',['replicas 조절 → RS → Pod','Core·AI 수량은 HPA가 관리'],{size:25});
 arrow(460,1026,520,1026); arrow(914,1026,974,1026);
-text(80,1134,'Core·AI 각각 2~3개 · Gateway 1~3개 · Argo CD는 Core·AI의 HPA 실행 개수를 덮어쓰지 않음',{size:24,fill:palette.muted,max:1280});
+text(80,1134,'Core·AI 각각 최소 2개·최대 3개 · Gateway 최소 1개·최대 3개',{size:24,fill:palette.muted,max:1280});
 
 panel(1180,420,'D. EC2 자동확장·분산 배치 — Pod를 배치할 Node가 부족할 때');
 card(80,1266,372,170,'pod','Pending Pod',['자원·분산 조건 미충족','Scheduler가 배치 대기']);
 card(534,1266,372,170,null,'Cluster Autoscaler',['kube-system · 관측 노드','application ASG 용량 조절'],{size:26});
-card(988,1266,372,170,'node','EC2 2~3대',['application 1~2대','observability 1대 고정']);
+card(988,1266,372,170,'node','EC2 최소 2·최대 3대',['application 1대 또는 2대','observability 1대 고정'],{size:23});
 arrow(460,1347,520,1347); arrow(914,1347,974,1347);
 lines(80,1470,[
   'Core·AI: 같은 서비스는 Node당 최대 1개 → 세 번째 Pod는 세 번째 EC2 필요',

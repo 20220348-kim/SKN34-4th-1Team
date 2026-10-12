@@ -27,7 +27,7 @@ for (const source of manifest) {
   icons.set(source.name, `data:${isSvg ? 'image/svg+xml' : 'image/png'};base64,${bytes.toString('base64')}`);
 }
 
-const W = 3000, H = 4670;
+const W = 3000, H = 5170;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
 const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E', external:'#67548E', scaling:'#247B64'};
@@ -71,7 +71,7 @@ card(60,190,2880,400,'#F8FBFD','#D2DFEB',26);
 text(90,232,'01   화면과 API 진입 경로',{size:25,weight:700,fill:muted});
 const entry = [
   [95,370,'chrome','브라우저',['사용자 화면 · 관리자 Ops']],
-  [535,600,'vercel','Vercel · React / Vite',['govbiz.vercel.app · /api 서버 미들웨어']],
+  [535,600,'vercel','Vercel · React 웹 + API 중계',['govbiz.vercel.app · /api 서버 미들웨어']],
   [1215,460,'cloudfront','CloudFront',['HTTPS · API 전용 · 캐시 끔']],
   [1755,440,null,'내부 ALB',['정상 Gateway Pod IP로 분산']],
   [2275,630,'nginx','Nginx API Gateway',['Pod 1~3개 · 프록시 비밀값 검증']],
@@ -87,12 +87,13 @@ card(95,411,370,135);
 icon('react',116,431,39);
 text(172,460,'iOS · Android',{size:27,weight:700,max:265});
 text(117,504,'React Native / Expo',{size:24,max:326});
-text(117,532,'웹과 shared 계약 공유',{size:21,fill:muted,max:326});
+text(117,532,'앱 화면은 기기에서 실행',{size:21,fill:muted,max:326});
 card(535,411,600,135,'#F1F8FC','#C3DAE8');
-text(558,454,'앱 → 같은 Core API',{size:27,weight:700,max:554});
-text(558,495,'HTTPS API origin 설정 · Bearer 인증',{size:23,max:554});
-text(558,530,'운영 기기·프록시 연결은 별도 검증',{size:22,fill:muted,max:554});
+text(558,454,'앱 API 주소 설정',{size:27,weight:700,max:554});
+text(558,495,'Vercel origin이면 위 API 경로로 합류',{size:23,max:554});
+text(558,530,'Bearer 인증 · 운영 실기기 검증은 별도',{size:22,fill:muted,max:554});
 edge('M465 478H535'); edge('M835 411V368','config');
+text(850,396,'Vercel 주소 설정 시',{size:18,fill:muted,max:280});
 card(1215,411,980,135,'#F6F3FD','#D8CDEA');
 text(1240,454,'관리자 도구 UI · EKS 권한 + port-forward',{size:27,weight:700,max:930});
 text(1240,495,'Prefect  localhost:14200    ·    Langfuse  localhost:13000',{size:24,max:930});
@@ -102,17 +103,18 @@ text(2298,454,'① /api/*  →  Core :8080',{size:25,weight:600,max:584});
 text(2298,495,'② /api/v1/ops/*  →  Ops :8000',{size:25,weight:600,max:584});
 text(2298,530,'Ops 경로 우선 분기 · Core 관리자 세션 확인',{size:21,fill:muted,max:584});
 edge('M2590 368V411');
+text(95,576,'모바일도 Vercel API 중계를 사용하면 CloudFront → ALB → Nginx → Core 경유',{size:22,fill:muted,max:2800});
 
 // Cloud services, VPC and EKS are distinct boundaries.
-card(60,640,2880,2950,'#FFFCF7','#D7BB8B',30);
+card(60,640,2880,3450,'#FFFCF7','#D7BB8B',30);
 icon('aws',90,667,68,49);
 text(182,707,'AWS · Sydney / ap-southeast-2',{size:35,weight:700,max:1470});
 text(2900,707,'CI → ECR · Helm → Git → Argo CD · EKS → Vercel',{size:24,fill:'#98631F',anchor:'end',max:1210});
-card(85,745,2830,2430,'#F5F9FD','#B9CFE2',26);
+card(85,745,2830,2930,'#F5F9FD','#B9CFE2',26);
 icon('vpc',112,765,47);
 text(178,801,'Amazon VPC · 사설 서브넷의 백엔드',{size:29,weight:700,max:1500});
 text(2875,801,'ALB → Gateway Pod IP · Gateway → Core·Ops Service',{size:23,fill:muted,anchor:'end',max:1170});
-card(110,835,2780,2200,'#FFFFFF','#BCD1E5',24);
+card(110,835,2780,2700,'#FFFFFF','#BCD1E5',24);
 icon('kubernetes',140,860,50);
 text(207,902,'Amazon EKS · govbiz-eks',{size:33,weight:700,max:1240});
 text(2850,882,'관리형 제어면 · EKS API: private + 관리 IP 제한 public',{size:22,fill:muted,anchor:'end',max:1390});
@@ -308,7 +310,35 @@ text(100,2146,'저장소 → ③ EBS gp3 · Prefect / 결과 PVC 분리 · 실�
 
 
 parts.push('</g>');
-parts.push('<g transform="translate(0 600)">');
+// Argo runs on the observability worker, in its own namespace. The API is EKS-managed.
+card(140,3000,1570,480,'#FDF8F0','#E1CBA9',24);
+icon('argocd',165,3020,42);
+text(225,3052,'argocd · Argo CD Core · 배포 관리',{size:30,weight:700,max:1450});
+text(165,3088,'observability 노드에 Pod 4개 · Core 설치: 별도 웹 서버 없음',{size:23,fill:muted,max:1515});
+for (const [x,y,w,title,lines] of [
+  [165,3140,710,'application-controller',['Git 설정과 클러스터 상태 비교','Kubernetes API로 앱 동기화']],
+  [925,3140,755,'repo-server',['⑤ Git 태그의 배포 YAML 조회','controller에 배포 리소스 제공']],
+  [165,3290,710,'ApplicationSet controller',['Application 생성·관리용 구성 요소']],
+  [925,3290,755,'Redis · Argo 내부 캐시',['업무·Langfuse Redis와 별도']],
+]) {
+  card(x,y,w,125,'#FFFFFF','#E1D3BC',18);
+  text(x+24,y+39,title,{size:26,weight:600,max:w-48});
+  lines.forEach((line,i)=>text(x+24,y+78+i*33,line,{size:22,fill:muted,max:w-48}));
+}
+edge('M925 3200H875','deploy');
+edge('M875 3160H900V3115H1760V3170H1820','deploy');
+text(165,3456,'관측 서비스와 같은 EC2 사용 · govbiz-observability와 다른 Namespace',{size:22,fill:muted,max:1515});
+card(1820,3115,1015,150,'#F5F9FD','#BCD1E5',20);
+text(1845,3157,'Kubernetes API · EKS 관리형 제어면',{size:28,weight:700,max:965});
+text(1845,3197,'Argo의 권한을 확인하고 원하는 리소스 상태 반영',{size:24,max:965});
+text(1845,3237,'observability EC2에서 실행하는 Pod가 아님',{size:22,fill:muted,max:965});
+edge('M2325 3265V3300','deploy');
+card(1820,3300,1015,130,'#FFFFFF','#D3DEE5',20);
+text(1845,3340,'업무·평가 워크로드 · 위 영역과 같은 배포 대상',{size:27,weight:700,max:965});
+text(1845,3378,'Core · Catalog · AI · Ops · 평가 실행기 · 결과 서버',{size:23,max:965});
+text(1845,3410,'Deployment · Service · 배포 hook 등 동기화',{size:22,fill:muted,max:965});
+text(1820,3470,'배포 제어 경로 · 사용자 API 요청은 Argo를 거치지 않음',{size:22,fill:muted,max:1015});
+parts.push('<g transform="translate(0 1100)">');
 // Egress is a route annotation; the named external APIs are not hosted in this VPC.
 card(115,2466,2770,78,'#FFFFFF','#CFDCE7',16);
 icon('nat',137,2483,38); icon('igw',976,2483,38);
@@ -386,8 +416,8 @@ const delivery = [
   [90,410,'githubactions','GitHub Actions',['개인 main · 필수 CI 5개','같은 최신 SHA 통과 확인','배포 순서·조건 조율']],
   [545,445,'aws','CodeBuild · ECR',['CodeConnections · IAM 인증','서비스 이미지 5개 빌드·발행','git-SHA 고정 → digest']],
   [1035,445,'helm','Helm 배포 설정',['검증된 Chart · EKS 설정','이미지 digest로 YAML 생성','DB · PVC · Secret 제외']],
-  [1525,415,'github','Git 불변 태그',['govbiz-eks/v1.RUN.ATTEMPT','배포 YAML · CI 근거 보관','기존 태그 덮어쓰기 금지']],
-  [1985,465,'argocd','Argo CD · EKS',['PreSync: 접수 보호·migration','앱 동기화 → 평가 연결 검증','PostSync: 접수 상태 복구']],
+  [1525,415,'github','⑤ Git 불변 태그',['govbiz-eks/v1.RUN.ATTEMPT','배포 YAML · CI 근거 보관','EKS 내부 repo-server가 조회']],
+  [1985,465,'argocd','Argo CD · EKS 내부 Pod',['위 argocd 영역과 같은 구성','PreSync → 앱 동기화·연결 검증','PostSync: 접수 상태 복구']],
   [2495,410,'vercel','Vercel 웹 전환',['정확한 Argo revision 확인','같은 SHA의 웹·shared 빌드','CI 재확인 → promote']],
 ];
 for (const [x,w,brand,title,lines] of delivery) {
