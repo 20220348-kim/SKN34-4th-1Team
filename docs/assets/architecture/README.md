@@ -7,6 +7,35 @@
 **AWS EKS 확장 구성(2026-10-12)**을 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
+## 운영 배포 프로세스 — 2026-10-13
+
+메인 README 5.2.5의 두 가로 흐름도입니다. 기존 아키텍처 그림의 색상·카드 스타일을 유지하고
+단계별 도구에 공식 아이콘을 배치했습니다. 화살표는 HTTP 통신이 아닌 배포 진행 순서입니다.
+
+| 그림 | 파일 | 읽는 순서 |
+|---|---|---|
+| 검증·이미지·배포 설정 | [PNG](govbiz-deployment-build.png) · [SVG](govbiz-deployment-build.svg) | GitHub main → 필수 CI → CodeBuild → ECR → Helm·Git 배포 태그 |
+| EKS 반영·웹 전환 | [PNG](govbiz-deployment-release.png) · [SVG](govbiz-deployment-release.svg) | Argo CD → PreSync Job → EKS → PostSync·상태 확인 → Vercel |
+
+- Helm 렌더링은 CodeBuild에서 수행하며, Argo CD는 발행된 Git 배포 태그의 YAML을 적용합니다.
+- 이미지는 5종이고, Ops 이미지를 쓰는 결과 서버를 포함해 앱 Deployment 6개를 갱신합니다.
+- 아이콘은 [AWS 공식 세트](https://aws.amazon.com/architecture/icons/),
+  [GitHub Brand Toolkit](https://brand.github.com/foundations/logo),
+  [CNCF Artwork](https://github.com/cncf/artwork), [Vercel Geist](https://vercel.com/geist/brands),
+  [Kubernetes Contributors](https://github.com/kubernetes/community/tree/main/icons)에서 가져왔습니다.
+  GitHub Actions는 GitHub 공식 마크와 제품명으로 표시합니다. Argo CD에는 CNCF의 Argo 로고를 사용합니다.
+- 원본 아이콘의 색·비율을 유지합니다. Kubernetes Job 아이콘은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/),
+  브랜드 로고는 각 출처의 사용 지침을 따릅니다. [출처·파일 SHA-256](deployment-icon-sources.json)을 보관합니다.
+- SVG에 아이콘을 내장하고 PNG는 2배 해상도로 생성합니다. 앱·배포 설정은 바꾸지 않습니다.
+
+```sh
+node docs/assets/architecture/build-deployment.mjs
+node docs/assets/architecture/build-deployment.mjs --render
+```
+
+`--render`는 아래 Kubernetes 그림과 같은 Playwright·Chromium 및 `GOVBIZ_DIAGRAM_*` 설정을 사용합니다.
+변경 후 PNG·SVG를 함께 생성하고 메인 README의 `?v=`를 각 파일 SHA-256 앞 12자리로 갱신합니다.
+
 ## Kubernetes 내부 리소스 구조 — 2026-10-13
 
 메인 README 5.2.4의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과

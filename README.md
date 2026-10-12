@@ -285,9 +285,9 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 그림 상단의 **EC2 표는 노드별 역할과 기본 2대·최대 3대의 운영 설정**을 나타냅니다. 아래 `govbiz-msa`·`govbiz-evaluation`·`govbiz-observability`·`argocd` 상자는 **Namespace별 논리 구분**이며, 상자의 좌우 위치가 노드를 뜻하지 않습니다. 평가 서비스와 Argo CD는 각각 `govbiz-evaluation`·`argocd` Namespace를 유지하면서 `observability` 노드에서 실행합니다. 이 노드는 관측·평가·배포 관리용으로 함께 사용하며, Argo CD를 반드시 관측 노드에 설치해야 하는 것은 아닙니다.
 
-#### 5.2.4 Kubernetes 내부 리소스 구조
+<a id="524-kubernetes-내부-리소스-구조"></a>
 
-아래 그림은 **① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성** 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다.
+<img src="docs/assets/readme/architecture-resources-caption.svg" alt="5.2.4 Kubernetes 내부 리소스 구조 — 아래 그림은 ① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다." width="820">
 
 그림은 **2026-10-13 확인한 저장소의 운영 설정**(Helm Chart·EKS 설정·자동 배포 코드)을 설명합니다. 로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
 
@@ -398,6 +398,49 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 [이미지 재생성 방법](docs/assets/architecture/README.md#kubernetes-내부-리소스-구조--2026-10-13) · [생성 스크립트](docs/assets/architecture/build-kubernetes-resources.mjs)
 
 </details>
+
+<a id="525-운영-배포-프로세스"></a>
+
+<img src="docs/assets/readme/architecture-deployment-caption.svg" alt="5.2.5 운영 배포 프로세스 — 운영 배포는 GitHub Actions가 순서를 제어하고, CodeBuild가 이미지를 빌드해 ECR에 저장한 뒤, Argo CD가 Git의 배포 설정을 EKS에 반영하는 흐름입니다. 백엔드 배포가 성공하면 같은 커밋의 웹을 Vercel 운영 주소로 전환합니다." width="820">
+
+배포 기준은 **개인 저장소 `ilil1/SKN34-4th-1Team`의 최신 `main` 커밋**입니다. 학교 저장소의 변경은 개인 `main`에 동기화해야 이 흐름으로 이어집니다.
+
+**① 검증·이미지 빌드·배포 설정 생성**
+
+![GitHub main에서 필수 CI·CodeBuild·ECR·Helm을 거쳐 Git 배포 태그를 발행하는 흐름](docs/assets/architecture/govbiz-deployment-build.png?v=9ca9e3e4cb13)
+
+[크게 보기](docs/assets/architecture/govbiz-deployment-build.png?v=9ca9e3e4cb13) · [SVG 원본](docs/assets/architecture/govbiz-deployment-build.svg?v=bf60ffb71331)
+
+이미지는 **Core·Catalog·AI·Ops·평가 실행기** 다섯 종류입니다. CodeBuild는 검증한 커밋의 소스로
+이미지를 만들고 `git-<전체 커밋 SHA>` 태그로 ECR에 올립니다. 같은 태그가 이미 있으면 해당 이미지를 재사용하며,
+실제 배포 설정에는 이미지 내용을 고정하는 **digest(`sha256:…`)**를 기록합니다.
+
+Helm은 **Chart(공통 배포 양식) + EKS 설정값 + 이미지 digest**를 합쳐 YAML을 생성합니다.
+이 프로젝트에서는 CodeBuild가 이 작업을 수행하고, 결과를 `govbiz-eks/v1.RUN.ATTEMPT` 형식의 불변 Git 태그로 발행합니다.
+Argo CD는 이 배포 태그를 추적하므로 **소스 코드 병합 → 이미지 발행 → Git 배포 설정 발행**이 모두 이어져야 새 버전을 반영할 수 있습니다.
+
+**② EKS 반영·상태 확인·웹 전환**
+
+![Argo CD가 배포 Job과 EKS 앱 교체를 수행하고 Vercel 웹을 전환하는 흐름](docs/assets/architecture/govbiz-deployment-release.png?v=16a75e3cf8b0)
+
+[크게 보기](docs/assets/architecture/govbiz-deployment-release.png?v=16a75e3cf8b0) · [SVG 원본](docs/assets/architecture/govbiz-deployment-release.svg?v=b5855044afca)
+
+| 도구 | 이 배포 흐름에서 맡는 역할 |
+|---|---|
+| **GitHub Actions** | 최신 `main`의 필수 CI 결과를 확인하고 백엔드·웹 배포 순서를 제어합니다. |
+| **CodeConnections** | GitHub와 AWS를 연결해 지정한 배포 작업이 CodeBuild 실행기로 전달되게 합니다. |
+| **CodeBuild** | 임시 GitHub Actions 실행기로 동작하며 Docker 빌드·ECR 업로드·Git 배포 태그 발행을 수행합니다. EKS에서는 지정한 배포 상태를 조회합니다. |
+| **Amazon ECR** | 이미지를 비공개로 보관합니다. EKS는 배포 설정에 기록된 digest의 이미지를 받아 실행합니다. |
+| **Helm** | 공통 Chart와 환경별 설정값으로 Kubernetes 배포 YAML을 만듭니다. |
+| **Argo CD** | Git 배포 설정을 EKS에 동기화하고, 배포 전후 Job과 앱 교체 순서를 관리합니다. |
+| **EKS** | Deployment 설정에 따라 Pod를 생성·교체하고 서비스를 실행합니다. 보고서 서버도 Ops 이미지를 사용하므로 이미지 5개로 Deployment 6개를 갱신합니다. |
+| **Vercel** | 백엔드 배포 성공 후 웹을 빌드하고, 동일 커밋의 CI를 다시 확인한 뒤 `govbiz.vercel.app`으로 전환합니다. |
+
+필수 CI 실패·취소·누락 또는 배포 대상 `main` 변경이 확인되면 새 이미지·배포 태그 발행이나 웹 전환을 차단합니다.
+Argo CD의 해당 Git 버전 동기화, 배포 전후 Job, 앱 준비 상태 확인이 실패해도 Vercel 운영 주소는 전환하지 않습니다.
+이 경로는 앱 버전을 교체하며, DB·PVC·Secret·검색 엔진·큐·Langfuse 등의 기반 구성을 자동 교체하는 작업과는 구분합니다.
+
+[아이콘 출처·그림 생성 방법](docs/assets/architecture/README.md#운영-배포-프로세스--2026-10-13) · [자동 배포 워크플로](.github/workflows/eks-release.yml) · [배포 설정·검증 기록](infrastructure/eks/continuous-deployment.md) · [Argo CD 관리 범위](infrastructure/eks/argo-cd.md)
 
 <a id="erd"></a>
 
