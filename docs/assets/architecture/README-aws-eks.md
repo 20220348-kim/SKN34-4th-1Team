@@ -120,7 +120,16 @@ DB·PVC·네트워크·Langfuse는 별도로 관리합니다.
 
 ## 실제 적용·검증 기록
 
-**노드 배치 변경은 아직 실제 이전 완료로 기록하지 않습니다.** 그림과 설명은 평가 서비스의 observability 이전·Core/AI 분산 설정을 반영한 목표이며, 기존 볼륨 재연결·Pod 준비·노드별 배치 확인 뒤 실행 결과를 남깁니다. 아래 초기 자동 배포 점검은 당시의 기록이며 현재 노드 배치의 완료 근거가 아닙니다.
+**2026-10-12 노드 배치 전환 기록:** 평가 서비스의 observability 이전과 Core·AI 분산 설정을 실제 반영했습니다. 기본 EC2 2대 복귀는 아직 확인하지 못했습니다.
+
+- 소스 `10a5b625123aa15a7f318cabbe1e382ac22d3a6b`의 필수 CI 5개·작업 28개가 모두 통과했습니다.
+- GitOps 태그 `govbiz-eks/v1.38219188700.1`, revision `5ab4008f7ab773e4b9daaabffe3e8cbb744c3165`에서 Argo CD `Synced / Healthy / Succeeded`와 배포 hook·이미지·소스 SHA 일치를 확인했습니다.
+- 평가 실행기·결과 서버·Prefect가 observability 노드로 이동했고 평가 접수를 재개했습니다. 기존 13개 PVC의 PVC·PV·EBS 식별자는 보존했습니다.
+- Core·AI의 HPA 최소 2개·최대 3개와 hostname 기준 필수 Pod anti-affinity를 적용했습니다. 확인 당시 EC2는 3대, Core 3개·AI 2개이며 **기본 2대로 자동 축소되는 과정은 관찰 미완료**입니다.
+- [배포 워크플로 38219188700](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38219188700)의 첫 시도는 관찰 단계에서 실패했고 원인은 미확정입니다. 이후 위 Argo 상태는 성공했으나, 두 번째 시도는 main이 `cdc067d9`로 변경되어 `Source superseded`로 차단됐고 웹 작업은 건너뛰었습니다. 따라서 이 실행의 전체 배포·Vercel 전환 성공으로 기록하지 않습니다.
+- 임시 Argo 동기화 제한을 제거하고 자동 동기화와 `EKS_RELEASE_ENABLED=true`를 복원했습니다.
+
+아래는 전환 전 초기 점검 기록이며 현재 상태와 구분합니다.
 
 - 수동 배포 기록에는 웹·Core/AI health·공고 목록·Ops session 응답과 익명 평가 이력 거절 확인이 있습니다.
 - CodeConnections·CodeBuild·ECR·IAM·EKS 접근은 연결 및 읽기 전용 preflight 확인 기록이 있습니다.
