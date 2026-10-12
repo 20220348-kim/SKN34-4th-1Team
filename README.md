@@ -289,7 +289,7 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 <img src="docs/assets/readme/architecture-resources-caption.svg" alt="5.2.4 Kubernetes 내부 리소스 구조 — 아래 그림은 ① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다." width="820">
 
-그림은 **2026-10-13 확인한 저장소의 운영 설정**(Helm Chart·EKS 설정·자동 배포 코드)을 설명합니다. 로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
+로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
 
 **전체 Namespace와 워크로드 배치**
 
