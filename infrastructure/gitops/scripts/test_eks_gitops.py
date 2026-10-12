@@ -675,5 +675,87 @@ class EksGitOpsTests(unittest.TestCase):
                     gitops.wait(self.sha, path)
 
 
+class EksArgoDashboardTests(unittest.TestCase):
+    def setUp(self):
+        manifest = ROOT / "infrastructure/eks/argocd-dashboard.yaml"
+        self.rows = list(yaml.safe_load_all(manifest.read_text(encoding="utf-8")))
+        self.resources = {row["kind"]: row for row in self.rows}
+
+    def test_installation_cannot_overwrite_core_or_application_resources(self):
+        server_kinds = {
+            "ServiceAccount",
+            "Role",
+            "RoleBinding",
+            "ClusterRole",
+            "ClusterRoleBinding",
+            "Deployment",
+            "Service",
+        }
+        expected = {(kind, "argocd-server") for kind in server_kinds}
+        expected.add(("NetworkPolicy", "argocd-server-ingress"))
+        self.assertEqual(len(self.rows), len(expected))
+        self.assertEqual(
+            {(row["kind"], row["metadata"]["name"]) for row in self.rows}, expected
+        )
+        for row in self.rows:
+            if row["kind"] not in {"ClusterRole", "ClusterRoleBinding"}:
+                self.assertEqual(row["metadata"]["namespace"], "argocd")
+        for kind in ("RoleBinding", "ClusterRoleBinding"):
+            self.assertEqual(
+                self.resources[kind]["subjects"],
+                [{"kind": "ServiceAccount", "name": "argocd-server", "namespace": "argocd"}],
+            )
+
+    def test_dashboard_requires_authentication_and_private_tls_access(self):
+        deployment = self.resources["Deployment"]
+        pod = deployment["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        self.assertEqual(
+            container["args"],
+            ["/usr/local/bin/argocd-server", "--insecure=false", "--disable-auth=false", "--rootpath=/argocd"],
+        )
+        self.assertEqual(pod["serviceAccountName"], "argocd-server")
+        self.assertFalse(pod.get("hostNetwork"))
+        self.assertTrue(all("hostPort" not in port for port in container["ports"]))
+        service = self.resources["Service"]["spec"]
+        self.assertEqual(service["type"], "ClusterIP")
+        self.assertNotIn("externalIPs", service)
+        self.assertEqual(service["ports"], [{"name": "https", "port": 8080, "protocol": "TCP", "targetPort": 8080}])
+        self.assertTrue(all("nodePort" not in port for port in service["ports"]))
+        policy = self.resources["NetworkPolicy"]["spec"]
+        self.assertEqual(policy["podSelector"]["matchLabels"], service["selector"])
+        self.assertEqual(
+            service["selector"]["app.kubernetes.io/name"],
+            deployment["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"],
+        )
+        self.assertEqual(policy["policyTypes"], ["Ingress"])
+        self.assertEqual(policy["ingress"], [{
+            "from": [{
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}},
+                "podSelector": {"matchLabels": {"app.kubernetes.io/name": "api-gateway"}},
+            }],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        }])
+        self.assertNotIn("egress", policy)
+
+    def test_server_reuses_redis_and_fits_the_existing_observability_pool(self):
+        deployment = self.resources["Deployment"]["spec"]
+        pod = deployment["template"]["spec"]
+        self.assertEqual(deployment["replicas"], 1)
+        self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxSurge"], 0)
+        self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxUnavailable"], 1)
+        self.assertEqual(pod["nodeSelector"]["govbiz.io/workload-pool"], "observability")
+        self.assertEqual(len(pod["containers"]), 1)
+        self.assertFalse(pod.get("initContainers"))
+        container = pod["containers"][0]
+        self.assertEqual(container["image"], "quay.io/argoproj/argocd:v3.5.3")
+        self.assertEqual(container["resources"]["requests"], {"cpu": "50m", "memory": "128Mi"})
+        self.assertEqual(container["resources"]["limits"], {"cpu": "500m", "memory": "384Mi"})
+        redis = next(env for env in container["env"] if env["name"] == "REDIS_PASSWORD")
+        self.assertEqual(
+            redis["valueFrom"]["secretKeyRef"], {"key": "auth", "name": "argocd-redis"}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

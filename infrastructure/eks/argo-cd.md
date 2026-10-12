@@ -1,6 +1,6 @@
 # 시드니 EKS의 Argo CD 자동 배포 전환
 
-[자동 배포 전체 흐름](continuous-deployment.md) · [EKS 안내](README.md)
+[자동 배포 전체 흐름](continuous-deployment.md) · [운영 대시보드 접속](argocd-dashboard.md) · [EKS 안내](README.md)
 
 CodeBuild는 이미지 빌드·ECR 발행·검증된 Git 배포 태그 발행을 담당합니다.
 클러스터 앱 변경은 Argo CD가 수행하며 CodeBuild는 결과만 조회합니다.
@@ -38,7 +38,8 @@ CodeBuild는 이미지 빌드·ECR 발행·검증된 Git 배포 태그 발행을
 
 ### 현재 Argo 자원 배치
 
-Argo 4개 구성 요소는 기존 `govbiz.io/workload-pool=observability` 노드에 배치했습니다.
+Argo Core 4개 구성 요소와 아래 대시보드 서버 1개는 기존
+`govbiz.io/workload-pool=observability` 노드에 배치했습니다. 현재 `argocd`의 Pod는 총 5개입니다.
 새 노드나 외부 LoadBalancer는 만들지 않았습니다. 설치 manifest의 기본값에는 자원 제한이 없어
 아래 값을 적용했습니다. 재설치할 때도 같은 배치·자원 설정을 유지합니다.
 
@@ -48,6 +49,7 @@ Argo 4개 구성 요소는 기존 `govbiz.io/workload-pool=observability` 노드
 | repo-server | 25m / 1 | 256Mi / 768Mi |
 | ApplicationSet controller | 25m / 200m | 64Mi / 128Mi |
 | Redis | 25m / 200m | 64Mi / 128Mi |
+| argocd-server 대시보드 | 50m / 500m | 128Mi / 384Mi |
 
 초기화 컨테이너는 25m/64Mi 요청, 200m/128Mi 제한을 사용합니다.
 평가 서비스의 observability 이전 설정에서는 controller·repo-server CPU 요청을 기존 각각
@@ -67,6 +69,37 @@ Application을 다시 생성할 때 이 Job 배치도 반영해야 합니다. `g
 배포되는 NetworkPolicy 2개도 기존 허용 통신과 같음을 확인했습니다.
 `ops-artifacts`의 근거 자료 초기화 이미지도 이번 인계에서 같은 배포의 평가 실행기 이미지로 갱신했습니다.
 운영 환경이 포함된 Application·수집 JSON은 비공개로 보관하고 Git에 추가하지 않습니다.
+
+### 2026-10-13 운영 대시보드 추가
+
+- 기존 Core와 같은 3.5.3의 `argocd-server` Deployment·ClusterIP Service·RBAC와
+  직접 인입 차단 NetworkPolicy만 [별도 매니페스트](argocd-dashboard.yaml)로 추가했습니다.
+  전체 Argo 설치 정의를 다시 적용하지 않았습니다.
+- observability 노드에서 서버 `Ready 1/1`을 확인했습니다. 기존 Core 4개 Pod의 UID·재시작
+  횟수와 `govbiz-eks` Application spec 해시는 설치 전후 같고 `Synced / Healthy`를 유지했습니다.
+- 초기 설치 시 EC2는 2대였습니다. 설치 직후 서버 관측값은 CPU 2m·메모리 40Mi이며,
+  이 값은 최대 부하나 장기 사용량을 뜻하지 않습니다.
+- 관리자 PC의 `127.0.0.1:18443 → Service 443 → Pod 8080` 터널에서 서버 인증서 검증,
+  HTML 200, 비인증 Application 조회 401, admin 로그인 200과 `govbiz-eks` 리소스 트리를
+  확인했습니다. 기존 EKS 접속 허용 CIDR·외부 로드밸런서는 변경하지 않았습니다.
+- 위 터널의 서버 검증은 성공했지만 앱 내 브라우저는 자체 서명 인증서를
+  `ERR_CERT_AUTHORITY_INVALID`로 차단했습니다. 이를 브라우저 접속 완료로 기록하지 않습니다.
+- 기존 CloudFront의 `/argocd/` → 내부 ALB → API Gateway → Argo HTTPS 경로를 실제 적용했습니다.
+  관리자 IPv4와 Argo 전용 origin 비밀값을 검사하고, Gateway는 서버 인증서를 고정해 검증합니다.
+  Service의 여러 포트를 하나의 targetPort에 연결하면 CNI PolicyEndpoint에 첫 포트만 반영되어
+  차단되는 문제를 확인해 `8080 → 8080` 단일 TLS 포트로 정리했습니다.
+- CloudFormation `UPDATE_COMPLETE`와 CloudFront `Deployed`, 공인 TLS 인증서 검증을 확인했습니다.
+  앱 내 브라우저에서 [운영 주소](https://d1kn7p1kr532sh.cloudfront.net/argocd/)의 Argo 로그인 화면을
+  직접 확인했고, 사용자 로그인 후 Applications 화면의 `govbiz-eks` 타일에 `Healthy / Synced`가
+  표시되는 것까지 확인했습니다. 인증서 예외나 localhost 터널은 필요하지 않습니다.
+- HTTPS HTML 200, 로그인 전 Application 조회 401, admin API 로그인 200과 로그인 후
+  `govbiz-eks`의 `Synced / Healthy`, 리소스 트리 15개를 확인했습니다. 암호·토큰은 출력하거나 저장하지 않았습니다.
+- 기존 Vercel Core health는 200, CloudFront 직접 `/api` health는 403으로 기존 API 접근 제한을 유지했습니다.
+  배포된 LIVE Function 시험에서 비허용 IP가 보낸 위조 허용·Host 헤더가 제거되는 것을 확인했습니다.
+  다른 공인 IP에서 전체 HTTPS 경로를 재접속한 결과로 확대해 해석하지 않습니다.
+- 별도 ALB·프록시 Pod나 EC2를 수동으로 추가하지 않았습니다. 최종 확인 시에는 기존 Cluster Autoscaler가
+  확장한 EC2 3대가 관측됐으므로 기본 2대로 복귀했다고 기록하지 않습니다.
+  로그인·접근 제한·진단 절차는 [접속 안내](argocd-dashboard.md)를 따릅니다.
 
 ## 최초 인계 순서
 

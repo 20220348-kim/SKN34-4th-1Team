@@ -53,15 +53,15 @@ function label(x, y, value, max=360, fill=muted) {
 
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
-<title id="title">GovBiz AWS EKS 아키텍처 — Vercel 웹 · 모바일 · 업무 · LLMOps</title>
-<desc id="desc">2026-10-13 저장소 설정에 근거한 운영 구성. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. ALB는 정상 Gateway Pod IP로, Core와 AI Service는 준비된 Pod로 연결을 분산한다. HPA는 컨테이너 CPU requests 대비 평균 사용률 60%를 기준으로 Gateway 1~3개, Core와 AI 각각 2~3개를 조절한다. 자원 또는 분산 조건 때문에 Pod가 대기하면 Cluster Autoscaler가 application EC2를 추가한다. application 1~2대와 observability 1대로 전체 기본 2대·최대 3대이며 한 가용 영역을 사용한다. application에는 업무 저장소·Catalog·Ops, observability에는 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치한다. 기본 두 노드에서는 Core와 AI를 각각 한 개씩 배치한다. 같은 서비스의 Pod는 노드당 최대 한 개이므로 세 번째 Pod에는 세 번째 EC2가 필요하다. 아래 namespace 상자는 논리 구분이며 노드 경계가 아니다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 배치 전환·검증 상태는 설명 문서에 기록한다.</desc>
+<title id="title">GovBiz AWS EKS 아키텍처 — Vercel 업무 웹 · EKS Argo 관리 웹 · 모바일 · LLMOps</title>
+<desc id="desc">2026-10-13 저장소 설정에 근거한 운영 구성. GovBiz 업무 웹은 Vercel, Argo 배포 관리 웹은 EKS의 argocd-server Pod에서 제공한다. 업무 API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. 관리자는 CloudFront /argocd/로 직접 접속하며 같은 ALB와 Gateway를 거쳐 HTTPS ClusterIP 8080의 Argo Service와 Pod에 연결한다. 관리자 IP·전용 origin 비밀값·Argo 로그인으로 접근을 제한한다. ALB는 정상 Gateway Pod IP로, Core와 AI Service는 준비된 Pod로 연결을 분산한다. HPA는 컨테이너 CPU requests 대비 평균 사용률 60%를 기준으로 Gateway 1~3개, Core와 AI 각각 2~3개를 조절한다. 자원 또는 분산 조건 때문에 Pod가 대기하면 Cluster Autoscaler가 application EC2를 추가한다. application 1~2대와 observability 1대로 전체 기본 2대·최대 3대이며 한 가용 영역을 사용한다. application에는 업무 저장소·Catalog·Ops, observability에는 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치한다. 기본 두 노드에서는 Core와 AI를 각각 한 개씩 배치한다. 같은 서비스의 Pod는 노드당 최대 한 개이므로 세 번째 Pod에는 세 번째 EC2가 필요하다. 아래 namespace 상자는 논리 구분이며 노드 경계가 아니다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 배치 전환·검증 상태는 설명 문서에 기록한다.</desc>
 <defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
 
 text(70,91,'GovBiz',{size:56,weight:700});
 text(305,91,'AWS EKS 시스템 아키텍처',{size:38,weight:600});
-text(70,142,'Vercel 웹 · React Native 모바일 · EKS 업무·평가·관측 · AWS 네트워크·저장소',{size:25,fill:muted,max:2050});
+text(70,142,'Vercel 업무 웹 · EKS Argo 관리 웹 · React Native 모바일 · 업무·평가·관측',{size:25,fill:muted,max:2050});
 card(2390,51,540,62,'#FFF5E6','#E8C68E',16);
 text(2660,91,'VERCEL + AWS EKS',{size:27,weight:700,anchor:'middle',fill:'#98631F',max:500});
 text(2930,142,'2026.10.13 · 저장소 운영 설정 기준',{size:21,fill:muted,anchor:'end',max:700});
@@ -72,7 +72,7 @@ text(90,232,'01   화면과 API 진입 경로',{size:25,weight:700,fill:muted});
 const entry = [
   [95,370,'chrome','브라우저',['사용자 화면 · 관리자 Ops']],
   [535,600,'vercel','Vercel · React 웹 + API 중계',['govbiz.vercel.app · /api 서버 미들웨어']],
-  [1215,460,'cloudfront','CloudFront',['HTTPS · API 전용 · 캐시 끔']],
+  [1215,460,'cloudfront','CloudFront',['HTTPS · API / Argo · 캐시 끔']],
   [1755,440,null,'내부 ALB',['정상 Gateway Pod IP로 분산']],
   [2275,630,'nginx','Nginx API Gateway',['Pod 1~3개 · 프록시 비밀값 검증']],
 ];
@@ -95,13 +95,15 @@ text(558,530,'Bearer 인증 · 운영 실기기 검증은 별도',{size:22,fill:
 edge('M465 478H535'); edge('M835 411V368','config');
 text(850,396,'Vercel 주소 설정 시',{size:18,fill:muted,max:280});
 card(1215,411,980,135,'#F6F3FD','#D8CDEA');
-text(1240,454,'관리자 도구 UI · EKS 권한 + port-forward',{size:27,weight:700,max:930});
-text(1240,495,'Prefect  localhost:14200    ·    Langfuse  localhost:13000',{size:24,max:930});
-text(1240,530,'도구 UI는 공개 API 프록시와 분리 · 다른 PC는 각자 터널 연결',{size:22,fill:muted,max:930});
+text(1240,454,'배포 관리자 브라우저 → EKS Argo 웹',{size:27,weight:700,max:930});
+text(1240,495,'CloudFront HTTPS /argocd/로 직접 접속 · 관리자 IP·로그인 제한',{size:23,max:930});
+text(1240,530,'업무 웹과 별도 경로 · Prefect·Langfuse UI는 기존 터널 사용',{size:22,fill:muted,max:930});
+edge('M1445 411V368','access');
+text(1470,396,'Argo HTTPS 접속',{size:18,fill:colors.access,max:260});
 card(2275,411,630,135,'#F1F8FC','#C3DAE8');
-text(2298,454,'① /api/*  →  Core :8080',{size:25,weight:600,max:584});
-text(2298,495,'② /api/v1/ops/*  →  Ops :8000',{size:25,weight:600,max:584});
-text(2298,530,'Ops 경로 우선 분기 · Core 관리자 세션 확인',{size:21,fill:muted,max:584});
+text(2298,450,'① /api/*  →  Core :8080',{size:25,weight:600,max:584});
+text(2298,488,'② /api/v1/ops/*  →  Ops :8000',{size:25,weight:600,max:584});
+text(2298,526,'⑥ /argocd/*  →  Argo HTTPS :8080',{size:25,weight:600,fill:colors.access,max:584});
 edge('M2590 368V411');
 text(95,576,'모바일도 Vercel API 중계를 사용하면 CloudFront → ALB → Nginx → Core 경유',{size:22,fill:muted,max:2800});
 
@@ -113,7 +115,7 @@ text(2900,707,'CI → ECR · Helm → Git → Argo CD · EKS → Vercel',{size:2
 card(85,745,2830,2930,'#F5F9FD','#B9CFE2',26);
 icon('vpc',112,765,47);
 text(178,801,'Amazon VPC · 사설 서브넷의 백엔드',{size:29,weight:700,max:1500});
-text(2875,801,'ALB → Gateway Pod IP · Gateway → Core·Ops Service',{size:23,fill:muted,anchor:'end',max:1170});
+text(2875,801,'ALB → Gateway Pod IP → Core·Ops·Argo Service',{size:23,fill:muted,anchor:'end',max:1170});
 card(110,835,2780,2700,'#FFFFFF','#BCD1E5',24);
 icon('kubernetes',140,860,50);
 text(207,902,'Amazon EKS · govbiz-eks',{size:33,weight:700,max:1240});
@@ -141,7 +143,7 @@ card(540,1160,510,130);
 icon('nginx',562,1181,40);
 text(620,1204,'Gateway Pod 1~3개',{size:28,weight:700,max:404});
 text(565,1241,'Nginx가 URL별 Service로 전달',{size:24,max:460});
-text(565,1274,'/api/* → Core · Ops 경로는 아래로',{size:22,fill:muted,max:460});
+text(565,1274,'/api/* → Core · Ops / Argo는 아래로',{size:22,fill:muted,max:460});
 for (const [x,w,name,detail] of [
   [1120,745,'Core','Gateway → Core Service → Ready Pod'],
   [1935,900,'AI','Core → AI Service → Ready Pod'],
@@ -154,12 +156,19 @@ for (const [x,w,name,detail] of [
     card(chipX,1227,chipWidth,42,i===2?'#EAF6F0':'#F1F6FB',i===2?'#A6CDBB':'#C6D9E7',10);
     text(chipX+chipWidth/2,1256,i===2?`${name} 3 · 확장 시`:`${name} Pod ${i+1}`,{size:22,weight:600,anchor:'middle',max:chipWidth-12});
   }
-  text(x+25,1339,detail,{size:23,fill:muted,max:w-50});
+  text(x+25,1284,detail,{size:17,fill:muted,max:w-50});
 }
 for (const [a,b] of [[475,540],[1050,1120],[1865,1935]]) edge(`M${a} 1225H${b}`);
-edge('M795 1290V1320');
-card(585,1320,420,55);
-text(795,1356,'Ops Service → 단일 Pod',{size:24,weight:600,anchor:'middle',max:382});
+edge('M795 1290V1330');
+card(585,1330,420,60);
+text(795,1368,'② Ops Service → Pod 1개',{size:24,weight:600,anchor:'middle',max:382});
+edge('M795 1308H1492V1330','access');
+text(1090,1326,'/argocd/',{size:18,fill:colors.access,max:240});
+card(1120,1330,745,60,'#F6F3FD','#D8CDEA',15);
+text(1492,1368,'⑥ argocd-server Service · HTTPS :8080',{size:24,weight:600,anchor:'middle',max:695});
+edge('M1865 1360H1935','access');
+card(1935,1330,900,60,'#F6F3FD','#D8CDEA',15);
+text(2385,1368,'Argo 웹 Pod 1개 · argocd Namespace · observability',{size:24,weight:600,anchor:'middle',max:850});
 text(165,1418,'Pod·EC2 오토스케일링 · 사용량과 배치 조건에 따라 실행 개수 조절',{size:27,weight:700,fill:colors.scaling,max:2630});
 for (const [x,w,title,lines] of [
   [165,790,'HPA · Pod 개수 조절',[
@@ -313,28 +322,35 @@ parts.push('</g>');
 // Argo runs on the observability worker, in its own namespace. The API is EKS-managed.
 card(140,3000,1570,480,'#FDF8F0','#E1CBA9',24);
 icon('argocd',165,3020,42);
-text(225,3052,'argocd · Argo CD Core · 배포 관리',{size:30,weight:700,max:1450});
-text(165,3088,'observability 노드에 Pod 4개 · Core 설치: 별도 웹 서버 없음',{size:23,fill:muted,max:1515});
+text(225,3052,'argocd · Argo CD Core + 대시보드',{size:30,weight:700,max:1450});
+text(165,3088,'observability 노드에 Pod 5개 · Core 4개 + 상시 웹 서버 1개',{size:23,fill:muted,max:1515});
 for (const [x,y,w,title,lines] of [
-  [165,3140,710,'application-controller',['Git 설정과 클러스터 상태 비교','Kubernetes API로 앱 동기화']],
-  [925,3140,755,'repo-server',['⑤ Git 태그의 배포 YAML 조회','controller에 배포 리소스 제공']],
-  [165,3290,710,'ApplicationSet controller',['Application 생성·관리용 구성 요소']],
-  [925,3290,755,'Redis · Argo 내부 캐시',['업무·Langfuse Redis와 별도']],
+  [165,3130,710,'application-controller',['Git 설정과 클러스터 상태 비교','Kubernetes API로 앱 동기화']],
+  [925,3130,755,'repo-server',['⑤ Git 태그의 배포 YAML 조회','controller에 배포 리소스 제공']],
+  [165,3238,710,'ApplicationSet controller',['Application 생성·관리용 구성 요소']],
+  [925,3238,755,'Redis · Argo 내부 캐시',['업무·Langfuse Redis와 별도']],
 ]) {
-  card(x,y,w,125,'#FFFFFF','#E1D3BC',18);
-  text(x+24,y+39,title,{size:26,weight:600,max:w-48});
-  lines.forEach((line,i)=>text(x+24,y+78+i*33,line,{size:22,fill:muted,max:w-48}));
+  card(x,y,w,96,'#FFFFFF','#E1D3BC',18);
+  text(x+24,y+32,title,{size:25,weight:600,max:w-48});
+  lines.forEach((line,i)=>text(x+24,y+60+i*25,line,{size:21,fill:muted,max:w-48}));
 }
+card(165,3350,625,85,'#F6F3FD','#D8CDEA',18);
+text(189,3384,'⑥ argocd-server Service',{size:25,weight:600,max:577});
+text(189,3418,'Gateway → HTTPS ClusterIP :8080',{size:23,fill:muted,max:577});
+edge('M790 3393H855','access');
+card(855,3350,825,85,'#F6F3FD','#D8CDEA',18);
+text(879,3384,'argocd-server · 상시 배포 관리 웹',{size:25,weight:600,max:777});
+text(879,3418,'Deployment → ReplicaSet → Pod 1개 · admin 인증',{size:23,fill:muted,max:777});
 edge('M925 3200H875','deploy');
 edge('M875 3160H900V3115H1760V3170H1820','deploy');
-text(165,3456,'관측 서비스와 같은 EC2 사용 · govbiz-observability와 다른 Namespace',{size:22,fill:muted,max:1515});
+text(165,3466,'관측 서비스와 같은 EC2 · 별도 Namespace · 관리자 IP·로그인 제한',{size:22,fill:muted,max:1515});
 card(1820,3115,1015,150,'#F5F9FD','#BCD1E5',20);
 text(1845,3157,'Kubernetes API · EKS 관리형 제어면',{size:28,weight:700,max:965});
 text(1845,3197,'Argo의 권한을 확인하고 원하는 리소스 상태 반영',{size:24,max:965});
 text(1845,3237,'observability EC2에서 실행하는 Pod가 아님',{size:22,fill:muted,max:965});
 edge('M2325 3265V3300','deploy');
 card(1820,3300,1015,130,'#FFFFFF','#D3DEE5',20);
-text(1845,3340,'업무·평가 워크로드 · 위 영역과 같은 배포 대상',{size:27,weight:700,max:965});
+text(1845,3340,'govbiz-eks · 업무·평가 앱 Deployment 6개',{size:27,weight:700,max:965});
 text(1845,3378,'Core · Catalog · AI · Ops · 평가 실행기 · 결과 서버',{size:23,max:965});
 text(1845,3410,'Deployment · Service · 배포 hook 등 동기화',{size:22,fill:muted,max:965});
 text(1820,3470,'배포 제어 경로 · 사용자 API 요청은 Argo를 거치지 않음',{size:22,fill:muted,max:1015});

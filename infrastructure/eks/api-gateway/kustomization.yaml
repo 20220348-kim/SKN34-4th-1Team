@@ -10,4 +10,5 @@ configMapGenerator:
   - name: api-gateway-config
     files:
       - nginx.conf.template
+      - argocd.conf.template
       - start.sh

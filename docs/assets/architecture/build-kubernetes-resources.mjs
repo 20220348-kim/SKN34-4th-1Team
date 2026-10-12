@@ -70,7 +70,7 @@ function finish() {
 }
 
 // 01: Inventory uses aligned namespace rows, with no implied service-call arrows.
-start('govbiz-kubernetes-resources-overview',1985,'01','어떤 리소스가 어디에 있나요?','현재 EKS 업무·평가·관측·배포 관리 · Namespace와 Node는 별개입니다.');
+start('govbiz-kubernetes-resources-overview',2201,'01','어떤 리소스가 어디에 있나요?','현재 EKS 업무·평가·관측·배포 관리 · Namespace와 Node는 별개입니다.');
 function namespace(y,h,name,label) {
   rect(48,y,1344,h);
   icon('ns',72,y+20,52);
@@ -114,21 +114,30 @@ card(858,1080,510,142,'sts','StatefulSet → Pod + PVC',[
 icon('svc',82,1241,36); text(132,1268,'앱과 관측 저장소 각각 ClusterIP Service 사용',{size:25,max:1190});
 text(80,1318,'EKS: observability · 업무용 MySQL·Redis와 분리한 관측 저장소 4개 · 각각 독립 PVC',{size:24,fill:palette.muted,max:1280});
 
-namespace(1372,390,'argocd · Argo CD Core','배포 관리 · Pod 4개');
-card(72,1454,762,180,'deploy','Deployment → ReplicaSet → Pod',[
+namespace(1372,606,'argocd · Core + 대시보드','EKS 5개 · 로컬 Core 4개');
+card(72,1454,762,172,'deploy','Deployment → ReplicaSet → Pod',[
   'repo-server · applicationset-controller',
   'Redis · 각각 별도 Deployment / Pod',
 ],{size:28});
-card(858,1454,510,180,'sts','StatefulSet → Pod',[
+card(858,1454,510,172,'sts','StatefulSet → Pod',[
   'application-controller',
   'Pod 1개 · PVC 없음',
 ],{size:27});
-icon('svc',82,1650,36); text(132,1677,'repo-server·Redis 내부 Service · Core 설치에는 별도 웹 서버 없음',{size:25,max:1190});
-text(80,1732,'EKS: observability · Argo 전용 Namespace · Kubernetes API 권한으로 업무·평가 앱 동기화',{size:24,fill:palette.muted,max:1280});
+card(72,1650,762,176,'argocd','argocd-server · 배포 관리 웹',[
+  'Deployment → ReplicaSet → Pod · EKS에서 1개 실행',
+  '업무 React 웹은 Vercel · 로컬 kind는 Core 4개 유지',
+],{fill:'#F4FBFA',size:28});
+card(858,1650,510,176,'svc','ClusterIP Service',[
+  'argocd-server · HTTPS :8080',
+  '준비된 대시보드 Pod로 전달',
+],{fill:'#F4FBFA',size:26});
+text(80,1864,'관리자 → CloudFront /argocd/ → 기존 ALB·Gateway → 위 Service·Pod',{size:24,fill:palette.muted,max:1280});
+text(80,1906,'관리자 IP·로그인 제한 · repo-server·Redis도 내부 Service 사용 · Argo Pod는 PVC 없음',{size:24,fill:palette.muted,max:1280});
+text(80,1948,'EKS: observability Node · govbiz-eks는 업무·평가 앱 Deployment 6개 관리',{size:24,fill:palette.muted,max:1280});
 
-rect(48,1786,1344,126,{fill:'#EDF3FE',stroke:'#BFCFF2'});
-icon('ns',72,1808,58);
-lines(152,1828,[
+rect(48,2002,1344,126,{fill:'#EDF3FE',stroke:'#BFCFF2'});
+icon('ns',72,2024,58);
+lines(152,2044,[
   'Namespace는 논리적 구분입니다. Node와 1:1로 대응하지 않습니다.',
   'Argo의 배포 제어와 kube-system 기반 기능은 ③에서 이어집니다.',
 ],{size:26,gap:42,max:1195});
@@ -169,24 +178,38 @@ text(154,1310,'clusterIP: None · 별도 프록시 없이 DNS가 MySQL Pod IP를
 finish();
 
 // 03: Separate the API control path, ALB traffic, autoscaling, shared add-ons and policies.
-start('govbiz-kubernetes-resources-platform',2430,'03','클러스터를 관리하고 연결하는 구성','현재 EKS의 배포·요청·Pod 및 노드 확장 관계 · 로컬의 접속 방식은 따로 표시합니다.');
-panel(180,302,'A. 배포·실행 관리');
-card(80,266,372,162,'argocd','Argo CD Core',['argocd · observability','4개 Pod · Git YAML 적용'],{size:25});
+start('govbiz-kubernetes-resources-platform',2872,'03','클러스터를 관리하고 연결하는 구성','현재 EKS의 배포·요청·Pod 및 노드 확장 관계 · 로컬의 접속 방식은 따로 표시합니다.');
+panel(180,390,'A. 배포·실행 관리');
+card(80,266,372,162,'argocd','Argo CD',['argocd · observability','Core 4개 + 대시보드 1개'],{size:25});
 card(534,266,372,162,'control-plane','Control Plane',['API · etcd · 컨트롤러','Scheduler · EKS: AWS 관리'],{size:26});
 card(988,266,372,162,'node','Worker Node',['kubelet · containerd','Pod 실행·상태 보고']);
 arrow(460,346,520,346); arrow(914,346,974,346);
-text(80,462,'Argo도 Worker Node의 Pod · Kubernetes API 권한으로 다른 Namespace에 배포합니다.',{size:24,fill:palette.muted,max:1270});
+text(80,462,'Argo도 Worker Node의 Pod · govbiz-eks는 업무·평가 앱 Deployment 6개를 관리합니다.',{size:24,fill:palette.muted,max:1270});
+text(80,501,'Argo의 배포 제어와 대시보드 접속은 별도 경로입니다. 실제 웹 요청은 아래 B를 따릅니다.',{size:23,fill:palette.muted,max:1270});
+text(80,540,'EKS는 상시 Pod 5개 · 기존 HTTPS 진입점 사용 · 로컬은 웹 서버 없는 Core Pod 4개',{size:24,fill:palette.muted,max:1270});
 
-panel(506,336,'B. EKS 외부 요청 진입 — Ingress 설정과 HTTP 요청 경로를 구분합니다.',{color:palette.teal,fill:'#F4FBFA'});
-icon('ing',80,588,45);
-text(144,620,'Ingress: api-gateway → ALB Controller가 내부 ALB를 구성',{size:27,weight:600,max:1190});
-card(80,651,272,126,null,'CloudFront',['VPC origin']);
-card(416,651,272,126,null,'내부 ALB',['AWS 리소스']);
-card(752,651,272,126,'pod','Gateway Pod',['최소 1개·최대 3개'],{size:23});
-card(1088,651,272,126,'svc','Core · Ops',['내부 Service'],{size:26});
-arrow(360,714,402,714,'teal'); arrow(696,714,738,714,'teal'); arrow(1032,714,1074,714,'teal');
-text(80,815,'ALB의 target-type: ip → gateway Pod로 직접 전달 · 로컬은 웹 Service·port-forward 사용',{size:24,fill:palette.muted,max:1280});
+parts.push('<g transform="translate(0 88)">');
+panel(506,690,'B. EKS 웹 요청 — 업무 API와 배포 관리 웹을 Gateway에서 분기합니다.',{color:palette.teal,fill:'#F4FBFA'});
+text(80,612,'업무 화면: 브라우저 → Vercel 웹 · /api 요청은 Vercel → CloudFront로 중계',{size:25,weight:600,max:1280});
+text(80,654,'배포 관리: 관리자 브라우저 → CloudFront HTTPS /argocd/ 직접 접속',{size:25,weight:600,max:1280});
+card(80,700,272,126,null,'CloudFront',['VPC origin']);
+card(416,700,272,126,null,'내부 ALB',['AWS 리소스']);
+card(752,700,272,126,'pod','Gateway Pod',['최소 1개·최대 3개'],{size:23});
+card(1088,700,272,126,'svc','Core · Ops',['업무 API Service'],{size:26});
+arrow(360,763,402,763,'teal'); arrow(696,763,738,763,'teal'); arrow(1032,763,1074,763,'teal');
+text(1070,688,'/api/*',{size:21,fill:palette.teal,max:225});
+rect(506,886,872,228,{fill:'#FFFFFF',stroke:'#9EC8C5'});
+text(530,925,'argocd Namespace · observability Node',{size:26,weight:700,max:824});
+card(534,947,372,143,'svc','Argo Service',['argocd-server · ClusterIP','HTTPS :8080'],{size:25});
+card(988,947,372,143,'pod','Argo 웹 Pod',['argocd-server · 1개','대시보드 화면·관리 API'],{size:25});
+parts.push(`<path d="M888 826V860H480V1018H520" fill="none" stroke="${palette.teal}" stroke-width="5" marker-end="url(#teal)"/>`);
+text(552,849,'/argocd/ · 서버 인증서 검증',{size:22,fill:palette.teal,max:410});
+arrow(914,1018,974,1018,'teal');
+lines(80,922,['Argo 접속 보호','CloudFront 관리자 IP 확인','Gateway 전용 비밀값 검사','Argo admin 로그인'],{size:24,gap:42,fill:palette.muted,max:382});
+icon('ing',80,1135,36);
+text(128,1164,'Ingress → ALB Controller가 ALB 구성 · ALB는 Gateway Pod IP로 직접 전달',{size:24,fill:palette.muted,max:1230});
 
+parts.push('<g transform="translate(0 354)">');
 panel(866,290,'C. Pod 자동확장 — HPA가 Deployment의 실행 개수를 조절합니다.');
 card(80,952,372,150,null,'Metrics Server',['Pod CPU 사용량 수집','리소스 metrics API 제공']);
 card(534,952,372,150,null,'HPA',['CPU requests 대비','평균 사용률 목표 60%']);
@@ -230,7 +253,7 @@ security.forEach(([name,title,a,b],i)=>{
   text(x+120,1452,b,{size:20,fill:palette.muted,anchor:'middle',max:220});
 });
 text(80,1523,'평가·관측·gateway 정책은 범위별 적용 · readiness/liveness, 자원 요청·제한은 Pod 명세에 포함',{size:23,fill:palette.muted,max:1280});
-parts.push('</g>');
+parts.push('</g></g></g>');
 finish();
 
 for (const diagram of diagrams) {

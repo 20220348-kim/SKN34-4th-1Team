@@ -5,6 +5,20 @@ if [ "${#GOVBIZ_PROXY_SECRET}" -ne 64 ] || ! printf '%s' "$GOVBIZ_PROXY_SECRET" 
   echo 'GOVBIZ_PROXY_SECRET must be 64 lowercase hexadecimal characters' >&2
   exit 1
 fi
+# Dashboard access is opt-in; API-only installations remain usable without it.
+if [ -n "${GOVBIZ_ARGO_PROXY_SECRET:-}" ]; then
+  if [ "${#GOVBIZ_ARGO_PROXY_SECRET}" -ne 64 ] || ! printf '%s' "$GOVBIZ_ARGO_PROXY_SECRET" | grep -Eq '^[a-f0-9]{64}$'; then
+    echo 'GOVBIZ_ARGO_PROXY_SECRET must be 64 lowercase hexadecimal characters' >&2
+    exit 1
+  fi
+  if [ ! -s /etc/govbiz-argocd/tls.crt ]; then
+    echo 'The pinned Argo server certificate is required' >&2
+    exit 1
+  fi
+  envsubst '${GOVBIZ_ARGO_PROXY_SECRET}' < /etc/govbiz/argocd.conf.template > /tmp/argocd.conf
+else
+  printf 'location = /argocd { return 403; }\nlocation /argocd/ { return 403; }\n' > /tmp/argocd.conf
+fi
 # Read the Pod DNS address rather than carrying Docker's resolver into EKS.
 GOVBIZ_DNS_RESOLVER=$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf)
 export GOVBIZ_DNS_RESOLVER
