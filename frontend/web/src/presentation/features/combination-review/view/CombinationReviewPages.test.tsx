@@ -527,8 +527,9 @@ describe('review screens and execution safety', () => {
   it('keeps the step in the address so going back and reopening show the same step', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     expect(currentLocation()).toBe('/app/combination-reviews/12')
-    // 참여 상태는 필수 단계가 아니어서 공고 고르기 다음이 바로 공고 분석입니다.
-    expect(within(screen.getByRole('list', { name: '검토 진행 단계' })).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['1단계 · 진행 중제목 · 공고 선택', '2단계공고 분석'])
+    // 대화의 중복 검토 카드와 같은 3단계 띠입니다. 참여 상태는 필수 단계가 아니어서 공고 선택 다음이 바로 분석 입력입니다.
+    expect(within(screen.getByRole('list', { name: '중복 검토 단계' })).getAllByRole('listitem').map((item) => item.textContent))
+      .toEqual(['1공고 선택 · 지금 단계', '2분석 입력 · 아직', '3분석·결과 · 아직'])
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     await screen.findByRole('region', { name: '분석 실행' })
     expect(currentLocation()).toBe('/app/combination-reviews/12?step=analysis')
@@ -1198,6 +1199,12 @@ describe('three-question results', () => {
     expect(repository.start).toHaveBeenCalledOnce()
     expect(repository.start.mock.calls[0][1]).toMatchObject({ expectedRevision: 3, additionalFacts: answerRunFixture.input.additionalFacts })
     expect(await screen.findByText(/분석 차례를 기다리고 있어요/)).toBeTruthy()
+    // 결과 화면도 검토 입력 · 신청 문서와 같은 진행 카드로 지난 시간만 보여 주고(예상 시간 없음), 3단계 띠는 분석·결과 진행 중입니다.
+    const progress = screen.getByRole('status', { name: '분석 진행' })
+    expect(within(progress).getByText(/초 지남$/)).toBeTruthy()
+    expect(progress.textContent).not.toContain('보통')
+    expect(within(screen.getByRole('list', { name: '중복 검토 단계' })).getAllByRole('listitem').map((item) => item.textContent))
+      .toEqual(['공고 선택 · 완료', '분석 입력 · 완료', '분석·결과 · 진행 중'])
   })
 
   it('keeps the narrowed situation and starts nothing when the save hits a revision conflict', async () => {

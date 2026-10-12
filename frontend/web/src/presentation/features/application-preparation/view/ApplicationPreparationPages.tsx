@@ -34,6 +34,8 @@ import { answerEditorStyles as e, applicationPreparationStyles as s, loadingStyl
 import { generationFailureTitle, generationStages } from './documentGeneration'
 import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
 import { ApplicationPreparationLede } from './ApplicationPreparationLede'
+import { WorkSteps } from '../../../shared/workspace/WorkSteps'
+import { applicationWorkSteps } from '../../../shared/workspace/workStepNames'
 import { AnswerEditorSkeleton, ButtonSpinner, ListCardSkeleton } from './ApplicationPreparationSkeletons'
 
 const listTitle = '신청 문서 작성'
@@ -465,6 +467,7 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
       </>}
     />
     <main className={workspacePageStyles.content} ref={mainRef}>
+      <WorkSteps size="page" label="신청 문서 단계" steps={applicationWorkSteps} current={1} />
       <ApplicationPreparationLede preparation={preparation} />
       {form.verificationStatus === 'SOURCE_DOCUMENT_EXTRACTED' && <div className={e.infoAlert} role="note">
         <div className={e.infoText}>

@@ -15,6 +15,7 @@ import { appPaths, publicPaths } from '../routes/appPaths'
 import { screenTitles } from '../routes/screenTitles'
 import { useFloatingPopover } from '../workspace/useFloatingPopover'
 import { appSidebarStyles, sidebarMenuItemClassName } from './AppSidebar.styles'
+import { sidebarMenuState } from './useWorkspaceLayoutViewModel'
 import type { ChatHistoryViewModel } from '../../features/chat/hooks/useChatHistory'
 
 type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'contact' | 'inbox' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash'
@@ -258,6 +259,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                     )}
                     key={item.label}
                     to={item.to}
+                    state={sidebarMenuState}
                     aria-current={isMenuItemActive(item) ? 'page' : undefined}
                   >
                     <MenuIconGraphic name={item.icon} />

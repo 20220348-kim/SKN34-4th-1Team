@@ -14,11 +14,14 @@ import { defaultProgramSelectionFilters } from '../../../shared/support-program/
 import { programPickerStyles } from '../../../shared/support-program/ProgramPicker.styles'
 import { ProgramBadges, ProgramPickerPanel } from '../../../shared/support-program/ProgramPickerPanel'
 import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
-import { elapsedLabel, formatReviewClock, formatReviewDateTime, runLabels } from './reviewLabels'
+import { formatReviewClock, formatReviewDateTime, runLabels } from './reviewLabels'
+import { ReviewRunProgress } from './ReviewRunProgress'
 import { reviewStyles as s } from './CombinationReview.styles'
 import { EmptyState } from '../../../shared/workspace/EmptyState'
 import { CompareIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
+import { WorkSteps } from '../../../shared/workspace/WorkSteps'
+import { reviewWorkSteps } from '../../../shared/workspace/workStepNames'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
@@ -240,6 +243,9 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
   const runOptions = vm.runs?.items ?? []
   const currentRunInOptions = runOptions.some((run) => run.id === runId)
   return <>{header}<main ref={contentRef} className={workspacePageStyles.content}>
+    <WorkSteps size="page" label="중복 검토 단계" steps={reviewWorkSteps} current={2}
+      state={!selectedRun ? 'current' : selectedRun.status === 'SUCCEEDED' ? 'done'
+        : selectedRun.status === 'QUEUED' || selectedRun.status === 'RUNNING' ? 'running' : 'warn'} />
     <div className="flex flex-wrap items-end justify-between gap-3">
       <p className={s.muted}>실행 #{runId}{selectedRun && ` · ${formatReviewDateTime(selectedRun.startedAt)} · 입력 버전 ${selectedRun.inputRevision}`}</p>
       <div className="flex flex-wrap items-center gap-2">
@@ -342,17 +348,10 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
   const runBlocked = vm.startBlocked
   if (vm.error?.status === 401) return <>{header}<main className={workspacePageStyles.content}><ReviewError error={vm.error} /></main></>
   return <>{header}<main ref={contentRef} className={workspacePageStyles.content}>
-    <ol className="grid gap-2 max-[599px]:hidden sm:grid-cols-2" aria-label="검토 진행 단계">
-      {steps.map(([value, label], index) => <li key={value} className={`flex flex-col rounded-2xl border px-3 py-2 ${index === stepIndex ? 'border-brand-primary bg-brand-soft' : index < stepIndex ? 'border-brand-primary/40 bg-white' : 'border-slate-200 bg-white'}`} aria-current={index === stepIndex ? 'step' : undefined}>
-        <span className={`text-xs font-bold ${index <= stepIndex ? 'text-brand-primary' : 'text-slate-500'}`}>{index + 1}단계{index < stepIndex ? ' · 완료' : index === stepIndex ? ' · 진행 중' : ''}</span>
-        <b className="text-sm">{label}</b>
-      </li>)}
-    </ol>
-    <div className="flex flex-col gap-1.5 min-[600px]:hidden" aria-hidden="true">
-      <div className="flex justify-between text-sm font-extrabold"><span>{steps[stepIndex]![1]}</span><span className="text-slate-500 tabular-nums">{stepIndex + 1} / {steps.length}</span></div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted"><i className="block h-full rounded-full bg-brand-primary" style={{ width: `${(stepIndex + 1) / steps.length * 100}%` }} /></div>
-      <span className="text-xs text-slate-500">{saveNote}</span>
-    </div>
+    {/* 대화의 중복 검토 카드와 같은 3단계 띠입니다. 입력 화면은 1(공고 선택) · 2(분석 입력), 결과 화면은 3(분석·결과)입니다. */}
+    <WorkSteps size="page" label="중복 검토 단계" steps={reviewWorkSteps} current={stepIndex} />
+    {/* 600px 미만은 아래 막대에 저장 안내가 없어 단계 띠 아래에 둡니다. */}
+    <span className="text-xs text-slate-500 min-[600px]:hidden" aria-hidden="true">{saveNote}</span>
     <ReviewError error={vm.error} />
     {id && vm.error?.runId && <ReviewRunLink className={s.secondarySm} reviewId={id} runId={vm.error.runId}>실패 실행 #{vm.error.runId} 확인</ReviewRunLink>}
     {vm.rejectedRevision && vm.pending && <button className={s.secondarySm} onClick={vm.clearRejectedRequest}>버전 충돌로 거절된 실행 요청 정리</button>}
@@ -383,7 +382,8 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
         <p className={s.info}>{scopeNotice}</p>
         {/* 진행 중이면 진행 카드를, 끝났으면 최근 결과로 가는 카드를 맨 위에 둡니다. 상태가 바뀌면 화면 읽기 프로그램이 한 번 읽습니다. */}
         <div role="status" aria-live="polite" className="contents">
-          {activeRun && <RunProgress run={activeRun} now={now} />}
+          {activeRun && <ReviewRunProgress status={activeRun.status} elapsedSeconds={(now - Date.parse(activeRun.startedAt)) / 1000}
+            note="화면을 나가도 계속돼요. 검토 목록에서도 진행 상태를 볼 수 있고, 끝나면 여기에서 바로 결과를 열 수 있어요." />}
           {!activeRun && finishedRun && <LatestRunCard reviewId={id} run={finishedRun} stale={finishedRun.inputRevision !== vm.review?.inputRevision || vm.dirty} />}
         </div>
         <section className={`${s.card} space-y-3`} aria-label="분석 대상 공고"><h2 className="font-bold">분석 대상 공고</h2><ul className="space-y-2">{vm.draft.programs.map((program, index) => <li key={reviewProgramKey(program)} className="rounded-lg bg-slate-50 p-3"><strong>사업 {index + 1} · {vm.names[reviewProgramKey(program)] ?? '공고 정보 확인 중'}</strong></li>)}</ul></section>
@@ -528,26 +528,6 @@ function StepBar({ back, note, reason = null, reasonId, next }: { back?: ReactNo
       {next}
     </div>
   </div>
-}
-
-/**
- * 접수한 분석의 진행 카드입니다(신청 문서의 양식 분석 · 초안 진행 카드와 같은 틀).
- * 서버가 주는 상태(대기 · 분석 중)와 접수 뒤 지난 시간만 보여 주고, 세부 단계나 남은 시간은 지어내지 않습니다.
- */
-function RunProgress({ run, now }: { run: RunSummary; now: number }) {
-  const running = run.status === 'RUNNING'
-  return <section className={s.progress} aria-label="분석 진행">
-    <div className={s.progressHead}>
-      <span className={s.spinner} aria-hidden="true" />
-      <strong className={s.progressTitle}>{running ? '공식 문서를 읽고 단계별로 판단하고 있어요' : '분석 차례를 기다리고 있어요'}</strong>
-      <span className={s.progressTime}>{elapsedLabel((now - Date.parse(run.startedAt)) / 1000)}</span>
-    </div>
-    <ol className={s.progressSteps} aria-label="진행 단계">
-      <li className={running ? s.progressStepDone : s.progressStepNow} aria-current={running ? undefined : 'step'}>{running ? '✓ 접수 · 대기' : '● 접수 · 대기 중'}</li>
-      <li className={running ? s.progressStepNow : s.progressStep} aria-current={running ? 'step' : undefined}>{running ? '● 원문 수집 · 분석 중' : '원문 수집 · 분석'}</li>
-    </ol>
-    <p className={s.progressNote}>화면을 나가도 계속돼요. 검토 목록에서도 진행 상태를 볼 수 있고, 끝나면 여기에서 바로 결과를 열 수 있어요.</p>
-  </section>
 }
 
 /** 끝난 최근 실행으로 가는 카드입니다. 성공은 [결과 보기], 실패 · 중단은 [자세히 보기]로 결과 화면의 이유를 엽니다. */

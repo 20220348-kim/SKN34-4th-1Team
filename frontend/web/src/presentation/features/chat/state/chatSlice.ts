@@ -50,7 +50,7 @@ type ChatState = {
   govProgram: GovAgentProgram | null
   /** 공고를 고르지 않아 답하지 못한 마지막 요청입니다. 공고를 고르면 [방금 질문을 이 공고로 묻기]로 다시 보냅니다(대화 기록에 저장하지 않음). */
   govPendingQuestion: string | null
-  /** 대화가 있는 채로 Gov 대화 화면을 떠났는지입니다. 신청 문서·중복 검토·파트너 화면이 [대화로 돌아가기]를 보입니다. */
+  /** 대화가 있는 채로 Gov 대화 화면을 떠났는지입니다. 작업 레이아웃이 그때 연 신청 문서·중복 검토·파트너 화면 묶음에만 [대화로 돌아가기]를 보이고, 벗어나면 지웁니다. */
   returnToGovChat: boolean
   companyDefaultsInitialized: boolean
   accountEmail: string | null

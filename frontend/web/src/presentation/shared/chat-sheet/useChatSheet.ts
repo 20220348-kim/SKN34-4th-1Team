@@ -92,7 +92,10 @@ export function useChatSheetRouting() {
     else navigate(`${background.pathname}${background.search}`, { state: background.state })
   }
 
-  /** 시트를 접고 지금 화면을 전체 화면으로 엽니다. 뒤에 있던 대화는 내려가며 [대화로 돌아가기]가 남습니다. */
+  /**
+   * 시트를 접고 지금 화면을 전체 화면으로 엽니다. 뒤에 있던 대화는 내려가며 [대화로 돌아가기]가 남습니다.
+   * 시트의 [전체 화면으로 열기] 버튼을 주석 처리해 두어 지금은 부르는 곳이 없습니다.
+   */
   function expand() {
     setState({ ...current, background: null, chatIndex: null })
   }

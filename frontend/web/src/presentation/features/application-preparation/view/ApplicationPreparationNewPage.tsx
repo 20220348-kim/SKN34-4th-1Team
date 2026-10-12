@@ -11,6 +11,9 @@ import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHead
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
+import { WorkProgress } from '../../../shared/workspace/WorkProgress'
+import { WorkSteps } from '../../../shared/workspace/WorkSteps'
+import { applicationWorkSteps } from '../../../shared/workspace/workStepNames'
 import { ProgramBadges, ProgramPickerPanel } from '../../../shared/support-program/ProgramPickerPanel'
 import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
 import {
@@ -38,11 +41,6 @@ const jobStatusLabels: Partial<Record<ApplicationFormDiscoveryJob['status'], str
 function readableTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
-}
-
-function elapsedLabel(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  return minutes > 0 ? `${minutes}분 ${seconds % 60}초 지남` : `${seconds}초 지남`
 }
 
 /** 새 문서(24) 화면입니다. 주소의 `sourceCode`·`sourceProgramId`가 있으면 그 공고를 미리 고르고 ②를 연 채 시작합니다. */
@@ -311,15 +309,10 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
   return <>
     <LastAnalysisNotice vm={vm} />
     {vm.discovery
-      ? <section className={n.progress} role="status" aria-live="polite" aria-label="양식 분석 진행">
-        <div className={n.progressHead}>
-          <span className={n.spinner} aria-hidden="true" />
-          <strong className={n.progressTitle}>{vm.discovery.reanalysis ? '입력칸별로 다시 분석하고 있어요' : '공식 첨부에서 신청 양식을 분석하고 있어요'}</strong>
-          <span className={n.progressTime}>{elapsedLabel(vm.elapsedSeconds)}</span>
-        </div>
+      ? <WorkProgress label="양식 분석 진행" title={vm.discovery.reanalysis ? '입력칸별로 다시 분석하고 있어요' : '공식 첨부에서 신청 양식을 분석하고 있어요'}
+        elapsedSeconds={vm.elapsedSeconds} note="화면을 나가도 계속돼요. 신청 문서 목록에서 이어서 볼 수 있어요.">
         <p className={n.muted}>{vm.discovery.resumed ? '이전에 시작한 분석을 이어서 보여 드려요. ' : ''}양식 크기에 따라 몇 분 걸릴 수 있어요.</p>
-        <p className={n.progressNote}>화면을 나가도 계속돼요. 신청 문서 목록에서 이어서 볼 수 있어요.</p>
-      </section>
+      </WorkProgress>
       : vm.selectedForm
         ? <FormChoice vm={vm} />
         : <section className={n.card} aria-labelledby="new-no-form-title">
@@ -428,6 +421,10 @@ function NewPreparation({ addressSourceCode, addressProgramId, autoAnalyze, onAu
   const pickerWasOpen = useRef(false)
   const pickerConfirmed = useRef(false)
   const formOpen = vm.program !== null
+  // 맨 위 단계 띠입니다. 양식을 찾으면 2단계(답변 작성)로, 분석 중이면 1단계 진행 중, 양식이 없거나 첨부를 읽지 못했으면 1단계 확인 필요입니다.
+  const formsFound = vm.forms.length > 0 && !vm.discovery
+  const formStatus = vm.availability?.status === 'ready' ? vm.availability.result.state.status : null
+  const formStepWarning = !formsFound && (formStatus === 'NO_FORM' || formStatus === 'DOCUMENT_UNAVAILABLE' || formStatus === 'TOO_LARGE')
 
   // 패널이 닫히면, 공고를 고른 경우 ② 제목으로 포커스를 옮겨 이어서 앞으로 진행하게 하고, 버리고 닫은 경우 연 버튼으로 돌려줍니다.
   useEffect(() => {
@@ -442,6 +439,7 @@ function NewPreparation({ addressSourceCode, addressProgramId, autoAnalyze, onAu
   return <>
     <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: '신청 문서 작성' }} title="새 문서" />
     <main className={workspacePageStyles.content}>
+      <WorkSteps size="page" label="신청 문서 단계" steps={applicationWorkSteps} current={formsFound ? 1 : 0} state={vm.discovery ? 'running' : formStepWarning ? 'warn' : 'current'} />
       <div className={n.body}>
         <p className={s.lede}>공고를 고르면 저장된 신청 양식이 있는지 바로 확인해요</p>
         {vm.activeJobs.length > 0 && <ActiveJobsAlert jobs={vm.activeJobs} />}

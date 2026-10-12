@@ -564,16 +564,12 @@ describe('지원사업 직접 필터 검색', () => {
     expect(screen.getByRole('link', { name: program.title })).toBe(result)
     expect(screen.getByTestId('location').textContent).toBe('/app/chat?mode=filter&region=%EC%84%9C%EC%9A%B8')
 
-    // Esc로도 닫고, [전체 화면으로 열기]는 시트를 접고 지금 상세를 작업 화면으로 엽니다(검색 탭 줄을 이어받음).
+    // Esc로도 닫고, [전체 화면으로 열기]는 잠시 숨겨 두어 시트 머리에는 [닫기]만 있습니다.
     fireEvent.click(result)
+    expect(within(screen.getByRole('dialog', { name: '공고 상세' })).queryByRole('button', { name: '전체 화면으로 열기' })).toBeNull()
     fireEvent.keyDown(screen.getByRole('dialog', { name: '공고 상세' }), { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '공고 상세' })).toBeNull()
-    fireEvent.click(result)
-    fireEvent.click(within(screen.getByRole('dialog', { name: '공고 상세' })).getByRole('button', { name: '전체 화면으로 열기' }))
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(await screen.findByRole('heading', { level: 1, name: program.title })).toBeTruthy()
-    expect(screen.getByRole('tablist', { name: '지원사업 검색 방식' })).toBeTruthy()
-    expect(screen.queryByRole('link', { name: program.title })).toBeNull()
+    expect(screen.getByRole('link', { name: program.title })).toBe(result)
   })
 
   it('주소로 바로 연 작업 화면 상세는 시트가 아니라 전체 화면이다', async () => {

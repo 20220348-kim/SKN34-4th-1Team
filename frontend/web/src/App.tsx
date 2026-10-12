@@ -104,7 +104,7 @@ function CoreApp() {
     <AppRoutes location={sheet.routesLocation} />
     </div>
     {sheet.background && sheet.kind ? (
-      <ChatSheet kind={sheet.kind} onClose={sheet.close} onExpand={sheet.expand}>
+      <ChatSheet kind={sheet.kind} onClose={sheet.close} /* onExpand={sheet.expand} */>
         {/* 시트 안은 작업 사이드바 · 검색 탭 줄 없이 화면만 그립니다. 목록 같은 다른 화면으로 가면 시트를 닫고 그 화면을 엽니다. */}
         <Routes>
           <Route path={appPaths.supportProgramDetail} element={<SupportProgramDetailPage />} />

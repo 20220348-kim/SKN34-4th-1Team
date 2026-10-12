@@ -11,6 +11,8 @@ import { reviewStyles as s } from './CombinationReview.styles'
 import { EvidenceQuote } from './EvidenceQuote'
 import { ReviewAnswerResult } from './ReviewAnswerResult'
 import { citationKey, displayReviewText } from './reviewText'
+import { useElapsedSeconds } from '../../../shared/workspace/elapsed'
+import { ReviewRunProgress } from './ReviewRunProgress'
 
 const verdictBadges: Record<ReviewVerdict, string> = { warn: s.badgeWarn, info: s.badgeInfo, ok: s.badgeOk }
 const verdictCells: Record<ReviewVerdict, string> = { warn: s.stageCellWarn, info: s.stageCellInfo, ok: s.stageCellOk }
@@ -41,10 +43,12 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const limitationCount = (run.evidence?.coverageWarnings.length ?? 0) + (run.analysis?.limitations.length ?? 0)
   const sourcesId = `review-sources-${run.id}`
+  // 분석 중이면 신청 문서의 진행 카드처럼 지난 시간을 보여 줍니다. 예상 시간은 맞지 않을 수 있어 적지 않습니다.
+  const running = run.status === 'QUEUED' || run.status === 'RUNNING'
+  const elapsed = useElapsedSeconds(run.startedAt, running)
   return <section className="space-y-4" aria-label={`실행 ${run.id} 결과`}>
     {run.inputRevision !== currentRevision && <p className={s.warning}>과거 입력 버전의 결과입니다. 현재 저장 입력(버전 {currentRevision})에 대한 결과가 아닙니다.</p>}
-    {run.status === 'QUEUED' && <p role="status" className={s.info}>분석 차례를 기다리고 있어요. 화면을 나가도 계속되고, 상태는 자동으로 확인해요.</p>}
-    {run.status === 'RUNNING' && <p role="status" className={s.info}>공식 문서를 읽고 단계별로 판단하고 있어요. 화면을 나가도 계속되고, 상태는 자동으로 확인해요.</p>}
+    {running && <ReviewRunProgress live status={run.status} elapsedSeconds={elapsed} note="화면을 나가도 계속되고, 끝나면 결과가 이 자리에 나와요." />}
     {run.status === 'UNKNOWN' && <p role="status" className={s.warning}>분석 완료 여부를 확인할 수 없습니다. 중복 과금을 방지하기 위해 자동 재실행과 같은 검토의 새 분석을 잠시 차단했습니다. 30분 안에 실패로 정리되면 새 분석을 실행할 수 있습니다.</p>}
     {(run.status === 'FAILED' || run.status === 'INTERRUPTED') && <div className={`${s.warning} flex flex-wrap items-center justify-between gap-3`}>
       <p>{reviewRunFailureMessage(run.failureCode)}</p>

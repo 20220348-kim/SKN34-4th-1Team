@@ -4,20 +4,23 @@ import { useLocation, useNavigate } from 'react-router'
 
 import { useAppDispatch, useAppSelector } from '../../../app/hooks'
 import { useChatHistory } from '../../features/chat/hooks/useChatHistory'
-import { conversationReset } from '../../features/chat/state/chatSlice'
+import { conversationReset, returnToGovChatChanged } from '../../features/chat/state/chatSlice'
 import { appPaths } from '../routes/appPaths'
 import { useResetScrollOnNavigate } from '../routes/useResetScrollOnNavigate'
 import { useWorkspaceChatActions } from './useWorkspaceChatActions'
 
 const mobileMediaQuery = '(max-width: 759px)'
 
+const govWorkPaths = [appPaths.applicationPreparations, appPaths.combinationReviews, appPaths.partners]
+
+/** 사이드바 메뉴 링크가 붙이는 기록 표시입니다. 맨 위 메뉴로 옮긴 것이라 작업 화면이 [대화로 돌아가기]를 두지 않습니다. */
+export const sidebarMenuState = { fromSidebarMenu: true } as const
+
 /**
  * 로그인 작업 화면 레이아웃의 ViewModel Hook입니다. PC 사이드바 접기·모바일 메뉴·포커스 이동과
  * 새검색·대화 열기·삭제의 확인 흐름을 한곳에서 관리하고, View는 반환된 상태와 handler만 연결합니다.
  * DOM ref는 포커스 제어에만 쓰며 Redux에 두지 않습니다.
  */
-const govWorkPaths = [appPaths.applicationPreparations, appPaths.combinationReviews, appPaths.partners]
-
 export function useWorkspaceLayoutViewModel() {
   const [isMobile, setIsMobile] = useState(() => typeof window.matchMedia === 'function'
     && window.matchMedia(mobileMediaQuery).matches)
@@ -34,6 +37,17 @@ export function useWorkspaceLayoutViewModel() {
   const history = useChatHistory()
   const returnToGovChat = useAppSelector((state) => state.chat.returnToGovChat)
   const { cancelOpening } = history
+  // [대화로 돌아가기]는 Gov 대화의 카드 · 시트에서 넘어온 작업 화면 묶음(신청 문서 · 중복 검토 · 파트너) 하나에만 둡니다.
+  // 처음 연 묶음을 그 렌더에서 기억하고, 사이드바 메뉴나 다른 화면으로 옮기면 표시를 지워 나중에 다시 와도 남지 않게 합니다.
+  const workSection = govWorkPaths.find((path) => location.pathname.startsWith(path)) ?? null
+  const fromSidebarMenu = (location.state as Partial<typeof sidebarMenuState> | null)?.fromSidebarMenu === true
+  const [returnSection, setReturnSection] = useState<string | null>(null)
+  const tripSection = returnToGovChat ? returnSection ?? workSection : null
+  if (tripSection !== returnSection) setReturnSection(tripSection)
+  const showReturnToChat = tripSection !== null && workSection === tripSection && !fromSidebarMenu
+  useEffect(() => {
+    if (returnToGovChat && !showReturnToChat) dispatch(returnToGovChatChanged(false))
+  }, [returnToGovChat, showReturnToChat, dispatch])
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return
@@ -127,8 +141,8 @@ export function useWorkspaceLayoutViewModel() {
     closeLabel: isMobile ? '메뉴 닫기' : '사이드바 접기',
     openLabel: isMobile ? '메뉴 열기' : '사이드바 펼치기',
     closeMenu, closeSidebar, openSidebar,
-    /** Gov 대화에서 넘어온 신청 문서 · 중복 검토 · 파트너 화면이면 [대화로 돌아가기]를 보입니다. */
-    showReturnToChat: returnToGovChat && govWorkPaths.some((path) => location.pathname.startsWith(path)),
+    /** Gov 대화의 카드 · 시트에서 넘어온 신청 문서 · 중복 검토 · 파트너 화면이면 [대화로 돌아가기]를 보입니다. */
+    showReturnToChat,
     ...chatActions,
   }
 }
