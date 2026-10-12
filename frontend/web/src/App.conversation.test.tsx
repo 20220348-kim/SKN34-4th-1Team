@@ -582,14 +582,17 @@ describe('대화 조건 해석·확인 검색 HTTP E2E', () => {
   it('제공처 검색 불가 중에도 해석할 수 있지만 준비 완료 전 확인 검색은 막는다', async () => {
     readiness.canSearch = false
     const network = mockConversationNetwork([readyConversationProposal(seoulConversationContext)])
-    const ui = renderConversationApp()
+    renderConversationApp()
     await submitMessage('서울 SW 사업화')
     expect((screen.getByRole('button', { name: '이 조건으로 검색' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText(/공고 검색 준비가 완료되면/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' }))
     expect(network.searchRequests).toHaveLength(0)
     readiness.canSearch = true
-    ui.rerender(<Provider store={ui.store}><MemoryRouter><App /></MemoryRouter></Provider>)
+    // 실제로는 상태 재조회가 화면을 다시 그립니다. 화면 경로는 위치가 바뀔 때만 위에서 다시 그리므로 입력으로 대화를 다시 그립니다.
+    const input = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(input, { target: { value: ' ' } })
+    fireEvent.change(input, { target: { value: '' } })
     expect((screen.getByRole('button', { name: '이 조건으로 검색' }) as HTMLButtonElement).disabled).toBe(false)
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
     expect(network.searchRequests).toHaveLength(1)

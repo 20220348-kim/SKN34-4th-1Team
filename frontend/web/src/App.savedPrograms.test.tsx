@@ -41,6 +41,12 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/** 작업 화면의 상세는 대화 위 시트라 [닫기]로, 비로그인 상세는 "‹ 공고 상세"(검색 결과로 돌아가기)로 검색에 돌아갑니다. */
+function returnToSearch() {
+  const sheet = screen.queryByRole('dialog', { name: '공고 상세' })
+  fireEvent.click(sheet ? within(sheet).getByRole('button', { name: '닫기' }) : screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
+}
+
 describe('관심 공고함', () => {
   it('AI 검색의 반복 공고에서 관심을 함께 반영하고 상세·관심 공고함에서도 유지한다', async () => {
     let stored = false
@@ -82,7 +88,7 @@ describe('관심 공고함', () => {
     expect(detailToggle.getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(detailToggle)
     await screen.findByRole('button', { name: '관심 공고에 담기' })
-    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
+    returnToSearch()
     await waitFor(() => expect(resultButtons().every((button) => !button.hasAttribute('disabled'))).toBe(true))
     expect(resultButtons().every((button) => button.getAttribute('aria-pressed') === 'false')).toBe(true)
     fireEvent.click(resultButtons()[0]!)
