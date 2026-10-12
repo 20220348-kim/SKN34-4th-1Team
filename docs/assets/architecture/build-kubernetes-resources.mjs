@@ -70,48 +70,53 @@ function finish() {
 }
 
 // 01: Inventory uses aligned namespace rows, with no implied service-call arrows.
-start('govbiz-kubernetes-resources-overview',1430,'01','어떤 리소스가 어디에 있나요?','Namespace별 실행·저장소 구성 · 각 서비스는 독립된 Deployment 또는 StatefulSet입니다.');
+start('govbiz-kubernetes-resources-overview',1570,'01','어떤 리소스가 어디에 있나요?','현재 EKS 실행·저장소 구성 · Namespace는 논리 구분이며 Node 경계가 아닙니다.');
 function namespace(y,h,name,label) {
   rect(48,y,1344,h);
   icon('ns',72,y+20,52);
   text(140,y+54,name,{size:31,weight:700,max:770});
   text(1368,y+53,label,{size:25,fill:palette.muted,anchor:'end',max:380});
 }
-namespace(180,358,'govbiz-msa','업무 API · 웹 · 업무 데이터');
-card(72,262,762,196,'deploy','Deployment → ReplicaSet → Pod',[
+namespace(180,420,'govbiz-msa','업무 API · Gateway · 데이터');
+card(72,262,762,224,'deploy','Deployment → ReplicaSet → Pod',[
   'core-service · catalog-service · ai-service',
   'ops-service: API + ops-sync, 같은 Pod',
-  '로컬 web / 운영 api-gateway',
+  'EKS: Core·AI 각각 2~3개 · Gateway 1~3개',
+  '로컬 web / EKS api-gateway · 별도 Deployment',
 ],{size:28});
-card(858,262,510,196,'sts','StatefulSet → Pod + PVC',[
+card(858,262,510,224,'sts','StatefulSet → Pod + PVC',[
   'core / catalog / ops MySQL',
   'Redis · Qdrant · Elasticsearch',
-  'RabbitMQ: 활성화한 환경',
+  'RabbitMQ · EKS 업무 PVC 총 7개',
+  '저장소별 단일 Pod · application',
 ],{fill:'#FFFBF3',size:25});
-icon('svc',82,480,36); text(132,507,'앱: ClusterIP · 데이터: Headless',{size:25,max:675});
-icon('job',858,480,36); text(908,507,'배포 Job: prepare / resume',{size:24,max:455});
+icon('svc',82,504,36); text(132,531,'앱: ClusterIP · 데이터: Headless',{size:25,max:675});
+icon('job',858,504,36); text(908,531,'배포 Job: prepare / resume',{size:24,max:455});
+text(80,577,'EKS: Core·AI는 공유 노드에 분산 · Catalog·Ops는 각각 업무 DB와 같은 application 노드',{size:24,fill:palette.muted,max:1280});
 
-namespace(562,306,'govbiz-evaluation','평가 실행 · 결과 조회');
-card(72,644,762,142,'deploy','Deployment → ReplicaSet → Pod',[
+namespace(624,350,'govbiz-evaluation','평가 실행 · 결과 조회');
+card(72,706,762,142,'deploy','Deployment → ReplicaSet → Pod',[
   'prefect · evaluation-runner · ops-artifacts',
 ],{size:28});
-card(858,644,510,142,'pvc','PVC · 보존 데이터',[
+card(858,706,510,142,'pvc','PVC · 보존 데이터',[
   'Prefect DB / 실행·결과 공유 볼륨',
 ],{fill:'#FFFBF3',size:27});
-icon('svc',82,805,36); text(132,832,'Prefect :4200 · 결과 API :8010 · 실행기는 Service 없음',{size:25,max:1190});
+icon('svc',82,867,36); text(132,894,'Prefect :4200 · 결과 API :8010 · 실행기는 Service 없음',{size:25,max:1190});
+text(80,944,'EKS: observability · 실행기·결과 API는 같은 Node에서 결과 PVC 공유 · Prefect DB는 별도 PVC',{size:24,fill:palette.muted,max:1280});
 
-namespace(892,306,'govbiz-observability','관측 · 추적 저장소');
-card(72,974,762,142,'deploy','Deployment → ReplicaSet → Pod',[
+namespace(998,350,'govbiz-observability','관측 · 추적 저장소');
+card(72,1080,762,142,'deploy','Deployment → ReplicaSet → Pod',[
   'langfuse-web · langfuse-worker',
 ],{size:28});
-card(858,974,510,142,'sts','StatefulSet → Pod + PVC',[
+card(858,1080,510,142,'sts','StatefulSet → Pod + PVC',[
   'PostgreSQL · ClickHouse · Redis · MinIO',
 ],{fill:'#FFFBF3',size:25});
-icon('svc',82,1135,36); text(132,1162,'앱과 관측 저장소 각각 ClusterIP Service 사용',{size:25,max:1190});
+icon('svc',82,1241,36); text(132,1268,'앱과 관측 저장소 각각 ClusterIP Service 사용',{size:25,max:1190});
+text(80,1318,'EKS: observability · 업무용 MySQL·Redis와 분리한 관측 저장소 4개 · 각각 독립 PVC',{size:24,fill:palette.muted,max:1280});
 
-rect(48,1222,1344,126,{fill:'#EDF3FE',stroke:'#BFCFF2'});
-icon('ns',72,1244,58);
-lines(152,1264,[
+rect(48,1372,1344,126,{fill:'#EDF3FE',stroke:'#BFCFF2'});
+icon('ns',72,1394,58);
+lines(152,1414,[
   'Namespace는 논리적 구분입니다. Node와 1:1로 대응하지 않습니다.',
   '제어 계층(argocd · kube-system)은 ③ 플랫폼 구성에서 이어집니다.',
 ],{size:26,gap:42,max:1195});
@@ -151,8 +156,8 @@ text(154,1267,'Headless Service: ops-mysql',{size:27,weight:700,max:1170});
 text(154,1310,'clusterIP: None · 별도 프록시 없이 DNS가 MySQL Pod IP를 알려줍니다.',{size:26,fill:palette.muted,max:1170});
 finish();
 
-// 03: Separate the API control path, ALB data path, shared add-ons, and policies.
-start('govbiz-kubernetes-resources-platform',1670,'03','클러스터를 관리하고 연결하는 구성','로컬·EKS의 공통 역할과 EKS 전용 구성을 구분합니다. 자동 배포 활성화 여부는 별도입니다.');
+// 03: Separate the API control path, ALB traffic, autoscaling, shared add-ons and policies.
+start('govbiz-kubernetes-resources-platform',2430,'03','클러스터를 관리하고 연결하는 구성','현재 EKS의 배포·요청·Pod 및 노드 확장 관계 · 로컬의 접속 방식은 따로 표시합니다.');
 panel(180,302,'A. 배포·실행 관리');
 card(80,266,372,162,'argocd','Argo CD',['AppProject · Application','검증된 Git YAML 적용']);
 card(534,266,372,162,'control-plane','Control Plane',['API · etcd · 컨트롤러','Scheduler · EKS: AWS 관리'],{size:26});
@@ -165,18 +170,38 @@ icon('ing',80,588,45);
 text(144,620,'Ingress: api-gateway → ALB Controller가 내부 ALB를 구성',{size:27,weight:600,max:1190});
 card(80,651,272,126,null,'CloudFront',['VPC origin']);
 card(416,651,272,126,null,'내부 ALB',['AWS 리소스']);
-card(752,651,272,126,'pod','Gateway Pod',['Nginx :8080'],{size:23});
+card(752,651,272,126,'pod','Gateway Pod',['Nginx · 1~3개'],{size:23});
 card(1088,651,272,126,'svc','Core · Ops',['내부 Service'],{size:26});
 arrow(360,714,402,714,'teal'); arrow(696,714,738,714,'teal'); arrow(1032,714,1074,714,'teal');
 text(80,815,'ALB의 target-type: ip → gateway Pod로 직접 전달 · 로컬은 웹 Service·port-forward 사용',{size:24,fill:palette.muted,max:1280});
 
-panel(866,285,'C. kube-system 기반 기능과 클러스터 저장소');
+panel(866,290,'C. Pod 자동확장 — HPA가 Deployment의 실행 개수를 조절합니다.');
+card(80,952,372,150,null,'Metrics Server',['Pod CPU 사용량 수집','리소스 metrics API 제공']);
+card(534,952,372,150,null,'HPA',['CPU requests 대비','평균 사용률 목표 60%']);
+card(988,952,372,150,'deploy','Deployment',['replicas 조절 → RS → Pod','Service는 Ready Pod 연결'],{size:25});
+arrow(460,1026,520,1026); arrow(914,1026,974,1026);
+text(80,1134,'Core·AI 각각 2~3개 · Gateway 1~3개 · Argo CD는 Core·AI의 HPA 실행 개수를 덮어쓰지 않음',{size:24,fill:palette.muted,max:1280});
+
+panel(1180,420,'D. EC2 자동확장·분산 배치 — Pod를 배치할 Node가 부족할 때');
+card(80,1266,372,170,'pod','Pending Pod',['자원·분산 조건 미충족','Scheduler가 배치 대기']);
+card(534,1266,372,170,null,'Cluster Autoscaler',['kube-system · 관측 노드','application ASG 용량 조절'],{size:26});
+card(988,1266,372,170,'node','EC2 2~3대',['application 1~2대','observability 1대 고정']);
+arrow(460,1347,520,1347); arrow(914,1347,974,1347);
+lines(80,1470,[
+  'Core·AI: 같은 서비스는 Node당 최대 1개 → 세 번째 Pod는 세 번째 EC2 필요',
+  'Gateway는 노드 간 분산 제약 · Catalog·Ops는 각각 업무 DB와 같은 Node에 배치',
+  'PDB minAvailable: 1로 퇴거 제한 · 노드 장애나 Deployment 교체까지 막지는 않음',
+  '축소: HPA 5분 안정화 · 추가 Node 10분 불필요 + 남은 Pod를 안전하게 재배치 가능할 때',
+],{size:24,gap:34,fill:palette.muted,max:1280});
+
+parts.push('<g transform="translate(0 758)">');
+panel(866,285,'E. kube-system 기반 기능과 클러스터 저장소');
 card(80,952,372,145,'svc','DNS · 통신',['CoreDNS · kube-proxy','CNI: EKS VPC CNI'],{size:27});
 card(534,952,372,145,'sc','StorageClass',['govbiz-ebs-gp3 · EBS CSI','암호화 · Retain'],{size:25});
 card(988,952,372,145,'node','노드 기반 기능',['CNI · CSI 노드 agent','AWS Pod Identity'],{size:24});
 text(80,1130,'StorageClass는 클러스터 범위 리소스 · 노드별 기반 agent는 DaemonSet으로 실행합니다.',{size:24,fill:palette.muted,max:1270});
 
-panel(1175,371,'D. 설정·접근 제어 — 요청을 중계하는 서비스와 구분합니다.');
+panel(1175,371,'F. 설정·접근 제어 — 요청을 중계하는 서비스와 구분합니다.');
 const security = [
   ['secret','Secret','자격 정보','환경변수·볼륨'],
   ['cm','ConfigMap','비밀 아닌 설정','Nginx · ClickHouse'],
@@ -193,6 +218,7 @@ security.forEach(([name,title,a,b],i)=>{
   text(x+120,1452,b,{size:20,fill:palette.muted,anchor:'middle',max:220});
 });
 text(80,1523,'평가·관측·gateway 정책은 범위별 적용 · readiness/liveness, 자원 요청·제한은 Pod 명세에 포함',{size:23,fill:palette.muted,max:1280});
+parts.push('</g>');
 finish();
 
 for (const diagram of diagrams) {
