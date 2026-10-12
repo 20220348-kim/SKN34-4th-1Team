@@ -128,7 +128,7 @@ spec:
             - --cloud-provider=aws
             - --v=4
             - --stderrthreshold=info
-            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled=true,k8s.io/cluster-autoscaler/govbiz-eks=owned
+            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled=true,k8s.io/cluster-autoscaler/govbiz-eks=owned,govbiz.io/workload-pool=application
             - --expander=least-waste
             - --skip-nodes-with-system-pods=false
             - --skip-nodes-with-local-storage=false
