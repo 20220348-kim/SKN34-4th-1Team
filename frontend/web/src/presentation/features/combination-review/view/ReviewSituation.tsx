@@ -45,11 +45,10 @@ export function ReviewSituationFields({ value, names, onChange }: { value: Revie
  * 세 질문 결과 아래의 "내 상황으로 좁히기"입니다. 고른 상황을 검토 입력으로 저장(입력 버전 확인)한 뒤 새 분석을 한 번 접수합니다.
  * 바꾼 것이 없거나 지금 새 분석을 보낼 수 없으면 그 이유를 버튼 앞에 적습니다.
  */
-export function ReviewNarrowingPanel({ value, names, dirty, busy, blocked, pendingPath, onPending, onChange, onSubmit }: {
+export function ReviewNarrowingPanel({ value, names, dirty, busy, blocked, pendingPath, onChange, onSubmit }: {
   value: ReviewSituation; names: Record<string, string>; dirty: boolean; busy: boolean; blocked: string | null
   /** 응답을 확인하지 못한 분석 요청이 있으면 그 요청을 확인할 공고 분석 단계 주소입니다. */
   pendingPath: string | null
-  onPending?: () => void
   onChange: (next: ReviewSituation) => void; onSubmit: () => void
 }) {
   const reasonId = useId()
@@ -66,8 +65,7 @@ export function ReviewNarrowingPanel({ value, names, dirty, busy, blocked, pendi
     </fieldset>
     <div className="flex flex-wrap items-center justify-end gap-2">
       {reason && <p className={`${s.stepBarReason} m-0`} id={reasonId}>{reason}</p>}
-      {pendingPath && (onPending ? <button type="button" className={s.secondarySm} onClick={onPending}>공고 분석 단계로</button>
-        : <Link className={s.secondarySm} to={pendingPath}>공고 분석 단계로</Link>)}
+      {pendingPath && <Link className={s.secondarySm} to={pendingPath}>공고 분석 단계로</Link>}
       <button type="button" className={s.primaryPill} disabled={busy || !!reason} aria-busy={busy} aria-describedby={reason ? reasonId : undefined} onClick={onSubmit}>
         {busy ? <><span className={s.buttonSpinner} aria-hidden="true" />저장 · 접수 중…</> : '저장하고 다시 분석'}
       </button>

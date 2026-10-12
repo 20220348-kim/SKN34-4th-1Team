@@ -52,7 +52,7 @@ import { APP_PREFIX, appPaths, publicPaths } from './presentation/shared/routes/
 import { RouteDocumentTitle } from './presentation/shared/routes/RouteDocumentTitle'
 import { useResetScrollOnNavigate } from './presentation/shared/routes/useResetScrollOnNavigate'
 import { ChatSheet } from './presentation/shared/chat-sheet/ChatSheet'
-import { ChatSheetClosedContext, useChatSheetRouting } from './presentation/shared/chat-sheet/useChatSheet'
+import { ChatSheetClosedContext, ChatSheetLocationContext, useChatSheetRouting } from './presentation/shared/chat-sheet/useChatSheet'
 
 /**
  * 비로그인 검색 흐름은 헤더·검색 탭이 위에 붙는 자체 레이아웃을 쓰고, 나머지 공개 화면은 공용 헤더를 사용합니다.
@@ -98,6 +98,7 @@ function CoreApp() {
     <RouteDocumentTitle />
     <ChatActivityToast />
     <ChatSheetClosedContext.Provider value={sheet.closedCount}>
+    <ChatSheetLocationContext.Provider value={sheet.sheetLocation}>
     {/* 시트가 열려 있는 동안 뒤의 대화는 보이기만 하고 포커스 · 보조기기에서 빠집니다. 상자를 만들지 않아 배치는 그대로입니다. */}
     <div className="contents" inert={sheet.background ? true : undefined} aria-hidden={sheet.background ? true : undefined}>
     <AppRoutes location={sheet.routesLocation} />
@@ -118,6 +119,7 @@ function CoreApp() {
         </Routes>
       </ChatSheet>
     ) : null}
+    </ChatSheetLocationContext.Provider>
     </ChatSheetClosedContext.Provider>
     {/* 도우미는 화면 오른쪽 아래에 떠 있고 로그인·회원가입 같은 단독 화면에서는 스스로 숨습니다. */}
     <AssistantWidget />

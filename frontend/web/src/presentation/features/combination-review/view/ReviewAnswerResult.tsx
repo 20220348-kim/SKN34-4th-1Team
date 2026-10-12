@@ -70,11 +70,6 @@ export function ReviewAnswerChips({ answers }: { answers: readonly ReviewAnswer[
   </span>)}</>
 }
 
-/** 조건 하나의 결과 칩("가능" · "불가")입니다. */
-export function ReviewConditionResult({ result }: { result: keyof typeof conditionResults }) {
-  return <span className={`${s.badge} ${conditionResults[result].badge}`}>{conditionResults[result].label}</span>
-}
-
 /** 답 하나에 쓰인 모든 인용(답 · 조건 · 조치)입니다. */
 function citationsOf(answer: ReviewAnswer): ReviewCitation[] {
   return [...answer.citations, ...answer.conditions.flatMap((condition) => condition.citations), ...answer.consequences.flatMap((consequence) => consequence.citations)]

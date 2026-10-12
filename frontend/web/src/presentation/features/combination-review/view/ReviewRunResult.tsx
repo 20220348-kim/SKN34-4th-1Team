@@ -24,10 +24,9 @@ const stageRowId = (run: ReviewRun, pair: Pair, stage: ReviewStageResult) => `re
  * 먼저 확인할 것 → 접힌 단계 줄)를 그리고, 맨 아래에 접힌 공식 원문 · 판단 한계를 둡니다.
  * narrowing은 세 질문 결과 아래에 둘 "내 상황으로 좁히기", reanalyze는 지난 결과 안내에 붙일 "새 방식으로 다시 분석" 동작입니다.
  */
-export function ReviewRunResult({ run, currentRevision, names, download, downloading, narrowing, reanalyze, onEdit }: {
+export function ReviewRunResult({ run, currentRevision, names, download, downloading, narrowing, reanalyze }: {
   run: ReviewRun; currentRevision: number; names: Record<string, string>; download: (index: number) => void; downloading: boolean
   narrowing?: ReactNode; reanalyze?: ReactNode
-  onEdit?: (additionalFacts: string) => void
 }) {
   // This prompt used internal (zero-based) indices in prose. Only adapt an
   // explicitly zero-based legacy summary; preserve stored data and source quotes.
@@ -49,12 +48,11 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
     {run.status === 'UNKNOWN' && <p role="status" className={s.warning}>분석 완료 여부를 확인할 수 없습니다. 중복 과금을 방지하기 위해 자동 재실행과 같은 검토의 새 분석을 잠시 차단했습니다. 30분 안에 실패로 정리되면 새 분석을 실행할 수 있습니다.</p>}
     {(run.status === 'FAILED' || run.status === 'INTERRUPTED') && <div className={`${s.warning} flex flex-wrap items-center justify-between gap-3`}>
       <p>{reviewRunFailureMessage(run.failureCode)}</p>
-      {onEdit ? <button type="button" className={s.secondarySm} onClick={() => onEdit(run.input.additionalFacts)}>다시 시도</button>
-        : <Link className={s.secondarySm} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`}>다시 시도</Link>}
+      <Link className={s.secondarySm} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`}>다시 시도</Link>
     </div>}
     {run.analysis && (answers
       ? <ReviewAnswerResult run={run} answers={answers} programNames={programNames} summary={displayedSummary} download={download} downloading={downloading} narrowing={narrowing} />
-      : <StageResult run={run} programNames={programNames} summary={displayedSummary} download={download} downloading={downloading} reanalyze={reanalyze} onEdit={onEdit} />)}
+      : <StageResult run={run} programNames={programNames} summary={displayedSummary} download={download} downloading={downloading} reanalyze={reanalyze} />)}
     {run.evidence && <section className={`${s.card} space-y-3`} aria-label="공식 원문과 수집 범위">
       <button type="button" className="flex w-full cursor-pointer items-center gap-2 text-left text-sm font-bold text-ink" aria-expanded={sourcesOpen} aria-controls={sourcesId} onClick={() => setSourcesOpen(!sourcesOpen)}>
         <span className="min-w-0 flex-1">공식 원문 {run.evidence.documents.length}개 · 판단 한계 {limitationCount}개</span>
@@ -87,9 +85,8 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
  * 지난 여섯 단계 방식(v2)의 결과입니다. 이전 방식이라는 안내(새 방식으로 다시 분석) → 결론(판정 조합으로 정한 문장 · 단계 색 띠) →
  * 먼저 확인할 것 → 접힌 단계 줄 순으로 둡니다. 주의(제한 · 충돌) 단계만 처음부터 펼치고, AI 요약 · 근거 원문은 눌러서 봅니다.
  */
-function StageResult({ run, programNames, summary, download, downloading, reanalyze, onEdit }: {
+function StageResult({ run, programNames, summary, download, downloading, reanalyze }: {
   run: ReviewRun; programNames: string[]; summary: string; download: (index: number) => void; downloading: boolean; reanalyze?: ReactNode
-  onEdit?: (additionalFacts: string) => void
 }) {
   const pairs = run.analysis?.pairs ?? []
   const allStages = pairs.flatMap((pair) => pair.stages)
@@ -153,8 +150,7 @@ function StageResult({ run, programNames, summary, download, downloading, reanal
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-bold">먼저 확인할 것</h2>
         {questions.priority.length > 0 && <span className="text-xs text-slate-500">단계마다 하나씩 · 답하면 판단이 바뀔 수 있어요</span>}
-        {onEdit ? <button type="button" className={`${s.primaryPill} ml-auto`} onClick={() => onEdit(run.input.additionalFacts)}>내 상황 입력하고 다시 보기</button>
-          : <Link className={`${s.primaryPill} ml-auto`} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`} state={{ additionalFacts: run.input.additionalFacts }}>내 상황 입력하고 다시 보기</Link>}
+        <Link className={`${s.primaryPill} ml-auto`} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`} state={{ additionalFacts: run.input.additionalFacts }}>내 상황 입력하고 다시 보기</Link>
       </div>
       {shownQuestions.length > 0 ? <ul id={questionsId} className="space-y-1.5 text-sm leading-6">{shownQuestions.map((question) => <li key={question.text} className="flex items-baseline gap-2">
         <span className={`${s.badge} ${s.badgeNeutral}`}>{reviewStageLabels[question.stage]}</span><span className="min-w-0">{displayReviewText(question.text)}</span>

@@ -1,23 +1,21 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { Link } from 'react-router'
+import { Link, matchPath, useNavigate } from 'react-router'
 
 import { useAppSelector } from '../../../../app/hooks'
-import { useChatSheetClosedCount } from '../../../shared/chat-sheet/useChatSheet'
+import { useChatSheetClosedCount, useChatSheetLocation } from '../../../shared/chat-sheet/useChatSheet'
 import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
 import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { appPaths } from '../../../shared/routes/appPaths'
-import { ApplicationPreparationInline } from '../../application-preparation/view/ApplicationPreparationInline'
-import { CombinationReviewPanel } from '../../combination-review/view/CombinationReviewPages'
-import { continueLabel, preparationOf, preparationPath, programKey, useProgramPreparations } from '../hooks/useProgramPreparations'
+import { continueLabel, preparationPath, programKey, useProgramPreparations } from '../hooks/useProgramPreparations'
 import { useChatPageViewModel } from '../viewmodel/useChatPageViewModel'
 import { companyConditionFields } from '../viewmodel/chatConversationProposal'
 import { ConversationProposal } from './ConversationProposal'
 import { ProgramResults } from './ProgramResults'
-import { GovApplicationCard, GovPartnerBrief, GovReviewCard, GovWorkInline } from './GovWork'
+import { GovApplicationCard, GovPartnerBrief, GovReviewCard } from './GovWork'
 import { EvidenceQuestionFeedback } from '../../support-program-detail/view/EvidenceQuestionFeedback'
 import { SearchIntroTitle } from './SearchIntroTitle'
-import { govToolTexts, type ChatSearchOptions } from '../state/chatSlice'
+import { govToolTexts, type ChatSearchOptions, type GovAgentTool } from '../state/chatSlice'
 import {
   chatMessageBubbleClassName,
   chatMessageRowClassName,
@@ -84,17 +82,11 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const isGuest = layout === 'landing'
   // 가장 최근 업무 카드만 활성화합니다. 이전 기록은 저장된 결과를 여는 링크로 남깁니다.
   const latestToolMessageId = messages.findLast((message) => message.govApplication || message.govReview || message.govPartners)?.id
-  // 작업 카드의 입력칸 분석 · 검토 입력을 그 카드 자리에서 대화 안에 펼칩니다(그다음은 카드·편집기가 신청 문서·중복 검토 화면으로 옮김).
-  // 펼칠 수 있는 카드는 지금처럼 가장 최근 업무 카드뿐이고,
-  // 신청 준비는 그 공고를 고르고 있을 때만 엽니다(공고 선택이 바뀌면 늦게 온 요청을 끊는 기존 규칙을 그대로 따름).
-  const [openWorkId, setOpenWorkId] = useState<string | null>(null)
   const [workRefresh, setWorkRefresh] = useState(0)
   const isLiveWork = (message: (typeof messages)[number]) => isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
     && (!message.govApplication || (govProgram?.sourceCode === message.govApplication.program.sourceCode
       && govProgram.sourceProgramId === message.govApplication.program.sourceProgramId))
-  const openWork = messages.find((message) => message.id === openWorkId && (message.govApplication || message.govReview))
-  const liveOpenWork = openWork && isLiveWork(openWork) ? openWork : null
-  const closeWork = useCallback(() => { setOpenWorkId(null); setWorkRefresh((value) => value + 1) }, [])
+  const refreshWork = useCallback(() => setWorkRefresh((value) => value + 1), [])
   // 카드 버튼으로 연 시트를 닫으면 대화는 그대로이므로, 카드가 상태를 다시 읽게 합니다.
   const cardRefresh = workRefresh + useChatSheetClosedCount()
   // 신청 문서는 신청 문서 화면에서 만들어지므로, 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾아 지금 상태를 보여 줍니다.
@@ -109,38 +101,41 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     setReturnToGovChat(false)
     return () => setReturnToGovChat(hasConversation.current)
   }, [isGovAgent, layout, setReturnToGovChat])
-  // [신청서 쓰기] 칩으로 펼친 신청 문서는 저장된 양식이 없으면 입력칸 분석을 바로 시작합니다.
-  // 말로 요청한 카드·카드 버튼·지난 기록으로 펼친 것은 열기만 하고 분석은 버튼으로 시작합니다. 판단은 펼친 분석 화면이 한 번 하고 표시를 지웁니다.
-  const [autoAnalyzeId, setAutoAnalyzeId] = useState<string | null>(null)
-  const clearAutoAnalyze = useCallback(() => setAutoAnalyzeId(null), [])
-  const applicationChipAt = useRef(0)
-  // 같은 대화에서 새 업무 카드가 생기면(작업 칩·말로 요청) 바로 펼칩니다. 저장된 대화를 열거나 새 대화로 바뀌면 펼치지 않습니다.
-  // 대화는 첫 메시지(환영 인사, 대화마다 새 ID)로 구분합니다. 저장된 대화에 이어 쓴 새 카드도 바로 열립니다.
-  const conversationKey = messages[0]?.id
+  // 대화에서 연 새 검토 시트에서 검토를 저장하면(주소가 새 검토 → 그 검토로 바뀜) 그 번호를 최근 중복 검토 카드에 붙여
+  // 카드가 진행과 결과를 따라가게 합니다. 카드 버튼 · 칩으로 연 시트만 붙이고, 시트를 닫으면 표시를 지웁니다.
+  const sheetLocation = useChatSheetLocation()
+  const reviewSheet = useRef<{ fromChat: boolean; previousPath: string | null }>({ fromChat: false, previousPath: null })
+  const openReviewSheet = useCallback(() => { reviewSheet.current.fromChat = true }, [])
+  useEffect(() => {
+    const state = reviewSheet.current
+    const previous = state.previousPath
+    state.previousPath = sheetLocation?.pathname ?? null
+    // 시트가 닫힐 때(열려 있다가 없어질 때)만 표시를 지웁니다. 칩을 누른 직후 시트가 뜨기 전의 화면에서는 지우지 않습니다.
+    if (!sheetLocation) { if (previous !== null) state.fromChat = false; return }
+    if (!state.fromChat || previous !== appPaths.combinationReviewNew || !latestToolMessageId) return
+    const reviewId = Number(matchPath(appPaths.combinationReviewDetail, sheetLocation.pathname)?.params.reviewId)
+    if (!Number.isSafeInteger(reviewId) || reviewId <= 0) return
+    state.fromChat = false
+    attachGovReview(latestToolMessageId, reviewId)
+  })
+  /** 작업 칩은 카드를 만들고, 신청 문서 · 중복 검토는 그 화면을 대화 위 시트로 바로 엽니다(직접 누른 경우만, 말로 요청한 카드는 카드만 둠). */
+  const navigate = useNavigate()
+  function startGovTool(tool: GovAgentTool) {
+    if (!govProgram) return
+    handleStartGovTool(tool)
+    const params = new URLSearchParams({ sourceCode: govProgram.sourceCode, sourceProgramId: govProgram.sourceProgramId })
+    if (tool === 'APPLICATION') navigate(`${appPaths.applicationPreparationNew}?${params}&analyze=1`)
+    if (tool === 'COMBINATION_REVIEW') {
+      openReviewSheet()
+      navigate(`${appPaths.combinationReviewNew}?${params}`)
+    }
+  }
   // 원문 질문 기본 질문 칩은 공고를 고른 때의 마지막 메시지와 그 공고의 근거 답변 아래에만 둡니다(이어 묻기).
   // 다음 메시지가 오면 아래로 따라 내려가지 않고 사라져 대화에 지난 칩이 쌓이지 않습니다.
   const govProgramKey = govProgram ? `${govProgram.sourceCode}:${govProgram.sourceProgramId}` : null
   const latestMessageId = messages.at(-1)?.id
   const [askAnchor, setAskAnchor] = useState({ programKey: govProgramKey, messageId: latestMessageId })
   if (askAnchor.programKey !== govProgramKey) setAskAnchor({ programKey: govProgramKey, messageId: latestMessageId })
-  const seenWork = useRef({ conversationKey, latestToolMessageId })
-  useEffect(() => {
-    const seen = seenWork.current
-    if (seen.conversationKey === conversationKey && seen.latestToolMessageId === latestToolMessageId) return
-    seenWork.current = { conversationKey, latestToolMessageId }
-    const latest = messages.find((message) => message.id === latestToolMessageId)
-    const opens = seen.conversationKey === conversationKey && latest && (latest.govApplication || latest.govReview)
-    setOpenWorkId(opens ? latest.id : null)
-    // 방금 누른 [신청서 쓰기] 칩이 만든 카드일 때만 자동 분석 표시를 붙입니다(칩이 거절돼 카드가 없으면 잠시 뒤 무효).
-    const fromChip = Date.now() - applicationChipAt.current < 2000
-    applicationChipAt.current = 0
-    setAutoAnalyzeId(opens && latest.govApplication && fromChip ? latest.id : null)
-  }, [conversationKey, latestToolMessageId, messages])
-  // 펼친 작업은 대화 아래로 늘어나므로, 그 메시지 머리가 화면 위에 오도록 맞춰 처음부터 보이게 합니다.
-  const openedWorkId = liveOpenWork?.id
-  useEffect(() => {
-    if (openedWorkId) document.querySelector(`[data-message-id="${openedWorkId}"]`)?.scrollIntoView?.({ block: 'start' })
-  }, [openedWorkId])
 
   /**
    * 공개 첫 화면의 첫 전송은 소개가 사라지고 입력창이 아래로 내려가는 큰 전환이라 View Transition으로 잇습니다.
@@ -324,24 +319,11 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                   </div>
                 ) : null}
               </div>
-              {/* 신청 문서 · 중복 검토는 대화에 작업 카드만 두고, 입력칸 분석 · 검토 입력은 카드 자리에서 펼치며 그다음은 화면으로 옮깁니다. */}
-              {message.govApplication ? (liveOpenWork?.id === message.id && message.govApplication.preparationId === undefined
-                && !preparationOf(message.govApplication, preparations)
-                ? <GovWorkInline kind="신청 문서" title={message.govApplication.program.title} onClose={closeWork}>
-                  <ApplicationPreparationInline key={`${accountEmail}:${message.id}`} program={message.govApplication.program}
-                    autoAnalyze={message.id === autoAnalyzeId} onAutoAnalyzeHandled={clearAutoAnalyze} />
-                </GovWorkInline>
-                : <GovApplicationCard application={message.govApplication} refresh={cardRefresh} preparations={preparations}
-                  live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
-              {message.govReview ? (liveOpenWork?.id === message.id
-                ? <GovWorkInline kind="중복 검토" title={message.govReview.program?.title ?? '공고 두 개 고르기'} onClose={closeWork}>
-                  <div className="mt-3 min-w-0" key={`${accountEmail}:${message.id}:${message.govReview.reviewId ?? 'new'}`}>
-                    <CombinationReviewPanel id={message.govReview.reviewId ?? null} initialProgram={message.govReview.program}
-                      onCreated={(id) => attachGovReview(message.id, id)} />
-                  </div>
-                </GovWorkInline>
-                : <GovReviewCard review={message.govReview} refresh={cardRefresh}
-                  live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
+              {/* 신청 문서 · 중복 검토는 대화에 단계 띠가 있는 작업 카드만 두고, 입력이 필요한 일은 카드 버튼이 대화 위 시트로 엽니다. */}
+              {message.govApplication ? <GovApplicationCard application={message.govApplication} refresh={cardRefresh} preparations={preparations}
+                live={isLiveWork(message)} onChanged={refreshWork} /> : null}
+              {message.govReview ? <GovReviewCard review={message.govReview} refresh={cardRefresh}
+                live={isLiveWork(message)} onOpenSheet={openReviewSheet} /> : null}
               {message.govPartners ? (isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
                 ? <GovPartnerBrief key={`${accountEmail}:${message.id}`} conditions={message.govPartners.conditions} />
                 : <div className="mt-3 rounded-xl border border-line p-4 text-sm">
@@ -469,7 +451,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                   ) : (
                     <button key={tool} type="button" className={chatPageStyles.govToolButton} disabled={isBusy}
                       title={tool === 'APPLICATION' ? '저장된 양식이 없으면 입력칸 분석(유료 AI)을 바로 시작해요' : undefined}
-                      onClick={() => { if (tool === 'APPLICATION') applicationChipAt.current = Date.now(); handleStartGovTool(tool) }}>
+                      onClick={() => startGovTool(tool)}>
                       {govToolTexts[tool].label}
                     </button>
                   ))}

@@ -54,10 +54,17 @@ export function ApplicationPreparationNewPage() {
   const addressSourceCode = /^[A-Z][A-Z0-9_]{0,63}$/.test(requestedSourceCode) ? requestedSourceCode : ''
   const addressProgramId = addressSourceCode ? (searchParams.get('sourceProgramId') ?? '').trim() : ''
   // 고른 공고를 주소에 적어 두면 새로고침·뒤로 가기·같은 주소로 돌아왔을 때 그 공고와 진행 중인 분석을 이어서 봅니다.
+  // Gov 대화의 [신청서 쓰기] 칩은 `analyze=1`로 엽니다. 한 번 판단한 뒤 주소에서 지워 새로고침으로 다시 시작하지 않습니다.
   return <NewPreparation
     key={account.email}
     addressSourceCode={addressSourceCode}
     addressProgramId={addressProgramId}
+    autoAnalyze={searchParams.get('analyze') === '1'}
+    onAutoAnalyzeHandled={() => setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      next.delete('analyze')
+      return next
+    }, { replace: true })}
     onProgramChosen={(program) => setSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id }, { replace: true })}
   />
 }
@@ -287,7 +294,7 @@ function LastAnalysisNotice({ vm }: { vm: NewViewModel }) {
 }
 
 /** ② 양식 · 분야의 내용입니다. 구글 설문 미리 채우기 · 저장된 양식 조회 중 · 실패 · 분석 진행 · 양식 카드 · 양식 없음 중 하나를 보여 줍니다. */
-export function FormSectionBody({ vm }: { vm: NewViewModel }) {
+function FormSectionBody({ vm }: { vm: NewViewModel }) {
   const program = vm.program
   const lookup = vm.availability
   const discoveryError = vm.discoveryError
@@ -391,12 +398,27 @@ function ActiveJobsAlert({ jobs }: { jobs: ApplicationFormDiscoveryJob[] }) {
   </div>
 }
 
-function NewPreparation({ addressSourceCode, addressProgramId, onProgramChosen }: {
+function NewPreparation({ addressSourceCode, addressProgramId, autoAnalyze, onAutoAnalyzeHandled, onProgramChosen }: {
   addressSourceCode: string
   addressProgramId: string
+  autoAnalyze: boolean
+  onAutoAnalyzeHandled: () => void
   onProgramChosen: (program: SelectableSupportProgram) => void
 }) {
   const vm = useApplicationPreparationNewViewModel(addressSourceCode, addressProgramId)
+  // [신청서 쓰기] 칩으로 연 경우, 저장된 양식 조회와 이 계정의 지난 분석 확인이 끝난 뒤 한 번만 판단합니다. 아직 분석한 적 없는 공고(또는 원문이
+  // 바뀐 공고)이고 진행 중 · 최근 분석이 없을 때만 유료 분석을 시작합니다. 양식이 있거나 이미 결과(양식 없음 · 읽을 수 없는 첨부 등)가 나온 공고는 시작하지 않습니다.
+  const autoHandled = useRef(false)
+  const { availability, discovery, googleFormUrl, lastAnalysis, analysisBlocked, discoverForms } = vm
+  useEffect(() => {
+    if (!autoAnalyze || autoHandled.current) return
+    if (googleFormUrl || availability?.status === 'failed') { autoHandled.current = true; onAutoAnalyzeHandled(); return }
+    if (availability?.status !== 'ready') return
+    autoHandled.current = true
+    const status = availability.result.state.status
+    if ((status === 'PENDING' || status === 'STALE') && !discovery && !lastAnalysis && !analysisBlocked) discoverForms()
+    onAutoAnalyzeHandled()
+  }, [analysisBlocked, autoAnalyze, availability, discoverForms, discovery, googleFormUrl, lastAnalysis, onAutoAnalyzeHandled])
   // "지금 공고"는 처음 주소로 들어온 공고입니다. 패널에서 고른 공고로 주소가 바뀌어도 그대로 둡니다.
   const [entryProgramKey] = useState(() => addressSourceCode && addressProgramId ? `${addressSourceCode}:${addressProgramId}` : '')
   const [pickerOpen, setPickerOpen] = useState(false)

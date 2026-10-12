@@ -11,7 +11,7 @@ import { emptyConversationContext, readyConversationProposal, seoulConversationC
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import { completeSearchResult } from '../../../../data/fixtures/supportProgramSearchResult'
 import { sessionRestored, signedIn, signedOut } from '../../../shared/auth/state/authSlice'
-import { conversationReset, createChatConversationSnapshot, draftChanged, govApplicationPrepared, govMessageSucceeded, govProgramSelected, govReviewCreated, interpretationStarted, interpretationSucceeded, proposalConfirmed, searchStarted, searchSucceeded } from '../state/chatSlice'
+import { conversationReset, createChatConversationSnapshot, draftChanged, govMessageSucceeded, govReviewCreated, interpretationStarted, interpretationSucceeded, proposalConfirmed, searchStarted, searchSucceeded } from '../state/chatSlice'
 import { useChatHistory } from './useChatHistory'
 
 const account: Account = { email: 'first@test.local', tier: 'MEMBER', role: 'USER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
@@ -40,27 +40,6 @@ function savedDetail(id = 'saved'): ChatConversationDetail {
   return { conversation: summary(id), snapshot: createChatConversationSnapshot(store.getState().chat) }
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
-
-it('persists the preparation ID attached after the Gov reply and restores it from saved history', async () => {
-  const { store, api, result } = harness({ ...account, role: 'ADMIN', tier: 'ADMIN' })
-  await waitFor(() => expect(api.list).toHaveBeenCalledOnce())
-  const program = { sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, title: supportPrograms[0].title }
-  const search = searchStarted('사업', undefined, 'gov-conversation')
-  const request = interpretationStarted({ message: '신청 준비', context: emptyConversationContext })
-  await act(async () => {
-    store.dispatch(search)
-    store.dispatch(searchSucceeded({ ...completeSearchResult({ query: '사업', programs: [supportPrograms[0]] }), requestId: search.payload.requestId }))
-    store.dispatch(govProgramSelected(program))
-    store.dispatch(request)
-    store.dispatch(govMessageSucceeded({ requestId: request.payload.requestId, message: '신청 준비', application: { program, message: '신청 준비' } }))
-  })
-  await act(async () => store.dispatch(govApplicationPrepared({ accountEmail: account.email, messageId: `${request.payload.requestId}-answer`, preparationId: 12 })))
-  const snapshot = vi.mocked(api.save).mock.calls.at(-1)![3]
-  expect(snapshot.messages.at(-1)?.govApplication?.preparationId).toBe(12)
-  act(() => store.dispatch(conversationReset()))
-  await act(async () => { expect(await result.current.open('gov-conversation')).toBe(true) })
-  expect(store.getState().chat.messages.at(-1)?.govApplication?.preparationId).toBe(12)
-})
 
 describe('로그인 계정별 대화 기록 수명', () => {
   it('saves a review ID created after the Gov reply and restores it without an analysis command', async () => {

@@ -27,7 +27,6 @@ import {
   returnToGovChatChanged,
   type GovAgentTool,
   govMessageSucceeded,
-  govApplicationPrepared,
   govReviewCreated,
   interpretationStarted,
   interpretationSucceeded,
@@ -384,9 +383,6 @@ export function useSupportProgramChat(
     selectGovProgram: (program: GovAgentProgram | null) => { if (isGovAgent) dispatchToStore(govProgramSelected(program)) },
     /** 선택 공고로 신청 문서·중복 검토를 바로 시작합니다(경로 선택 OpenAI 호출 없음). */
     startGovTool: (tool: GovAgentTool) => { if (isGovAgent) dispatchToStore(govToolStarted(tool)) },
-    attachGovPreparation: (messageId: string, preparationId: number) => {
-      if (isGovAgent && accountEmail) dispatchToStore(govApplicationPrepared({ accountEmail, messageId, preparationId }))
-    },
     attachGovReview: (messageId: string, reviewId: number) => {
       if (isGovAgent && accountEmail) dispatchToStore(govReviewCreated({ accountEmail, messageId, reviewId }))
     },

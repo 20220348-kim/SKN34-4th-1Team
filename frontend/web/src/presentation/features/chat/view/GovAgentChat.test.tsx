@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { type ReactNode, useState } from 'react'
 import { Provider } from 'react-redux'
-import { MemoryRouter } from 'react-router'
+import { type Location, MemoryRouter, useLocation } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createAppStore } from '../../../../app/store'
 import { appContainer } from '../../../../app/appContainer'
@@ -13,6 +14,7 @@ import { partnerRecruitmentSummaries } from '../../../../data/fixtures/partnerRe
 import type { PartnerRecruitmentRecommendations } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { conversationHistoryOpened, createChatConversationSnapshot } from '../state/chatSlice'
+import { ChatSheetLocationContext } from '../../../shared/chat-sheet/useChatSheet'
 import { RouteDocumentTitle } from '../../../shared/routes/RouteDocumentTitle'
 import { SupportProgramSearchPage } from '../../support-program-catalog/view/SupportProgramSearchPage'
 import { answerRunFixture } from '../../combination-review/testing/reviewFixtures'
@@ -26,12 +28,6 @@ vi.mock('../viewmodel/useSearchResultInterests', async (importOriginal) => ({
 // 이용량은 테스트마다 바꿀 수 있게 둡니다. 기본은 한도 없음(줄을 그리지 않음)입니다.
 const planUsageState = vi.hoisted(() => ({ usage: null as unknown }))
 vi.mock('../../../shared/plan-usage/usePlanUsage', () => ({ usePlanUsage: () => ({ usage: planUsageState.usage, reload: vi.fn() }) }))
-vi.mock('../../combination-review/view/CombinationReviewPages', () => ({
-  CombinationReviewPanel: ({ id, onCreated }: { id: number | null; onCreated: (id: number) => void }) => (
-    <section aria-label="대화 중복 검토"><p>{id === null ? '새 검토' : `저장된 검토 ${id}`}</p>
-      <button onClick={() => onCreated(12)}>검토 저장</button></section>
-  ),
-}))
 afterEach(() => { cleanup(); vi.restoreAllMocks(); planUsageState.usage = null })
 
 /** 맞춤 추천 응답 대역입니다. 첫 글은 관심 공고·역량, 둘째 글은 역할만 맞고 희망 지역이 다릅니다. */
@@ -53,6 +49,23 @@ function recommendations(): PartnerRecruitmentRecommendations {
   }
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname}{location.search}</output>
+}
+
+/** 대화 위 시트의 주소를 테스트가 바꿀 수 있게 하는 틀입니다(실제 앱은 App이 지금 시트 주소를 넘깁니다). */
+let setSheetLocation: (location: Location | null) => void = () => undefined
+function SheetHarness({ children }: { children: ReactNode }) {
+  const [location, setLocation] = useState<Location | null>(null)
+  setSheetLocation = setLocation
+  return <ChatSheetLocationContext.Provider value={location}>{children}</ChatSheetLocationContext.Provider>
+}
+const sheetAt = (path: string): Location => {
+  const url = new URL(path, 'https://app.example')
+  return { pathname: url.pathname, search: url.search, hash: '', state: null, key: path }
+}
+
 function setup(role: 'ADMIN' | 'USER') {
   // 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾습니다. 이 파일의 대화에는 신청 준비가 없습니다.
   vi.spyOn(appContainer.resolve('applicationPreparationUseCase'), 'list').mockResolvedValue({ items: [], nextBeforeId: null })
@@ -60,7 +73,7 @@ function setup(role: 'ADMIN' | 'USER') {
   store.dispatch(signedIn({ email: 'test@govbiz.local', role, tier: role === 'ADMIN' ? 'ADMIN' : 'MEMBER',
     emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }))
   render(<Provider store={store}><MemoryRouter initialEntries={['/app/chat']}>
-    <RouteDocumentTitle /><SupportProgramSearchPage layout="workspace" />
+    <RouteDocumentTitle /><LocationProbe /><SheetHarness><SupportProgramSearchPage layout="workspace" /></SheetHarness>
   </MemoryRouter></Provider>)
   return store
 }
@@ -178,10 +191,15 @@ it('관리자는 선택 공고 막대의 작업 칩으로 신청 문서·중복 
   fireEvent.change(input, { target: { value: '' } })
   const calls = gov.mock.calls.length
   await act(async () => fireEvent.click(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('button', { name: '중복 검토' })))
-  // Core 경로 선택을 부르지 않고 말풍선과 중복 검토 카드를 바로 만듭니다.
+  // Core 경로 선택을 부르지 않고 말풍선과 중복 검토 카드를 만들고, 직접 누른 칩이라 고른 공고를 넣은 새 검토를 바로 엽니다(앱에서는 시트).
   expect(gov.mock.calls.length).toBe(calls)
   expect(screen.getByText('이 공고 중복 검토')).toBeTruthy()
-  expect(screen.getByRole('region', { name: '대화 중복 검토' })).toBeTruthy()
+  const newReview = `/app/combination-reviews/new?${new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id })}`
+  expect(screen.getByTestId('location').textContent).toBe(newReview)
+  const card = screen.getByRole('region', { name: `중복 검토 · ${supportPrograms[0].title}` })
+  expect(card.textContent).toContain('시작 전')
+  expect(within(card).getByRole('list', { name: '중복 검토 단계' }).querySelector('[aria-current="step"]')?.textContent).toContain('공고 선택')
+  expect(within(card).getByRole('link', { name: '검토 시작하기' }).getAttribute('href')).toBe(newReview)
   // 작업 카드가 생기면 공고를 고를 때 둔 기본 질문 칩은 사라집니다.
   expect(screen.queryByRole('group', { name: '이 공고에 바로 묻기' })).toBeNull()
 })
@@ -214,23 +232,32 @@ it('관리자는 대화에서 검토 건을 저장·복원하고 파트너 조�
   const gov = vi.spyOn(supportProgramClient, 'sendGovAgentMessage').mockResolvedValue({
     outcome: 'COMBINATION_REVIEW', program: null, message: '비교할 공고를 선택하세요.',
   })
+  vi.spyOn(appContainer.resolve('combinationReviewUseCase'), 'runs').mockResolvedValue({ items: [], nextBeforeId: null })
   const store = setup('ADMIN')
   const input = screen.getByRole('textbox', { name: '지원사업 검색어' })
   fireEvent.change(input, { target: { value: '중복 지원 검토해줘' } })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
-  expect(screen.getByRole('region', { name: '대화 중복 검토' })).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '검토 저장' }))
-  expect(screen.getByText('저장된 검토 12')).toBeTruthy()
+  // 말로 요청해 생긴 카드는 시트를 저절로 열지 않고 카드만 둡니다.
+  expect(screen.getByTestId('location').textContent).toBe('/app/chat')
+  const card = () => screen.getByRole('region', { name: '중복 검토 · 공고 두 개 고르기' })
+  await act(async () => fireEvent.click(within(card()).getByRole('link', { name: '검토 시작하기' })))
+  // 시트에서 새 검토를 저장하면 주소가 새 검토에서 그 검토로 바뀌고, 대화가 그 번호를 이 카드에 붙입니다.
+  await act(async () => setSheetLocation(sheetAt('/app/combination-reviews/new')))
+  await act(async () => setSheetLocation(sheetAt('/app/combination-reviews/12?step=analysis')))
+  await act(async () => setSheetLocation(null))
+  expect(store.getState().chat.messages.at(-1)?.govReview?.reviewId).toBe(12)
+  expect(card().textContent).toContain('실행 전')
+  expect(within(card()).getByRole('link', { name: '이어서 하기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=analysis')
   const snapshot = createChatConversationSnapshot(store.getState().chat)
-  act(() => store.dispatch(conversationHistoryOpened({ accountEmail: 'test@govbiz.local', snapshot })))
-  expect(screen.getByText('저장된 검토 12')).toBeTruthy()
+  await act(async () => store.dispatch(conversationHistoryOpened({ accountEmail: 'test@govbiz.local', snapshot })))
+  expect(store.getState().chat.messages.at(-1)?.govReview?.reviewId).toBe(12)
   expect(gov).toHaveBeenCalledOnce()
   gov.mockResolvedValue({ outcome: 'PARTNERS', message: '말씀하신 조건으로 모집글을 찾아봤어요.',
     partnerConditions: { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: ['AI'], program: null } })
   fireEvent.change(input, { target: { value: '파트너 모집글 찾아줘' } })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
-  expect(screen.queryByRole('region', { name: '대화 중복 검토' })).toBeNull()
-  expect(screen.getByRole('link', { name: '중복 검토 화면에서 이어서 보기' }).getAttribute('href')).toBe('/app/combination-reviews/12')
+  // 지난 검토 카드는 상태를 그대로 보여 주고 링크만 남깁니다.
+  expect(within(card()).getByRole('link', { name: '이어서 하기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=analysis')
   // 파트너 조회는 대화에서 읽은 조건과 회사 정보로 고른 모집글 세 개를 이유와 함께 보여 주고, 더 보기는 같은 조건으로 파트너 관리에 넘깁니다.
   const conditions = { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: ['AI'], program: null }
   expect(recommend).toHaveBeenCalledWith(conditions, 3, expect.any(AbortSignal))
@@ -360,4 +387,17 @@ it('관리자는 선택 공고 막대의 [파트너 찾기]로 경로 선택 없
   expect(recommend).toHaveBeenCalledWith({ seekingRoles: [], regions: [], keywords: [],
     program: { sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id } }, 3, expect.any(AbortSignal))
   expect(within(screen.getByRole('group', { name: '대화에서 읽은 조건' })).getByRole('button', { name: '선택한 공고 조건 빼기' })).toBeTruthy()
+})
+
+it('시트에서 다른 검토를 열거나 저장하지 않고 닫으면 새 검토 카드에 검토를 붙이지 않는다', async () => {
+  vi.spyOn(supportProgramClient, 'sendGovAgentMessage').mockResolvedValue({ outcome: 'COMBINATION_REVIEW', program: null, message: '비교할 공고를 선택하세요.' })
+  const store = setup('ADMIN')
+  fireEvent.change(screen.getByRole('textbox', { name: '지원사업 검색어' }), { target: { value: '중복 지원 검토해줘' } })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
+  await act(async () => fireEvent.click(screen.getByRole('link', { name: '검토 시작하기' })))
+  // 새 검토 시트를 저장 없이 닫은 뒤 지난 검토 결과를 열어도 새 검토 카드는 그대로입니다.
+  await act(async () => setSheetLocation(sheetAt('/app/combination-reviews/new')))
+  await act(async () => setSheetLocation(null))
+  await act(async () => setSheetLocation(sheetAt('/app/combination-reviews/7?step=analysis')))
+  expect(store.getState().chat.messages.at(-1)?.govReview?.reviewId).toBeUndefined()
 })

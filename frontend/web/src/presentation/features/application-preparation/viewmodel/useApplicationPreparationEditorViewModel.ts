@@ -59,22 +59,15 @@ function sameFacts(saved: ApplicationFormSection['facts'], next: NewApplicationP
 }
 
 /** 답변 입력(25) 화면의 상태입니다. 저장된 신청 준비 건을 불러오고 답변을 항목 단위로 자동 저장합니다. */
-export function useApplicationPreparationEditorViewModel(id: number, options?: {
-  program?: { sourceCode: string; sourceProgramId: string }
-  /** 대화 패널은 현재 계정이 문서를 열었던 계정과 같은지 저장 직전에 확인합니다. */
-  canSave?: () => boolean
-}) {
+export function useApplicationPreparationEditorViewModel(id: number) {
   const useCase = appContainer.resolve('applicationPreparationUseCase')
-  const sourceCode = options?.program?.sourceCode
-  const sourceProgramId = options?.program?.sourceProgramId
-  const canSave = options?.canSave
   const disposed = useRef(false)
   const validatePreparation = useCallback((result: ApplicationPreparation) => {
-    if (result.id !== id || (sourceCode !== undefined && (result.form.sourceCode !== sourceCode || result.form.sourceProgramId !== sourceProgramId))) {
+    if (result.id !== id) {
       throw new Error('선택한 공고와 신청 문서가 일치하지 않습니다. 신청 준비를 다시 시작해 주세요.')
     }
     return result
-  }, [id, sourceCode, sourceProgramId])
+  }, [id])
   const [preparation, setPreparation] = useState<ApplicationPreparation | null>(null)
   const [documentCount, setDocumentCount] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -96,7 +89,6 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
   const dirtySections = useRef<Set<string>>(new Set())
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveTask = useRef<Promise<void> | null>(null)
-  const saveController = useRef<AbortController | null>(null)
   const noticeSequence = useRef(0)
 
   const load = useCallback(() => {
@@ -168,18 +160,15 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
    */
   const runSave = useCallback(async (keepalive = false) => {
     while (saveTask.current) await saveTask.current
-    if (canSave && !canSave()) return
     const current = preparationRef.current
     if (!current || dirtySections.current.size === 0) return
     const sectionKeys = [...dirtySections.current]
     dirtySections.current.clear()
     const controller = keepalive ? null : new AbortController()
-    saveController.current = controller
     const task = (async () => {
       let latest = current
       let touched = false
       for (const sectionKey of sectionKeys) {
-        if (canSave && !canSave()) return
         const section = latest.form.sections.find((candidate) => candidate.key === sectionKey)
         if (!section) continue
         const snapshot = { ...messagesRef.current }
@@ -197,10 +186,9 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
           continue
         }
         setAutosave({ status: 'saving' })
-        if (canSave && !canSave()) return
         const updated = await useCase.replaceInputs(latest.id, sectionKey, { expectedRevision: latest.inputRevision, facts: built.facts },
           controller?.signal, keepalive ? { keepalive: true } : undefined)
-        if (controller?.signal.aborted || (canSave && !canSave())) return
+        if (controller?.signal.aborted) return
         try { latest = validatePreparation(updated) }
         catch (caught) {
           preparationRef.current = null
@@ -217,7 +205,7 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
       setFieldError(null)
       setAutosave((previous) => touched || previous.status === 'saving' ? { status: 'saved', savedAt: Date.now() } : previous)
     })().catch((caught: unknown) => {
-      if (controller?.signal.aborted || (canSave && !canSave())) return
+      if (controller?.signal.aborted) return
       for (const key of sectionKeys) dirtySections.current.add(key)
       const conflict = caught instanceof ApplicationPreparationError && caught.code === 'APPLICATION_PREPARATION_REVISION_CONFLICT'
       setAutosave({ status: 'failed', error: asError(caught), conflict })
@@ -225,11 +213,10 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
       if (conflict) load()
     }).finally(() => {
       if (saveTask.current === task) saveTask.current = null
-      if (saveController.current === controller) saveController.current = null
     })
     saveTask.current = task
     await task
-  }, [canSave, clearPending, load, useCase, validatePreparation])
+  }, [clearPending, load, useCase, validatePreparation])
 
   const cancelAutosaveTimer = () => {
     if (autosaveTimer.current !== null) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null }
@@ -246,13 +233,13 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
     cancelAutosaveTimer()
     await runSave()
     while (saveTask.current) await saveTask.current
-    return !disposed.current && (!canSave || canSave()) && dirtySections.current.size === 0
-  }, [canSave, runSave])
+    return !disposed.current && dirtySections.current.size === 0
+  }, [runSave])
 
-  // 정상 이탈은 남은 입력을 keepalive로 보냅니다. 대화 패널의 계정이 바뀌었으면 이전 계정의 저장을 이어 보내지 않습니다.
+  // 정상 이탈은 남은 입력을 keepalive로 보냅니다.
   useEffect(() => {
     disposed.current = false
-    const flushOnLeave = () => { if (dirtySections.current.size > 0 && (!canSave || canSave())) { cancelAutosaveTimer(); void runSave(true) } }
+    const flushOnLeave = () => { if (dirtySections.current.size > 0) { cancelAutosaveTimer(); void runSave(true) } }
     const onVisibility = () => { if (document.visibilityState === 'hidden') flushOnLeave() }
     window.addEventListener('pagehide', flushOnLeave)
     document.addEventListener('visibilitychange', onVisibility)
@@ -261,10 +248,9 @@ export function useApplicationPreparationEditorViewModel(id: number, options?: {
       document.removeEventListener('visibilitychange', onVisibility)
       disposed.current = true
       cancelAutosaveTimer()
-      if (!canSave || canSave()) flushOnLeave()
-      else saveController.current?.abort()
+      flushOnLeave()
     }
-  }, [canSave, runSave])
+  }, [runSave])
 
   const setSectionMessage = useCallback((key: string, message: string) => {
     messagesRef.current = { ...messagesRef.current, [key]: message }

@@ -2,7 +2,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useLa
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { applicationDraftMode } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { daysUntil, ddayTone, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
-import { useAppSelector, useAppStore } from '../../../../app/hooks'
+import { useAppSelector } from '../../../../app/hooks'
 import { assistantCover, assistantLift } from '../../../shared/assistant/assistantPlacement'
 import {
   applicationServiceFieldLabels,
@@ -169,16 +169,12 @@ function SectionNav({ sections, valueOf, activeSectionIndex, onSelect, requiredM
   </>
 }
 
-function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: (revision?: number) => void }) {
-  const embedded = onDocuments !== undefined
+function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const navigate = useNavigate()
   const [search, setSearch] = useSearchParams()
-  const smallViewport = useMediaQuery(narrowEditorQuery)
-  const narrow = smallViewport && !embedded
-  const [panelReview, setPanelReview] = useState(false)
-  const [helperOpen, setHelperOpen] = useState(false)
+  const narrow = useMediaQuery(narrowEditorQuery)
   // 마지막 "검토" 단계는 질문 카드 자리에 그리고 주소(`?step=review`)로 남겨 새로고침 · 뒤로 가기에도 유지합니다.
-  const reviewing = embedded ? panelReview : search.get('step') === 'review'
+  const reviewing = search.get('step') === 'review'
   // 검토 단계에서만 이번 달 신청 문서 이용량을 읽습니다. 이미 센 공고는 다시 만들어도 늘지 않으므로 [초안 만들기]는 막지 않습니다.
   const draftUsage = planUsageView(usePlanUsage(reviewing).usage, 'APPLICATION_DRAFT')
   const preparation = vm.preparation!
@@ -196,7 +192,7 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
   // 들어오면 아직 답하지 않은 첫 필수 질문부터 엽니다(마지막으로 본 질문은 저장하지 않음). 모두 답했으면 첫 질문.
   // 문서 화면의 [답변 입력으로]처럼 주소에 `?question=<항목 키>`가 있으면 그 질문을 엽니다. 모르는 키는 무시합니다.
   const [index, setIndex] = useState(() => {
-    const requested = embedded ? null : search.get('question')
+    const requested = search.get('question')
     const asked = requested ? questions.findIndex(({ field }) => field.key === requested) : -1
     if (asked !== -1) return asked
     const open = questions.findIndex(({ section, field }) => field.required && writable(field) && !valueOf(section, field).trim())
@@ -290,14 +286,13 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
    * 포커스의 부수 효과로 스크롤하지 않도록 포커스는 호출하는 쪽이 `preventScroll`로 줍니다.
    */
   const revealCard = useCallback(() => {
-    if (embedded) return
     const scroller = mainRef.current?.parentElement
     const card = cardRef.current
     if (!scroller || !card || typeof scroller.scrollTo !== 'function') return
     const headerHeight = Number.parseFloat(getComputedStyle(scroller).getPropertyValue('--workspace-header-h')) || 0
     const offset = card.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headerHeight - 16
     if (offset < 0) scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + offset) })
-  }, [embedded])
+  }, [])
 
   // 이동한 뒤: 새 질문(또는 검토)을 그린 다음 카드를 머리글 바로 아래로 올리고 제목에 포커스를 줍니다.
   useLayoutEffect(() => {
@@ -309,7 +304,6 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
   /** 검토 단계를 주소에 넣거나 뺍니다. 질문 주소(`?question=`)는 그대로 둡니다. */
   function setReviewStep(on: boolean) {
     if (on === reviewing) return
-    if (embedded) { setPanelReview(on); return }
     setSearch((previous) => {
       const next = new URLSearchParams(previous)
       if (on) next.set('step', 'review')
@@ -373,13 +367,7 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
     if (Date.now() - reviewShownAt.current < swappedButtonGuardMs) return
     if (!(await vm.flushAutosave())) return
     const revision = vm.latestRevision()
-    if (revision !== null) {
-      if (onDocuments) onDocuments(revision)
-      else navigate(`${appPaths.applicationPreparations}/${preparation.id}/documents?generate=${revision}`)
-    }
-  }
-  async function showDocuments() {
-    if (await vm.flushAutosave()) onDocuments?.()
+    if (revision !== null) navigate(`${appPaths.applicationPreparations}/${preparation.id}/documents?generate=${revision}`)
   }
   function setUndecided(checked: boolean) {
     if (!current) return
@@ -458,16 +446,8 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
     {!narrow && moveButtons}
   </section>
 
-  const Content = embedded ? 'section' : 'main'
   return <>
-    {embedded ? <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="text-base font-bold">답변 입력</h2>
-      <div className="flex flex-wrap gap-2">
-        {vm.documentCount > 0 && <button type="button" className={workspacePageStyles.secondaryButton} onClick={() => { void showDocuments() }}>문서 보기</button>}
-        <button type="button" className={workspacePageStyles.secondaryButton} onClick={() => setHelperOpen((open) => !open)} aria-expanded={helperOpen}>답변 모아 보기</button>
-        <a className={workspacePageStyles.secondaryButton} href={form.sourceUrl} target="_blank" rel="noreferrer">원문 보기 ↗</a>
-      </div>
-    </div> : <WorkspacePageHeader
+    <WorkspacePageHeader
       parent={{ to: appPaths.applicationPreparations, label: featureTitle }}
       title="답변 입력"
       actions={<>
@@ -483,8 +463,8 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
           </div>}
         </div>
       </>}
-    />}
-    <Content className={embedded ? 'flex min-w-0 flex-col gap-4' : workspacePageStyles.content} ref={mainRef}>
+    />
+    <main className={workspacePageStyles.content} ref={mainRef}>
       <ApplicationPreparationLede preparation={preparation} />
       {form.verificationStatus === 'SOURCE_DOCUMENT_EXTRACTED' && <div className={e.infoAlert} role="note">
         <div className={e.infoText}>
@@ -494,9 +474,8 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
         <a className={e.infoLink} href={form.sourceUrl} target="_blank" rel="noreferrer">원문 보기 ↗<span className="sr-only">: {form.programTitle} (새 창)</span></a>
       </div>}
 
-      <div className={embedded ? 'flex min-w-0 flex-col gap-4' : e.layout}>
-        {embedded ? <details className="rounded-xl border border-line p-3"><summary className="cursor-pointer text-sm font-semibold">항목 목록</summary><div className="mt-3 flex flex-col gap-3">{nav}</div></details>
-          : <aside className={e.aside} aria-label="작성 항목">{nav}</aside>}
+      <div className={e.layout}>
+        <aside className={e.aside} aria-label="작성 항목">{nav}</aside>
         <div className="flex min-w-0 flex-col gap-3">
           {narrow && current && <div className={e.stepperM}>
             {/* 카드와 같은 전체 기준 진행("질문 8 / 34")입니다. 항목 번호("섹션 1/3")를 섞지 않습니다. */}
@@ -577,11 +556,11 @@ function AnswerEditor({ vm, onDocuments }: { vm: EditorViewModel; onDocuments?: 
             </section>}
           </div>
           {/* 온라인 신청 입력 도우미(답변 복사 · TXT 받기)는 평소에는 숨기고, 초안 실패 카드의 [답변 모아 보기](`?helper=open`)로 들어올 때만 펼쳐 보여 줍니다. */}
-          {(embedded ? helperOpen : search.get('helper') === 'open') && <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} defaultOpen />}
+          {search.get('helper') === 'open' && <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} defaultOpen />}
         </div>
       </div>
       {narrow && moveButtons}
-    </Content>
+    </main>
     {sheetOpen && <>
       <button type="button" className={e.sheetScrim} aria-label="항목 목록 닫기" tabIndex={-1} onClick={() => setSheetOpen(false)} />
       <div ref={sheetRef} className={e.sheet} role="dialog" aria-modal="true" aria-label="항목 목록" tabIndex={-1} onKeyDown={onSheetKeyDown} {...assistantCover.narrow}>
@@ -835,41 +814,21 @@ export function ApplicationPreparationEditorPage() {
   return <ApplicationPreparationEditor key={`${account.email}:${id}`} id={id} />
 }
 
-export function ApplicationPreparationEditorPanel({ id, program, onDocuments }: {
-  id: number
-  program?: { sourceCode: string; sourceProgramId: string }
-  onDocuments: (revision?: number) => void
-}) {
-  return <ApplicationPreparationEditor key={`${id}:${program?.sourceCode}:${program?.sourceProgramId}`} id={id} program={program} onDocuments={onDocuments} />
-}
-
-function ApplicationPreparationEditor({ id, program, onDocuments }: {
-  id: number
-  program?: { sourceCode: string; sourceProgramId: string }
-  onDocuments?: (revision?: number) => void
-}) {
-  const embedded = onDocuments !== undefined
-  const store = useAppStore()
-  const [ownerEmail] = useState(() => store.getState().auth.account?.email ?? null)
-  const canSave = useCallback(() => {
-    const auth = store.getState().auth
-    return ownerEmail !== null && auth.status === 'authenticated' && auth.account?.email === ownerEmail
-  }, [ownerEmail, store])
-  const vm = useApplicationPreparationEditorViewModel(id, { program, canSave: embedded ? canSave : undefined })
+function ApplicationPreparationEditor({ id }: { id: number }) {
+  const vm = useApplicationPreparationEditorViewModel(id)
   // 300ms 안에 끝나면 스켈레톤을 띄우지 않고, 더 걸리면 실제 배치(왼쪽 항목 목록 + 질문 카드)와 같은 틀을 먼저 그립니다.
   const showSkeleton = useDelayedFlag(vm.loading && !vm.preparation)
   // 답변 입력은 머리글부터 화면 전체를 자기 배치로 그립니다. 불러오는 중·실패는 아래 공용 틀로 보여 줍니다.
-  if (vm.preparation) return <AnswerEditor key={vm.preparation.id} vm={vm} onDocuments={onDocuments} />
-  const Content = embedded ? 'section' : 'main'
+  if (vm.preparation) return <AnswerEditor key={vm.preparation.id} vm={vm} />
   return <>
-    {!embedded && <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: featureTitle }} title="답변 입력" />}
-    <Content className={embedded ? 'flex flex-col gap-4' : workspacePageStyles.content}>
+    <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: featureTitle }} title="답변 입력" />
+    <main className={workspacePageStyles.content}>
       {vm.loading && <p className="sr-only" role="status" aria-live="polite">신청 문서 정보를 불러오는 중입니다.</p>}
       {showSkeleton && <>
         <ApplicationPreparationLede preparation={null} />
         <AnswerEditorSkeleton />
       </>}
       {vm.error && <ErrorNotice message={vm.error.message} onRetry={vm.load} />}
-    </Content>
+    </main>
   </>
 }
