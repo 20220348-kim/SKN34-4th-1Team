@@ -225,6 +225,28 @@ def bundle(root, record, tag, helm="helm"):
                     row["spec"]["template"].setdefault("metadata", {}).setdefault(
                         "annotations", {}
                     )["govbiz.io/source-sha"] = sha
+                    if row["kind"] == "Deployment" and name in (
+                        "catalog-service", "ops-service"
+                    ):
+                        # Keep singleton writers with their database so they cannot
+                        # strand a temporary HTTP node behind a singleton PDB.
+                        database = {
+                            "catalog-service": "catalog-mysql",
+                            "ops-service": "ops-mysql",
+                        }[name]
+                        row["spec"]["template"]["spec"]["affinity"] = {
+                            "podAffinity": {
+                                "requiredDuringSchedulingIgnoredDuringExecution": [
+                                    {
+                                        "labelSelector": {
+                                            "matchLabels": {"app.kubernetes.io/name": database}
+                                        },
+                                        "namespaces": [row["metadata"]["namespace"]],
+                                        "topologyKey": "kubernetes.io/hostname",
+                                    }
+                                ]
+                            }
+                        }
                     if name in ("evaluation-runner", "ops-artifacts"):
                         # A node-group replacement may temporarily have two nodes.
                         # The two RWO consumers must stay on the same host, not only pool.

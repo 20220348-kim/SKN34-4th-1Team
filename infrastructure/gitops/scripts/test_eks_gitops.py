@@ -184,6 +184,43 @@ class EksGitOpsTests(unittest.TestCase):
         path.write_text("invalid dirty configuration")
         self.assertEqual(gitops.bundle(self.root, self.record, TAG), self.files)
 
+    def test_single_writer_deployments_follow_their_database_nodes(self):
+        deployments = {
+            row["metadata"]["name"]: row for row in self.rows if row["kind"] == "Deployment"
+        }
+        for name, database in (
+            ("catalog-service", "catalog-mysql"),
+            ("ops-service", "ops-mysql"),
+        ):
+            with self.subTest(service=name):
+                row = deployments[name]
+                self.assertEqual(row["spec"]["strategy"], {"type": "Recreate"})
+                self.assertEqual(
+                    row["spec"]["template"]["spec"]["affinity"],
+                    {
+                        "podAffinity": {
+                            "requiredDuringSchedulingIgnoredDuringExecution": [
+                                {
+                                    "labelSelector": {
+                                        "matchLabels": {"app.kubernetes.io/name": database}
+                                    },
+                                    "namespaces": ["govbiz-msa"],
+                                    "topologyKey": "kubernetes.io/hostname",
+                                }
+                            ]
+                        }
+                    },
+                )
+
+    def test_database_affinity_excludes_http_and_release_hooks(self):
+        for row in self.rows:
+            if row["kind"] == "Job" or (
+                row["kind"] == "Deployment"
+                and row["metadata"]["name"] in ("core-service", "ai-service")
+            ):
+                with self.subTest(kind=row["kind"], name=row["metadata"]["name"]):
+                    self.assertNotIn("affinity", row["spec"]["template"]["spec"])
+
     def test_opted_in_release_shares_only_http_placement_from_tested_source(self):
         settings = self.scaling_settings()
         files = dict(self.source_files)

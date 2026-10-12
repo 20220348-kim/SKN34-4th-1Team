@@ -3,7 +3,7 @@ services:
   core-service:
     autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
     resources:
-      requests: {cpu: 200m, memory: 512Mi}
+      requests: {cpu: 100m, memory: 512Mi}
     env:
       ACCOUNT_OAUTH_FRONTEND_BASE_URL: https://govbiz.vercel.app
       DAILY_REPORT_FRONTEND_BASE_URL: https://govbiz.vercel.app
@@ -13,7 +13,7 @@ services:
   ai-service:
     autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
     resources:
-      requests: {cpu: 200m, memory: 512Mi}
+      requests: {cpu: 100m, memory: 512Mi}
       limits: {cpu: "2", memory: 1Gi}
   ops-service:
     env:

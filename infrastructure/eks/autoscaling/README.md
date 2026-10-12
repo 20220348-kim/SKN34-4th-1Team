@@ -21,11 +21,18 @@ EKS·ALB·NAT·데이터 EBS 비용은 별도이며 크레딧 잔액과 실제 �
 `CPU 사용 증가 → HPA가 API Pod 증가 → 자원 요청을 수용할 노드 부족 → Cluster Autoscaler가 EC2 추가`
 
 - API Gateway·Core·AI: CPU 요청량 대비 60%, Pod 최소 1 / 최대 3.
-- Core·AI CPU 요청은 각각 200m이다. HPA·스케줄러·노드 확장이 동일한 요청량을 사용한다.
+- Core·AI CPU 요청은 기존 운영값인 각각 100m를 유지한다. CPU 사용 상한과 다른 값이며,
+  HPA·스케줄러·노드 확장이 동일한 요청량을 사용한다. 기존 100m를 200m로 늘리면 총합이
+  두 노드 용량 안이어도 개별 노드의 빈 공간에 배치되지 않아 세 번째 노드가 상시 필요해진다.
 - 두 기존 노드 그룹에 `govbiz.io/http-pool=shared` 라벨을 추가한다. Gateway·Core·AI만
   이 라벨로 배치하며, 새 application 노드에도 EKS가 같은 라벨을 부여한다.
 - Catalog·Ops·평가·DB·Langfuse는 단일 실행과 기존 역할별 배치를 유지한다.
   PVC 이동이나 DB 재배치는 하지 않는다. 평가 실행기와 결과 서버의 동일 호스트 affinity도 유지한다.
+- Catalog·Ops는 각각 `catalog-mysql`·`ops-mysql`과 같은 노드에 배치한다. 기존 노드와
+  추가 노드가 같은 application 라벨을 사용하므로 라벨만으로 제한하면 이 두 단일 실행
+  서비스가 추가 노드에 남고 PDB가 축소를 막는다. DB Pod를 기준으로 배치하여 특정 EC2의
+  호스트명을 고정하지 않고 추가 노드의 회수를 가능하게 한다. 재배치는 기존 Recreate
+  배포에서 수행하며, 중복 writer 생성이나 PDB 완화를 사용하지 않는다.
 - 기존 Metrics Server와 Cluster Autoscaler 1.36.0을 사용하며 EKS Auto Mode를 켜지 않는다.
   클러스터 minor 버전 변경 시 Autoscaler도 함께 검토한다.
 - Autoscaler는 고정된 observability 노드에서 실행한다. `pdb.yaml`의 `minAvailable: 1`은

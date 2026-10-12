@@ -53,7 +53,9 @@ Argo 4개 구성 요소는 기존 `govbiz.io/workload-pool=observability` 노드
 업무 노드의 CPU 미예약분은 인계 시점에 65m로, 배포 전후 Job의 요청량 100m보다 작았습니다.
 PVC를 사용하지 않는 `ops-service-release-prepare`·`ops-service-release-resume` Job만
 Application의 기존 Kustomize patch에 `/spec/template/spec/nodeSelector`를 추가해
-`govbiz.io/workload-pool=observability`로 배치했습니다. 두 Job은 순서대로 실행하며,
+자동 확장 적용 전에는 `govbiz.io/workload-pool=observability`로 배치했습니다.
+현재는 두 Job을 확장 가능한 `govbiz.io/workload-pool=application`에 배치하여
+고정 관측 노드의 CPU 예약 공간이 부족해도 배포를 진행할 수 있습니다. 두 Job은 순서대로 실행하며,
 업무 Deployment의 배치와 Git에서 정한 이미지·명령·자원 요청은 유지합니다.
 Application을 다시 생성할 때 이 Job 배치도 반영해야 합니다. `gitops.py application`의
 기본 출력에는 이 클러스터의 자원 여유를 반영한 Job 배치가 포함되지 않습니다.
