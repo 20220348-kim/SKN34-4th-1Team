@@ -26,6 +26,7 @@ import type {
   ClosePartnerRecruitmentUseCase,
   CreatePartnerRecruitmentUseCase,
   GetPartnerRecruitmentDetailUseCase,
+  RecommendPartnerRecruitmentsUseCase,
   UpdatePartnerRecruitmentUseCase,
 } from '../../domain/usecases/PartnerRecruitmentUseCases'
 import type { AdminAccountRepository } from '../../domain/repositories/AdminAccountRepository'
@@ -128,6 +129,7 @@ export type AppCradle = {
   addAdminAiModelPriceUseCase: AddAdminAiModelPriceUseCase
   browsePartnerProposalsUseCase: BrowsePartnerProposalsUseCase
   browsePartnerRecruitmentsUseCase: BrowsePartnerRecruitmentsUseCase
+  recommendPartnerRecruitmentsUseCase: RecommendPartnerRecruitmentsUseCase
   companyRepository: CompanyRepository
   createPartnerRecruitmentUseCase: CreatePartnerRecruitmentUseCase
   getPartnerRecruitmentDetailUseCase: GetPartnerRecruitmentDetailUseCase

@@ -25,14 +25,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderPage() {
+function renderPage(entry = '/app/partners') {
   const store = createAppStore()
   store.dispatch(sessionRestored({
     email: 'member@govbiz.local', role: 'USER', tier: 'COMPANY', emailVerified: true,
     hasPassword: true, accountType: 'BUSINESS', onboarded: true,
     company: { companyName: '테스트 기업', businessNumber: '1234567890', businessStatusCode: '01' },
   }))
-  return render(<Provider store={store}><MemoryRouter><PartnerRecruitmentListPage /></MemoryRouter></Provider>)
+  return render(<Provider store={store}><MemoryRouter initialEntries={[entry]}><PartnerRecruitmentListPage /></MemoryRouter></Provider>)
 }
 
 describe('파트너 모집글 목록', () => {
@@ -51,6 +51,14 @@ describe('파트너 모집글 목록', () => {
     expect(screen.getByRole('heading', { name: '검색 결과 4건' })).toBeTruthy()
     expect(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute)
       .toHaveBeenCalledWith(defaultPartnerRecruitmentQuery, expect.any(AbortSignal))
+  })
+
+  it('Gov 대화가 주소로 넘긴 검색어·역할·지역으로 처음 조회하고, 알 수 없는 값은 버린다', async () => {
+    const params = new URLSearchParams([['keyword', ' AI '], ['seekingRole', 'PARTICIPANT'], ['seekingRole', 'OWNER'], ['region', '서울'], ['region', '전국']])
+    renderPage(`/app/partners?${params}`)
+    await screen.findAllByRole('article')
+    expect(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute).toHaveBeenCalledWith(
+      { ...defaultPartnerRecruitmentQuery, keyword: 'AI', seekingRoles: ['PARTICIPANT'], regions: ['서울'] }, expect.any(AbortSignal))
   })
 
   it('검색어·역할·지역은 조회할 때 적용하고 페이지 이동과 정렬에도 같은 조건을 유지한다', async () => {

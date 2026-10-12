@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router'
 
 import { partnerRoleLabels, type PartnerRole } from '../../../../domain/entities/PartnerRecruitment'
 import {
@@ -22,6 +23,16 @@ const regionOptions = toFilterChoiceOptions(regionNamesWithoutNationwide)
 type PartnerRecruitmentDraft = Pick<PartnerRecruitmentQuery, 'keyword' | 'seekingRoles' | 'regions'>
 const emptyDraft: PartnerRecruitmentDraft = { keyword: '', seekingRoles: [], regions: [] }
 
+/**
+ * 다른 화면(Gov 대화의 파트너 카드)이 주소로 넘긴 첫 조건입니다. `keyword`·`seekingRole`·`region`(여러 번)을 읽고,
+ * 알 수 없는 역할·지역은 버립니다. 처음 열 때 한 번만 쓰고, 이후 조건은 화면에서 바꿉니다.
+ */
+function draftFromAddress(params: URLSearchParams): PartnerRecruitmentDraft {
+  const roles = params.getAll('seekingRole').filter((role): role is PartnerRole => role in partnerRoleLabels)
+  const regions = params.getAll('region').filter((region) => (regionNamesWithoutNationwide as readonly string[]).includes(region))
+  return { keyword: (params.get('keyword') ?? '').trim().slice(0, 100), seekingRoles: [...new Set(roles)], regions: [...new Set(regions)] }
+}
+
 function toggled<Value>(values: Value[], value: Value): Value[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
 }
@@ -35,8 +46,10 @@ const sortOptions: FilterChoiceOption[] = (Object.keys(partnerRecruitmentSortLab
  */
 export function usePartnerRecruitmentListViewModel() {
   const { hasCompany } = useAuthSession()
-  const [query, setQuery] = useState<PartnerRecruitmentQuery>(defaultPartnerRecruitmentQuery)
-  const [draft, setDraft] = useState<PartnerRecruitmentDraft>(emptyDraft)
+  const [searchParams] = useSearchParams()
+  const [initialDraft] = useState(() => draftFromAddress(searchParams))
+  const [query, setQuery] = useState<PartnerRecruitmentQuery>({ ...defaultPartnerRecruitmentQuery, ...initialDraft })
+  const [draft, setDraft] = useState<PartnerRecruitmentDraft>(initialDraft)
   const { phase, page, retry } = usePartnerRecruitmentBrowse(query)
 
   /** 조건이 바뀌면 첫 페이지부터 다시 봅니다. */

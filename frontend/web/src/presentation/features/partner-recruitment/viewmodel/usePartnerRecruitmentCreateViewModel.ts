@@ -1,5 +1,5 @@
-import { type FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { type FormEvent, useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router'
 
 import { appContainer } from '../../../../app/appContainer'
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
@@ -76,6 +76,26 @@ export function usePartnerRecruitmentCreateViewModel(useCases?: Partial<ViewMode
   const [selectedProgram, setSelectedProgram] = useState<SupportProgram | null>(null)
   const form = useRecruitmentFormFields()
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Gov 대화의 파트너 카드가 "이 공고로 모집글 쓰기"로 넘긴 관심 공고입니다. 관심 공고함에서 같은 공고를 찾아 처음 한 번만 고르고,
+  // 없거나 고를 수 없는 공고면 비워 둔 채 팝업에서 고르게 합니다.
+  const [searchParams] = useSearchParams()
+  const requestedSourceCode = searchParams.get('sourceCode')
+  const requestedProgramId = searchParams.get('sourceProgramId')
+  const browseSavedPrograms = resolved.browseSavedPrograms
+  useEffect(() => {
+    if (!requestedSourceCode || !requestedProgramId) return
+    const controller = new AbortController()
+    browseSavedPrograms.execute(controller.signal).then((saved) => {
+      if (controller.signal.aborted) return
+      const program = saved.map((entry) => entry.program)
+        .find((item) => item.sourceCode === requestedSourceCode && item.id === requestedProgramId)
+      if (program && recruitmentProgramBlocker(program) === null) setSelectedProgram((current) => current ?? program)
+    }, () => undefined)
+    return () => controller.abort()
+    // 주소로 받은 공고는 처음 한 번만 고릅니다. 이용 사례 객체가 렌더마다 바뀌어도 다시 읽지 않습니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedSourceCode, requestedProgramId])
 
   const maximumRecruitmentDeadline = latestRecruitmentDeadlineFor(selectedProgram)
 

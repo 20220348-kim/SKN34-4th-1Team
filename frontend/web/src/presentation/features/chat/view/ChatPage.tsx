@@ -320,7 +320,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                 : <GovReviewCard review={message.govReview} refresh={workRefresh}
                   live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
               {message.govPartners ? (isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
-                ? <GovPartnerBrief key={`${accountEmail}:${message.id}`} />
+                ? <GovPartnerBrief key={`${accountEmail}:${message.id}`} conditions={message.govPartners.conditions} />
                 : <div className="mt-3 rounded-xl border border-line p-4 text-sm">
                   <Link className="text-brand-primary underline" to={appPaths.partners}>파트너 모집글 보기</Link>
                 </div>) : null}

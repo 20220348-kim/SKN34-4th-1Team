@@ -40,10 +40,23 @@ COMBINATION_REVIEW: 두 공고에 함께 지원·참여할 수 있는지, 중복
   사용자가 검토 실행 버튼을 눌러야 실제 분석합니다. 검토가 이미 끝났다고 답하지 않습니다.
 PARTNERS: 협업할 파트너나 파트너 모집글을 찾고 조회하는 요청.
   '함께할 파트너 찾아줘', '협업 모집글을 보여줘'가 해당하며 공고 선택이 필요하지 않습니다.
-  기존 모집글 조회 화면을 안내하며, AI 맞춤 매칭을 수행하거나 제안을 보내지 않습니다.
+  Core가 회사 정보·관심 공고로 모집글을 고르고, 제안을 보내거나 모집글을 쓰지 않습니다.
 UNSUPPORTED: 외부 기관에 신청서 제출·접수, 제안 발송, 파트너 모집글 작성 등 자동 변경,
   저장/삭제 등 변경, 계정 관리, 외부 시스템 조작, 여러 작업 자동·일괄 실행, 그 밖의 지원하지 않는 요청.
 아직 연결하지 않은 기능을 실행했다고 주장하지 않습니다. 서버가 실행 가능한 범위를 안내합니다.
+
+partnerConditions:
+action이 PARTNERS일 때만 채우고, 그 밖에는 null입니다. 사용자가 이번 message에서 직접 말한 조건만 담고 추측하지 않습니다.
+말하지 않은 항목은 빈 배열이나 null입니다. 각 값의 evidence에는 그 값을 뒷받침하는 message 속 문구를 원문 그대로 적습니다.
+- seekingRoles: 모집글이 찾는 상대 역할(사용자 회사가 맡게 될 역할)입니다. LEAD(주관기관), PARTICIPANT(참여기관), DEMAND(수요처).
+  message에 '주관', '참여', '수요'라는 말이 있을 때만 채웁니다. '파트너', '회사', '기업', '같이'만으로는 역할을 정하지 않고 빈 배열로 둡니다.
+  '참여기관 구하는 글', '참여기관으로 들어갈 모집글'은 PARTICIPANT, '주관기관을 구하는 글'은 LEAD, '수요처 찾는 글'은 DEMAND입니다.
+  모집글을 올린 쪽의 역할('주관기관이 올린 글')은 거를 수 없으므로 담지 않습니다.
+- regions: 정해진 17개 짧은 이름만 씁니다. '경기도'는 경기입니다. '수도권'은 서울·경기·인천 세 값을 모두 담고 각각의 evidence는 '수도권'입니다.
+  '전국', '어디든'은 지역 조건이 없는 것이므로 담지 않습니다.
+- keywords: 분야·역량·업종을 나타내는 짧은 말을 최대 3개, message에 있는 낱말 그대로 씁니다.
+  '파트너', '모집글', '회사', '기업', '같이', '과제', '사업'과 마감·정렬 요청('마감 임박')은 담지 않습니다.
+- selectedProgramEvidence: hasSelectedProgram이 true이고 '이 공고', '선택한 공고'로 함께할 파트너를 찾을 때만 그 문구를 적습니다.
 
 분류 예시:
 message='신청서 작성을 준비하고 싶어요', hasSelectedProgram=false,
@@ -57,7 +70,14 @@ message='신청할 때 제출할 서류는 뭐야?', hasSelectedProgram=false ->
 message='중복 수혜를 검토하고 싶어요', hasSelectedProgram=false,
   searchQuery='창업 지원', pendingSearchQuestion='검색할 지역을 알려 주세요.' -> COMBINATION_REVIEW
 message='이 사업과 다른 공고에 함께 지원할 수 있어?', hasSelectedProgram=true -> COMBINATION_REVIEW
-message='협업 파트너 모집글 찾아줘', hasSelectedProgram=false -> PARTNERS
+message='협업 파트너 모집글 찾아줘', hasSelectedProgram=false -> PARTNERS, 조건 없음(빈 배열·null)
+message='서울에서 참여기관 구하는 모집글 보여줘', hasSelectedProgram=false
+  -> PARTNERS, seekingRoles=[PARTICIPANT '참여기관 구하는'], regions=[서울 '서울에서']
+message='수도권 데이터 회사 파트너 찾아줘', hasSelectedProgram=false
+  -> PARTNERS, seekingRoles=[], regions=[서울 '수도권', 경기 '수도권', 인천 '수도권'], keywords=[데이터 '데이터']
+message='이 공고로 같이 지원할 파트너 찾아줘', hasSelectedProgram=true -> PARTNERS, selectedProgramEvidence='이 공고'
+message='전국 어디든 상관없이 참여기관 모집글', hasSelectedProgram=false
+  -> PARTNERS, seekingRoles=[PARTICIPANT '참여기관 모집글'], regions=[]
 message='이 파트너에게 제안을 보내 줘', hasSelectedProgram=true -> UNSUPPORTED
 message='파트너 모집글을 대신 작성해 줘', hasSelectedProgram=false -> UNSUPPORTED
 message='사업을 찾아 신청서를 작성하고 중복 검토까지 전부 실행해 줘', hasSelectedProgram=false -> UNSUPPORTED

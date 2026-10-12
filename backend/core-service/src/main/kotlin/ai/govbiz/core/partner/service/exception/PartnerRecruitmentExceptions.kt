@@ -8,6 +8,9 @@ class RecruitmentActionForbiddenException : RuntimeException()
 /** 목록 조회의 지역 조건이 20자를 넘을 때 발생합니다. 지역은 여러 개라 파라미터 검증 대신 컨트롤러가 직접 확인합니다. */
 class RecruitmentRegionFilterInvalidException : RuntimeException()
 
+/** 맞춤 추천 조건이 맞지 않을 때 발생합니다. 지역은 짧은 시·도 이름, 분야 말은 최대 3개·각 30자, 공고는 출처와 ID를 함께 보내야 합니다. */
+class RecruitmentMatchConditionInvalidException(val field: String) : RuntimeException()
+
 /** 기업을 등록하지 않은 회원이 모집글을 쓰려 할 때 발생합니다. */
 class CompanyRequiredException : RuntimeException()
 

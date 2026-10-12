@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from tests.langchain_stub import ResponsesChatStub, response_message
 
 from app.gov_agent.agent import INSTRUCTIONS, GovAgentSupervisor
-from app.gov_agent.models import GovAgentRequest
+from app.gov_agent.models import GovAgentDecision, GovAgentRequest
 from app.gov_agent.router import get_supervisor, router
 
 
@@ -120,3 +120,55 @@ def test_failure_is_explicit_without_exposing_upstream_text(error, status):
 def test_extra_authority_or_tool_fields_are_rejected():
     with pytest.raises(ValidationError):
         GovAgentRequest(message="사업 검색", hasSelectedProgram=False, role="ADMIN", toolUrl="http://invalid")
+
+
+PARTNER_CONDITIONS = {
+    "seekingRoles": [{"value": "PARTICIPANT", "evidence": "참여기관 구하는"}],
+    "regions": [{"value": "서울", "evidence": "서울에서"}],
+    "keywords": [{"value": "AI", "evidence": "AI"}],
+    "selectedProgramEvidence": None,
+}
+
+
+@pytest.mark.anyio
+async def test_partner_conditions_are_returned_with_the_same_single_decision_call():
+    body = {"action": "PARTNERS", "partnerConditions": PARTNER_CONDITIONS}
+    model = ResponsesChatStub([[response_message(json.dumps(body, ensure_ascii=False))]])
+    request = GovAgentRequest(message="서울에서 AI 참여기관 구하는 모집글 보여줘", hasSelectedProgram=False)
+    decision = await GovAgentSupervisor(model=model.model, timeout_seconds=3).decide(request)
+    assert decision.action == "PARTNERS"
+    assert decision.model_dump(by_alias=True)["partnerConditions"] == PARTNER_CONDITIONS
+    # 조건은 경로 선택과 같은 호출에서 받습니다. 별도 해석 호출을 하지 않습니다.
+    assert len(model.calls) == 1
+    schema = model.first_call.schema
+    assert schema["required"] == ["action", "partnerConditions"]
+    region_schema = schema["$defs"]["PartnerRegionCondition"]["properties"]["value"]
+    assert "전국" not in region_schema["enum"] and len(region_schema["enum"]) == 17
+    model.assert_complete()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("body", [
+    {"action": "SEARCH", "partnerConditions": PARTNER_CONDITIONS},
+    {"action": "PARTNERS", "partnerConditions": {**PARTNER_CONDITIONS, "regions": [{"value": "전국", "evidence": "전국"}]}},
+    {"action": "PARTNERS", "partnerConditions": {**PARTNER_CONDITIONS, "seekingRoles": [{"value": "OWNER", "evidence": "주관"}]}},
+    {"action": "PARTNERS", "partnerConditions": {**PARTNER_CONDITIONS, "keywords": [{"value": "AI", "evidence": ""}]}},
+])
+async def test_partner_conditions_outside_the_contract_are_rejected(body):
+    model = ResponsesChatStub([[response_message(json.dumps(body, ensure_ascii=False))]])
+    with pytest.raises(ValueError):
+        await GovAgentSupervisor(model=model.model, timeout_seconds=3).decide(
+            GovAgentRequest(message="서울에서 AI 참여기관 구하는 모집글 보여줘", hasSelectedProgram=False),
+        )
+
+
+def test_router_returns_partner_conditions_with_camel_case_aliases():
+    app = FastAPI()
+    app.include_router(router)
+    supervisor = AsyncMock(spec=GovAgentSupervisor)
+    supervisor.decide.return_value = GovAgentDecision.model_validate({"action": "PARTNERS", "partnerConditions": PARTNER_CONDITIONS})
+    app.dependency_overrides[get_supervisor] = lambda: supervisor
+    with TestClient(app) as client:
+        response = client.post("/internal/v1/gov-agent/decide", json={"message": "파트너 찾아줘", "hasSelectedProgram": False})
+    assert response.status_code == 200
+    assert response.json() == {"action": "PARTNERS", "partnerConditions": PARTNER_CONDITIONS}

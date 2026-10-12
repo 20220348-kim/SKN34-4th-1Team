@@ -10,6 +10,11 @@ import {
   type PartnerRecruitmentInput,
 } from '../entities/PartnerRecruitment'
 import type { PartnerRecruitmentQuery } from '../entities/PartnerRecruitmentQuery'
+import {
+  partnerRecruitmentKeywordMaxCount,
+  partnerRecruitmentKeywordMaxLength,
+  type PartnerRecruitmentConditions,
+} from '../entities/PartnerRecruitmentRecommendation'
 import type { PartnerRecruitmentRepository } from '../repositories/PartnerRecruitmentRepository'
 
 /** 검색어·지역은 앞뒤 공백을 지우고 보냅니다. 페이지가 잘못되면 첫 페이지로 봅니다. */
@@ -24,6 +29,23 @@ export class BrowsePartnerRecruitmentsUseCase {
     const page = Number.isInteger(query.page) && query.page >= 1 ? query.page : 1
     const regions = query.regions.map((region) => region.trim()).filter((region) => region !== '')
     return this.repository.browse({ ...query, keyword: query.keyword.trim(), regions, page }, signal)
+  }
+}
+
+/** 분야 말·지역은 앞뒤 공백을 지우고 겹치거나 빈 값은 뺍니다. 분야 말은 한도까지만 보냅니다. */
+export class RecommendPartnerRecruitmentsUseCase {
+  private readonly repository: Pick<PartnerRecruitmentRepository, 'recommend'>
+
+  constructor(repository: Pick<PartnerRecruitmentRepository, 'recommend'>) {
+    this.repository = repository
+  }
+
+  execute(conditions: PartnerRecruitmentConditions, limit: number, signal?: AbortSignal) {
+    const unique = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter((value) => value !== ''))]
+    const keywords = unique(conditions.keywords)
+      .filter((keyword) => keyword.length <= partnerRecruitmentKeywordMaxLength)
+      .slice(0, partnerRecruitmentKeywordMaxCount)
+    return this.repository.recommend({ ...conditions, regions: unique(conditions.regions), keywords }, limit, signal)
   }
 }
 

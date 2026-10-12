@@ -9,8 +9,8 @@ import { supportProgramClient } from '../../../../data/api/supportProgramClient'
 import { emptyConversationContext, readyConversationProposal } from '../../../../data/fixtures/supportProgramConversation'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import { completeSearchResult } from '../../../../data/fixtures/supportProgramSearchResult'
-import { partnerRecruitmentPage } from '../../../../data/fixtures/partnerRecruitments'
-import { defaultPartnerRecruitmentQuery } from '../../../../domain/entities/PartnerRecruitmentQuery'
+import { partnerRecruitmentSummaries } from '../../../../data/fixtures/partnerRecruitments'
+import type { PartnerRecruitmentRecommendations } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { conversationHistoryOpened, createChatConversationSnapshot } from '../state/chatSlice'
 import { RouteDocumentTitle } from '../../../shared/routes/RouteDocumentTitle'
@@ -33,6 +33,25 @@ vi.mock('../../combination-review/view/CombinationReviewPages', () => ({
   ),
 }))
 afterEach(() => { cleanup(); vi.restoreAllMocks(); planUsageState.usage = null })
+
+/** 맞춤 추천 응답 대역입니다. 첫 글은 관심 공고·역량, 둘째 글은 역할만 맞고 희망 지역이 다릅니다. */
+function recommendations(): PartnerRecruitmentRecommendations {
+  const [first, second, third] = partnerRecruitmentSummaries
+  return {
+    items: [
+      { recruitment: first!, cautions: [], reasons: [
+        { type: 'MY_PROGRAM', values: [first!.program.title], programSource: 'SAVED' },
+        { type: 'CAPABILITY', values: ['데이터 구축', '라벨링'], programSource: null },
+      ] },
+      { recruitment: second!, reasons: [{ type: 'ROLE', values: ['PARTICIPANT'], programSource: null }], cautions: [{ type: 'OTHER_REGION', value: '부산' }] },
+      { recruitment: third!, reasons: [], cautions: [] },
+    ],
+    total: 4,
+    basis: { hasCompany: true, profileSet: true, roles: ['PARTICIPANT'], capabilityCount: 2, myProgramCount: 1, region: '서울' },
+    relax: [],
+    suggestedProgram: { sourceCode: 'BIZINFO', sourceProgramId: 'FREE-1', title: '빈 공고' },
+  }
+}
 
 function setup(role: 'ADMIN' | 'USER') {
   const store = createAppStore()
@@ -189,7 +208,7 @@ it('일반 회원은 AI 대화 검색 이름을 유지한다', () => {
 })
 
 it('관리자는 대화에서 검토 건을 저장·복원하고 파트너 조회로 전환하면 이전 검토를 링크로 남긴다', async () => {
-  const browse = vi.spyOn(appContainer.resolve('browsePartnerRecruitmentsUseCase'), 'execute').mockResolvedValue(partnerRecruitmentPage)
+  const recommend = vi.spyOn(appContainer.resolve('recommendPartnerRecruitmentsUseCase'), 'execute').mockResolvedValue(recommendations())
   const gov = vi.spyOn(supportProgramClient, 'sendGovAgentMessage').mockResolvedValue({
     outcome: 'COMBINATION_REVIEW', program: null, message: '비교할 공고를 선택하세요.',
   })
@@ -204,22 +223,59 @@ it('관리자는 대화에서 검토 건을 저장·복원하고 파트너 조�
   act(() => store.dispatch(conversationHistoryOpened({ accountEmail: 'test@govbiz.local', snapshot })))
   expect(screen.getByText('저장된 검토 12')).toBeTruthy()
   expect(gov).toHaveBeenCalledOnce()
-  gov.mockResolvedValue({ outcome: 'PARTNERS', message: '전체 모집글에서 찾아보세요.' })
+  gov.mockResolvedValue({ outcome: 'PARTNERS', message: '말씀하신 조건으로 모집글을 찾아봤어요.',
+    partnerConditions: { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: ['AI'], program: null } })
   fireEvent.change(input, { target: { value: '파트너 모집글 찾아줘' } })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
   expect(screen.queryByRole('region', { name: '대화 중복 검토' })).toBeNull()
   expect(screen.getByRole('link', { name: '중복 검토 화면에서 이어서 보기' }).getAttribute('href')).toBe('/app/combination-reviews/12')
-  // 파트너 조회는 마감이 가까운 모집글 세 개만 간단히 보여 주고, 직접 좁혀 보기는 파트너 관리로 넘깁니다.
-  const partners = screen.getByRole('region', { name: '파트너 모집글 · 마감이 가까운 순' })
-  expect(within(partners).getByText(`모집 중 ${partnerRecruitmentPage.total}건`)).toBeTruthy()
-  expect(within(partners).getAllByRole('listitem')).toHaveLength(3)
-  for (const recruitment of partnerRecruitmentPage.recruitments.slice(0, 3)) {
-    expect(within(partners).getByRole('link', { name: new RegExp(recruitment.title) }).getAttribute('href'))
-      .toBe(`/app/partners/detail?recruitmentId=${recruitment.id}`)
-  }
-  expect(within(partners).getByRole('link', { name: '파트너 관리에서 전체 보기' }).getAttribute('href')).toBe('/app/partners')
-  expect(browse).toHaveBeenCalledWith(defaultPartnerRecruitmentQuery, expect.any(AbortSignal))
+  // 파트너 조회는 대화에서 읽은 조건과 회사 정보로 고른 모집글 세 개를 이유와 함께 보여 주고, 더 보기는 같은 조건으로 파트너 관리에 넘깁니다.
+  const conditions = { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: ['AI'], program: null }
+  expect(recommend).toHaveBeenCalledWith(conditions, 3, expect.any(AbortSignal))
+  const partners = screen.getByRole('region', { name: '파트너 모집글 · 우리 회사에 맞는 순' })
+  // 대화 검색 결과처럼 메시지 폭을 다 쓰고, 모집글은 파트너 관리 목록과 같은 카드로 보여 줍니다.
+  expect(within(partners).getByRole('heading', { name: '파트너 모집글 맞춤 4건' })).toBeTruthy()
+  expect(within(partners).getAllByRole('article')).toHaveLength(3)
+  expect(within(partners).getByText(/기준: 역할 참여기관 · 역량 2개 · 관심 공고 1건/)).toBeTruthy()
+  const chips = within(partners).getByRole('group', { name: '대화에서 읽은 조건' })
+  expect(within(chips).getByText('참여기관')).toBeTruthy()
+  expect(within(chips).getByText('서울·전국')).toBeTruthy()
+  expect(within(chips).getByText('AI (순서만)')).toBeTruthy()
+  const items = within(partners).getAllByRole('listitem')
+  expect(items).toHaveLength(3)
+  expect(within(items[0]!).getByText('관심 공고 「서울 AI 스타트업 실증 지원…」')).toBeTruthy()
+  expect(within(items[0]!).getByText('필요 역량 2개 일치')).toBeTruthy()
+  expect(within(items[1]!).getByText('희망 지역 부산 · 우리 서울')).toBeTruthy()
+  expect(within(items[0]!).getByRole('link').getAttribute('href')).toBe(`/app/partners/detail?recruitmentId=${partnerRecruitmentSummaries[0]!.id}`)
+  expect(within(partners).getByRole('link', { name: '같은 조건으로 파트너 관리에서 보기' }).getAttribute('href'))
+    .toBe(`/app/partners?${new URLSearchParams([['seekingRole', 'PARTICIPANT'], ['region', '서울'], ['keyword', 'AI']])}`)
+  expect(within(partners).getByRole('link', { name: '이 공고로 모집글 쓰기' }).getAttribute('href'))
+    .toBe(`/app/partners/new?${new URLSearchParams({ sourceCode: 'BIZINFO', sourceProgramId: 'FREE-1' })}`)
+  // 칩을 빼면 AI 없이 다시 조회합니다.
+  await act(async () => fireEvent.click(within(chips).getByRole('button', { name: '서울·전국 조건 빼기' })))
+  expect(recommend).toHaveBeenLastCalledWith({ ...conditions, regions: [] }, 3, expect.any(AbortSignal))
+  expect(gov).toHaveBeenCalledTimes(2)
   expect(screen.getByRole('textbox', { name: '지원사업 검색어' })).toBe(input)
+})
+
+it('관리자의 파트너 카드는 맞는 글이 없으면 조건 하나를 뺐을 때의 건수를 보여 주고, 설정을 채우라고 알린다', async () => {
+  const empty = { ...recommendations(), items: [], total: 0, relax: [{ type: 'ROLE' as const, count: 0 }, { type: 'REGION' as const, count: 1 }], suggestedProgram: null,
+    basis: { hasCompany: true, profileSet: false, roles: [], capabilityCount: 0, myProgramCount: 0, region: '서울' } }
+  const recommend = vi.spyOn(appContainer.resolve('recommendPartnerRecruitmentsUseCase'), 'execute')
+    .mockResolvedValueOnce(empty).mockResolvedValue(recommendations())
+  vi.spyOn(supportProgramClient, 'sendGovAgentMessage').mockResolvedValue({ outcome: 'PARTNERS', message: '말씀하신 조건으로 모집글을 찾아봤어요.',
+    partnerConditions: { seekingRoles: ['DEMAND'], regions: ['부산'], keywords: [], program: null } })
+  setup('ADMIN')
+  fireEvent.change(screen.getByRole('textbox', { name: '지원사업 검색어' }), { target: { value: '부산 수요처 찾는 모집글' } })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
+  const partners = screen.getByRole('region', { name: '파트너 모집글 · 우리 회사에 맞는 순' })
+  expect(within(partners).getByText('조건에 맞는 열린 모집글이 없어요.')).toBeTruthy()
+  expect(within(partners).getByRole('link', { name: '협업·파트너 설정' }).getAttribute('href')).toBe('/app/profile')
+  // 빼도 0건인 조건(찾는 역할)은 버튼을 두지 않습니다.
+  expect(within(partners).queryByRole('button', { name: /찾는 역할 빼고 보기/ })).toBeNull()
+  await act(async () => fireEvent.click(within(partners).getByRole('button', { name: '지역 빼고 보기 (1건)' })))
+  expect(recommend).toHaveBeenLastCalledWith({ seekingRoles: ['DEMAND'], regions: [], keywords: [], program: null }, 3, expect.any(AbortSignal))
+  expect(within(partners).getAllByRole('listitem')).toHaveLength(3)
 })
 
 it('일반 회원에게 저장된 Gov 카드가 있어도 실행 패널을 열지 않는다', () => {
@@ -232,7 +288,7 @@ it('일반 회원에게 저장된 Gov 카드가 있어도 실행 패널을 열�
   ]
   act(() => store.dispatch(conversationHistoryOpened({ accountEmail: 'test@govbiz.local', snapshot })))
   expect(screen.queryByRole('region', { name: '대화 중복 검토' })).toBeNull()
-  expect(screen.queryByRole('region', { name: '파트너 모집글 · 마감이 가까운 순' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '파트너 모집글 · 우리 회사에 맞는 순' })).toBeNull()
   expect(gov).not.toHaveBeenCalled()
 })
 

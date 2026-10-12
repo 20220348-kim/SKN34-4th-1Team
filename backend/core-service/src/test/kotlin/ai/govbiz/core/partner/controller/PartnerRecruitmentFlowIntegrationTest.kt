@@ -64,6 +64,8 @@ class PartnerRecruitmentFlowIntegrationTest {
     @BeforeEach
     fun resetRows() {
         jdbcTemplate.update("DELETE FROM partner_recruitment")
+        jdbcTemplate.update("DELETE FROM saved_support_program")
+        jdbcTemplate.update("DELETE FROM company_partner_profile")
         jdbcTemplate.update("DELETE FROM company")
         jdbcTemplate.update("DELETE FROM account_session")
         jdbcTemplate.update("DELETE FROM account")
@@ -314,6 +316,73 @@ class PartnerRecruitmentFlowIntegrationTest {
         mockMvc.perform(get("/api/v1/partners/recruitments").param("mine", "true").cookie(owner))
             .andExpect(jsonPath("$.total").value(1))
             .andExpect(jsonPath("$.recruitments[0].status").value("CLOSED"))
+    }
+
+    @Test
+    fun recommendedRecruitmentsFollowTheCompanyProfileAndSavedProgramsAndSpokenConditions() {
+        insertProgram("second-program", today.plusDays(40), present = true)
+        insertProgram("third-program", today.plusDays(40), present = true)
+        val lead = signUp("lead@company.co.kr")
+        mockMvc.perform(
+            post("/api/v1/me/company").cookie(lead).origin()
+                .json("""{"businessNumber":"124-81-00998","region":"서울특별시","industry":"정보통신업","foundedYear":2021}"""),
+        ).andExpect(status().isCreated())
+        mockMvc.perform(post("/api/v1/partners/recruitments").cookie(lead).origin().json(requestBody()))
+            .andExpect(status().isCreated())
+        doReturn(listOf(RegisteredBusiness("2208162517", "네이버 주식회사", "계속사업자", "01")))
+            .`when`(biznoClient).findByBusinessNumber("2208162517")
+        val other = signUp("other@company.co.kr")
+        mockMvc.perform(
+            post("/api/v1/me/company").cookie(other).origin()
+                .json("""{"businessNumber":"220-81-62517","region":"부산광역시","industry":"제조업","foundedYear":2018}"""),
+        ).andExpect(status().isCreated())
+        mockMvc.perform(
+            post("/api/v1/partners/recruitments").cookie(other).origin()
+                .json(requestBody(sourceProgramId = "second-program", ownRole = "PARTICIPANT", seekingRole = "LEAD", region = "부산")),
+        ).andExpect(status().isCreated())
+
+        // 휴업 기업도 둘러보기와 추천은 받습니다. 역할은 참여기관, 역량은 띄어쓰기만 다르게 적었습니다.
+        val viewer = signUp("viewer@company.co.kr")
+        mockMvc.perform(
+            post("/api/v1/me/company").cookie(viewer).origin()
+                .json("""{"businessNumber":"120-87-34519","region":"서울특별시","industry":"정보통신업","foundedYear":2020}"""),
+        ).andExpect(status().isCreated())
+        mockMvc.perform(
+            put("/api/v1/me/company/partner-profile").cookie(viewer).origin()
+                .json("""{"roles":["PARTICIPANT"],"interestAreas":[],"introduction":"","capabilities":["데이터구축"]}"""),
+        ).andExpect(status().isOk())
+        mockMvc.perform(post("/api/v1/me/saved-programs").cookie(viewer).origin().json("""{"sourceCode":"TESTSRC","sourceProgramId":"third-program"}"""))
+            .andExpect(status().isOk())
+
+        mockMvc.perform(get("/api/v1/partners/recruitments/recommended").cookie(viewer))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.total").value(1))
+            .andExpect(jsonPath("$.items[0].recruitment.program.sourceProgramId").value("open-program"))
+            .andExpect(jsonPath("$.items[0].reasons[0].type").value("CAPABILITY"))
+            .andExpect(jsonPath("$.items[0].reasons[0].values[0]").value("데이터 구축"))
+            .andExpect(jsonPath("$.items[0].reasons[1].type").value("SAME_REGION"))
+            .andExpect(jsonPath("$.items[0].cautions.length()").value(0))
+            .andExpect(jsonPath("$.basis.profileSet").value(true))
+            .andExpect(jsonPath("$.basis.region").value("서울"))
+            .andExpect(jsonPath("$.basis.myProgramCount").value(1))
+            .andExpect(jsonPath("$.suggestedProgram.sourceProgramId").value("third-program"))
+
+        // 말한 지역은 거르는 조건이라 서울 모집글이 빠지고, 지역을 빼면 몇 건인지 함께 알려 줍니다.
+        mockMvc.perform(get("/api/v1/partners/recruitments/recommended").cookie(viewer).param("region", "부산"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.total").value(0))
+            .andExpect(jsonPath("$.relax[0].type").value("REGION"))
+            .andExpect(jsonPath("$.relax[0].count").value(1))
+
+        mockMvc.perform(get("/api/v1/partners/recruitments/recommended"))
+            .andExpect(status().isUnauthorized())
+        mockMvc.perform(get("/api/v1/partners/recruitments/recommended").cookie(viewer).param("region", "전국"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+        mockMvc.perform(get("/api/v1/partners/recruitments/recommended").cookie(viewer).param("keyword", "가", "나", "다", "라"))
+            .andExpect(status().isBadRequest())
+        mockMvc.perform(get("/api/v1/partners/recruitments/recommended").cookie(viewer).param("sourceCode", "TESTSRC"))
+            .andExpect(status().isBadRequest())
     }
 
     private fun updateBody(recruitmentDeadline: LocalDate = today.plusDays(12)): String =

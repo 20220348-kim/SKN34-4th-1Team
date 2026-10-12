@@ -4,6 +4,7 @@ import ai.govbiz.core.govagent.domain.GovAgentProgram
 import ai.govbiz.core.govagent.domain.GovAgentQuestion
 import ai.govbiz.core.govagent.service.dto.GovAgentResult
 import ai.govbiz.core.govagent.service.dto.GovAgentOutcome
+import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramConversationRequest
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramConversationResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceAnswerResponse
@@ -40,12 +41,27 @@ data class GovAgentMessageResponse(
     val evidence: SupportProgramEvidenceAnswerResponse?,
     val program: GovAgentProgramResponse?,
     val message: String?,
+    val partnerConditions: GovAgentPartnerConditionsResponse?,
 ) {
     companion object {
         fun from(result: GovAgentResult) = GovAgentMessageResponse(
             result.outcome, result.interpretation?.let(SupportProgramConversationResponse::from),
             result.evidence?.let(SupportProgramEvidenceAnswerResponse::from),
             result.program?.let { GovAgentProgramResponse(it.sourceCode, it.sourceProgramId) }, result.message,
+            result.partnerConditions?.let { conditions ->
+                GovAgentPartnerConditionsResponse(
+                    conditions.seekingRoles.sortedBy { it.ordinal }, conditions.regions.toList(), conditions.keywords,
+                    conditions.program?.let { GovAgentProgramResponse(it.sourceCode, it.sourceProgramId) },
+                )
+            },
         )
     }
 }
+
+/** 대화에서 읽은 파트너 모집글 조건입니다. 역할·지역·공고는 거르는 조건, 분야 말은 순서만 올리는 조건입니다. */
+data class GovAgentPartnerConditionsResponse(
+    val seekingRoles: List<PartnerRole>,
+    val regions: List<String>,
+    val keywords: List<String>,
+    val program: GovAgentProgramResponse?,
+)

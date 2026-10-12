@@ -196,18 +196,22 @@ describe('관리자 Gov 에이전트 대화', () => {
     act(() => hook.result.current.updateDraft('중복 지원 검토해 줘'))
     await act(async () => hook.result.current.submitMessage())
     const reviewMessageId = hook.result.current.messages.at(-1)!.id
-    hook.gov.mockResolvedValue({ outcome: 'PARTNERS', message: '전체 모집글에서 조건을 확인해 주세요.' })
+    hook.gov.mockResolvedValue({ outcome: 'PARTNERS', message: '전체 모집글에서 조건을 확인해 주세요.',
+      partnerConditions: { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: [], program: null } })
     act(() => hook.result.current.updateDraft('같이 사업할 파트너 모집글 찾아줘'))
     await act(async () => hook.result.current.submitMessage())
     act(() => hook.result.current.attachGovReview(reviewMessageId, 12))
     expect(hook.result.current.messages.find((message) => message.id === reviewMessageId)?.govReview?.reviewId).toBeUndefined()
-    expect(hook.result.current.messages.at(-1)?.govPartners).toEqual({ message: '전체 모집글에서 조건을 확인해 주세요.' })
+    const partners = { message: '전체 모집글에서 조건을 확인해 주세요.',
+      conditions: { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: [], program: null } }
+    expect(hook.result.current.messages.at(-1)?.govPartners).toEqual(partners)
     expect(hook.result.current.govProgram).toBeNull()
     expect(hook.search).not.toHaveBeenCalled()
     const snapshot = chatConversationSnapshotSchema.parse(createChatConversationSnapshot(hook.store.getState().chat))
     act(() => hook.result.current.startNewConversation())
     act(() => hook.store.dispatch(conversationHistoryOpened({ accountEmail: account.email, snapshot })))
-    expect(hook.result.current.messages.at(-1)?.govPartners).toEqual({ message: '전체 모집글에서 조건을 확인해 주세요.' })
+    // 대화에서 읽은 조건도 저장된 대화에 함께 남아, 다시 열면 같은 조건으로 고릅니다.
+    expect(hook.result.current.messages.at(-1)?.govPartners).toEqual(partners)
     expect(hook.gov).toHaveBeenCalledTimes(2)
   })
 
@@ -219,7 +223,12 @@ describe('관리자 Gov 에이전트 대화', () => {
     let request!: Promise<void>
     act(() => { request = hook.result.current.submitMessage() })
     act(() => hook.store.dispatch(signedIn({ ...account, email: 'another@test.local' })))
-    await act(async () => { resolve({ outcome, program: null, message: '이전 계정 응답' }); await request })
+    await act(async () => {
+      resolve(outcome === 'PARTNERS'
+        ? { outcome, message: '이전 계정 응답', partnerConditions: { seekingRoles: [], regions: [], keywords: [], program: null } }
+        : { outcome, program: null, message: '이전 계정 응답' })
+      await request
+    })
     expect(hook.result.current.messages.some((message) => message.govReview || message.govPartners)).toBe(false)
   })
 

@@ -65,7 +65,7 @@ private RDS TLS 검증, Secure 쿠키, 개발 로그인 비활성화, Nginx 고�
 이 ID는 권한이나 실행 승인이 아니며, 기존 신청 준비 API가 매번 계정 소유권과 현재 revision·작업 상태를 검증합니다. Gov 에이전트 응답 계약에는 준비 건 ID를 추가하지 않습니다.
 `COMBINATION_REVIEW`는 선택한 공고가 있으면 그 복합 식별자를 첫 공고 후보로 반환하고, 없어도 검토 준비 안내를 반환합니다.
 웹은 기존 중복 검토 입력 화면에서 두 공고·참여 상태·사업 관계를 확인합니다. 저장과 분석은 명시적 버튼으로 기존 `combination-reviews` API를 호출하며, 기존 소유권·revision·요청 키·사용량·작업 큐 경계를 유지합니다.
-`PARTNERS`는 공고 선택과 무관하며 `program`은 null입니다. 기존 `GET /api/v1/partners/recruitments`의 모집 역할·지역·검색어 필터와 상세 조회를 재사용하며, AI 맞춤 매칭·제안 발송·모집글 작성은 실행하지 않습니다.
+`PARTNERS`는 `program`이 null이고, 경로 선택과 같은 호출에서 받은 `partnerConditions`(찾는 역할·지역·분야 말·"이 공고")를 근거 문구가 사용자 말에 있는지 확인한 뒤 돌려줍니다. 화면은 이 조건으로 `GET /api/v1/partners/recruitments/recommended`를 조회하며, 제안 발송·모집글 작성은 실행하지 않습니다.
 두 경로의 Gov 응답 자체는 검토 생성·분석·사용량 차감을 하지 않습니다. 새 DB·migration·실행 서비스는 필요하지 않습니다.
 외부 기관 제출, 제안 발송, 모집글 자동 작성, 저장·삭제와 여러 작업 자동 실행은 `UNSUPPORTED`입니다.
 
@@ -571,6 +571,7 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `GET` `POST` `DELETE /api/v1/me/saved-programs`, `GET …/status` | 관심 공고함. 로그인 회원이 현재 노출 중인 공고를 담고(같은 공고는 한 번) 빼며 최근 순서로 읽음. 없거나 숨겨진 공고는 404 `SUPPORT_PROGRAM_NOT_FOUND` |
 | `GET` `PUT /api/v1/me/company/partner-profile` | 협업·파트너 설정(참여 역할·관심 분야·한 줄 소개·역량 태그) 조회·저장. 기업당 한 행 UPSERT |
 | `GET /api/v1/partners/recruitments`, `GET .../{id}` | 파트너 모집글 목록(검색·찾는 역할·지역·내 글·정렬·페이지)과 상세. 세션 없이도 읽기 가능 |
+| `GET /api/v1/partners/recruitments/recommended` | 로그인 회원의 맞춤 모집글(기본 3건, 최대 20). 회사 소재지·설립연도, 협업·파트너 설정, 관심 공고·신청 준비 공고, 보낸 제안으로 AI 없이 고르고 이유·확인할 점·조건 완화 건수·모집글 없는 관심 공고를 함께 돌려줌. `seekingRole`·`region`(짧은 시·도 이름)·`sourceCode`+`sourceProgramId`는 거르고 `keyword`(최대 3개)는 순서만 올림. 잘못된 조건은 400 `REQUEST_VALIDATION_FAILED` |
 | `POST /api/v1/partners/recruitments` | 기업을 등록한 회원이 접수 중인 공고 하나에 모집글 작성(201). 공고당 하나 |
 | `POST /api/v1/partners/recruitments/{id}/proposals` | 기업을 등록한 회원이 남의 모집글에 참여 제안 보내기(201). 모집글당 하나 |
 | `GET /api/v1/partners/proposals/{id}`, `POST .../accept` `.../decline` `.../withdraw` | 당사자만 제안 조회, 작성자의 수락·거절, 제안자의 철회 |
