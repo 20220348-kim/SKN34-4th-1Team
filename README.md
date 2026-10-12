@@ -403,8 +403,6 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 
 <img src="docs/assets/readme/architecture-deployment-caption.svg" alt="5.2.5 운영 배포 프로세스 — 운영 배포는 GitHub Actions가 순서를 제어하고, CodeBuild가 이미지를 빌드해 ECR에 저장한 뒤, Argo CD가 Git의 배포 설정을 EKS에 반영하는 흐름입니다. 백엔드 배포가 성공하면 같은 커밋의 웹을 Vercel 운영 주소로 전환합니다." width="820">
 
-배포 기준은 **개인 저장소 `ilil1/SKN34-4th-1Team`의 최신 `main` 커밋**입니다. 학교 저장소의 변경은 개인 `main`에 동기화해야 이 흐름으로 이어집니다.
-
 **① 검증·이미지 빌드·배포 설정 생성**
 
 ![GitHub main에서 필수 CI·CodeBuild·ECR·Helm을 거쳐 Git 배포 태그를 발행하는 흐름](docs/assets/architecture/govbiz-deployment-build.png?v=9ca9e3e4cb13)
