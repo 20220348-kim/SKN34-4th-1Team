@@ -69,6 +69,8 @@ async def test_even_misclassified_requests_cannot_reflect_free_text(request_data
         "schemaVersion": SCHEMA_VERSION, "status": status, "updates": [],
         "answer": expected if status == "ANSWERED" else None,
         "clarificationQuestion": expected if status == "CLARIFICATION_REQUIRED" else None,
+        # 질문 종류는 허용된 코드만 그대로 전달하고 답변에는 붙이지 않는다.
+        **({"clarificationKind": kind} if status == "CLARIFICATION_REQUIRED" else {}),
     }
     assert request_data == original
     assert "PRIVATE" not in response.model_dump_json() and "SECRET" not in response.model_dump_json()

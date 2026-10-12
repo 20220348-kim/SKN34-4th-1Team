@@ -104,12 +104,18 @@ pendingClarification은 생략/null 또는 다음 객체다.
   },
   "clarificationQuestion": null,
   "answer": null,
-  "changedFields": ["REGION"]
+  "changedFields": ["REGION"],
+  "clarificationKind": null
 }
 ```
 
 - status는 READY, CLARIFICATION_REQUIRED 또는 ANSWERED다. READY는 비어 있지 않은 query가 필수이고 질문은 null이다.
 - CLARIFICATION_REQUIRED는 질문이 필수다. proposedContext는 미확정 초안일 뿐 검색에 사용하지 않는다.
+  `clarificationKind`는 질문을 고른 종류 코드(아래 7개)이며 다른 상태에서는 null이다. 종류를 보내기 전 AI Service의
+  질문은 null로 전달한다. Web·앱은 `QUERY`(찾는 지원사업) 질문에만 지원 분야 빠른 답변(창업·사업화, 정책자금·융자,
+  기술개발(R&D), 수출·해외진출, 판로·마케팅, 인력·고용, 교육·컨설팅)을 보이며, 고른 문구는 직접 입력한 답처럼
+  미확정 초안·마지막 질문과 함께 다시 해석한다. 작성 중인 메시지가 있으면 덮어쓰지 않도록 선택지를 막고, 검색은 계속
+  확인 카드에서만 실행한다.
 - ANSWERED는 비어 있지 않은 answer가 필수이고 clarificationQuestion은 null이다. 변경 updates는 허용하지 않으며
   확정 조건과 보관 중인 제안·질문을 바꾸지 않는다. READY/CLARIFICATION_REQUIRED에서는 answer가 null이어야 한다.
   answer는 UTF-16 1,000자 이내이며 LF/CR/tab 외 제어·형식 문자는 거부한다. 기존 응답의 answer 생략은 null로 처리한다.
@@ -146,6 +152,9 @@ AI는 전체 상태를 재작성하지 않고 변경 목록만 반환한다.
   대상이 불명확하면 추측하지 않는다. 설립일 SET에는 아래의 완전한 날짜 인용 규칙을 그대로 적용한다.
 - pendingClarification이 있으면 draftContext, 아니면 pendingProposal, 둘 다 없으면 context를 기준으로 변경 목록을 병합한다.
   목록에 없는 필드는 코드로 그대로 유지한다. AI와 Core는 변경 목록·병합 후 상태·READY query를 검증한다.
+- REGION SET 값이 확정 context 또는 병합 기준의 지역과 표기만 다르면(`서울특별시`↔`서울`, `서울시 강남구`↔`서울 강남구`,
+  `강남`↔`강남구`) Core가 지역 사전으로 판별해 기존 표기를 유지한다. 등록 기업의 정식 시·도 명칭이 대화의 약칭으로
+  바뀌는 헛 변경 제안을 막으며, `서울`→`서울 강남구`처럼 범위가 달라지는 값은 그대로 변경이다.
 - ESTABLISHED_ON SET은 evidence 자체가 완전한 날짜여야 한다. YYYY-MM-DD 또는 YYYY년 M월 D일
   (년·월 뒤 공백 허용)만 인용하고 ISO 날짜로 정규화한 값이 value와 같아야 한다. 날짜 앞뒤의 다른 문구는
   이 인용에 넣지 않으며 상대 업력으로 날짜를 생성할 수 없다.
@@ -170,7 +179,8 @@ C02 모델의 내부 구조화 출력과 AI Service의 HTTP 응답을 구분한�
 - `CLARIFICATION_REQUIRED`: clarificationKind가 필수이며 answerKind는 null이다.
   허용 코드는 `QUERY`, `REGION`, `INDUSTRY`, `ESTABLISHMENT`, `SUPPORT_PURPOSE`, `ACCEPTING_ONLY`, `CHANGE_TARGET`이다.
 
-AI Service는 선택된 코드를 정해진 존댓말 안내·확인 질문으로 변환한다. 결과 요약은 `lastSearch`의
+AI Service는 선택된 코드를 정해진 존댓말 안내·확인 질문으로 변환하고, 확인 질문에는 같은 `clarificationKind` 코드를
+응답에 함께 실어 Core가 허용 코드만 공개 응답으로 전달한다(모델 출력·프롬프트는 바뀌지 않는다). 결과 요약은 `lastSearch`의
 검증된 resultCount만 사용하며, 요약이 없으면 완료 검색 정보가 없다고 안내한다. 사용자·모델 자유문자열을
 안내에 삽입하거나 검색 실패 원인·공고 내용·자격 충족 여부를 만들어 붙이지 않는다.
 `duckduckgo에 관해 자세히 말해줘`처럼 범위 밖인 요청은 `OUT_OF_SCOPE`로 분류하도록 지시한다.

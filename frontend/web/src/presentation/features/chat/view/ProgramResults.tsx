@@ -108,6 +108,9 @@ function ProgramCard({ program, interests, onSelectProgram }: { program: Support
               : eligibilityKind === 'unevaluated' ? '자격 미평가'
                 : review ? '확인 필요' : '자격 판정 없음 · 확인 필요'}
           </span>
+          {program.regionTagMismatch ? (
+            <span className={chatPageStyles.reviewRequiredTag}>다른 지역 한정일 수 있음</span>
+          ) : null}
           {program.recommendationScore !== null ? (
             <span className={chatPageStyles.programRelevance}>관련도 {program.recommendationScore}점</span>
           ) : null}
@@ -135,6 +138,11 @@ function ProgramCard({ program, interests, onSelectProgram }: { program: Support
             <EligibilityEvidence axes={[review.target, review.region]} />
           </>
         ) : <p className={chatPageStyles.conditionsHint}>지원 대상·지역의 자격 판정이 제공되지 않았습니다.</p>}
+        {program.regionTagMismatch ? (
+          <p className={chatPageStyles.conditionsHint}>
+            공고 지역({program.regions.join('·')})이 회사 소재지와 달라 뒤쪽에 두었어요. 지역 조건은 원문에서 확인해 주세요.
+          </p>
+        ) : null}
         <p className={chatPageStyles.conditionsHint}>
           공식 API 본문 기준 · 첨부파일 미검증 · 최종 신청 자격은 원문에서 확인하세요.
         </p>

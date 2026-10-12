@@ -26,7 +26,8 @@ const catalogResponseSchema = z.object({
   return value.totalPages === Math.ceil(value.total / value.pageSize)
     && value.programs.length === expectedCount
     && new Set(value.programs.map((program) => JSON.stringify([program.sourceCode, program.id]))).size === value.programs.length
-    && value.programs.every((program) => program.recommendationScore === null && program.eligibilityReview === null && program.matchedReasons.length === 0)
+    && value.programs.every((program) => program.recommendationScore === null && program.eligibilityReview === null
+      && program.matchedReasons.length === 0 && !program.regionTagMismatch)
     && new Set(value.regions).size === value.regions.length && new Set(value.categories).size === value.categories.length
     && [value.startupStages, value.applicantTypes, value.founderAges].every((options) => new Set(options).size === options.length)
 }, '공고 목록의 개수·페이지·자격 미평가 계약이 일치해야 합니다.')

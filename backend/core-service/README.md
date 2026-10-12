@@ -687,7 +687,9 @@ Core가 서울 기준일과 `govbiz-support-program-conversation-v1`을 보내�
 message/query 500, region 50, industry/supportPurpose 100, 날짜 10, 질문/근거 160입니다. 상대 업력으로 설립일을
 생성할 수 없습니다. 미변경 필드는 유지하고, 마지막 질문의 draftContext → pendingProposal → context 순서로
 병합 기준을 정하되 changedFields는 확정 context와
-비교해 계산합니다. 공개 DTO·내부 AI DTO·도메인·검증 결과는 각 경계의 타입으로 분리합니다.
+비교해 계산합니다. REGION 변경이 확정 조건이나 병합 기준과 표기만 다른 같은 지역이면(`서울특별시`↔`서울`,
+`서울시 강남구`↔`서울 강남구`) `_common/domain/RegionDictionary` 기준으로 기존 표기를 유지해 바뀐 조건으로 세지 않습니다.
+공개 DTO·내부 AI DTO·도메인·검증 결과는 각 경계의 타입으로 분리합니다.
 
 READY도 제안일 뿐이며 사용자가 확인한 뒤 기존 POST 검색을 별도로 호출합니다. 정보가 부족하면
 CLARIFICATION_REQUIRED와 새 질문·초안을 반환합니다. 결과 설명은 ANSWERED와 answer로 반환하며
@@ -697,6 +699,8 @@ CLARIFICATION_REQUIRED와 새 질문·초안을 반환합니다. 결과 설명�
 단문 검색으로 우회하지 않습니다. 해석과 확인 검색은 공유 요청 제한에서 각각 한 건입니다.
 AI Service는 모델의 답변·질문 종류 코드를 허용된 존댓말 문구로 바꿔 전달합니다. Core가 받는
 `answer`·`clarificationQuestion`과 공개 API 계약은 유지하며, ANSWERED로 조건 변경이나 검색을 실행하지 않습니다.
+확인 질문의 `clarificationKind`는 7개 허용 코드만 `domain/SupportProgramConversationClarificationKind`로 받아 공개 응답에
+전달하고, 다른 상태에 실리거나 모르는 코드면 502 계약 오류입니다. 종류가 없는 이전 AI 응답은 null로 전달합니다.
 상세 계약과 상태 흐름은 [C02 안내](../../docs/conversation-condition-update.md)를 참고하세요.
 
 ### 검색·상세·근거 질문
@@ -786,6 +790,9 @@ v1을 사용하던 환경은 **새 v2 인덱스 이름으로 전환하고 재색
   원문에 없는 인용·누락된 검토·불충족 `INCOMPATIBLE`·잘못된 정렬은 정상 추천으로 숨기지 않고 내부 계약 오류로 반환합니다.
   관련도는 `2 × (semanticRelevance + supportTypeFit)`로 계산하며 자격 `UNKNOWN`을 감점하지 않습니다.
   의미 관련성 20/40점 이상, 명백한 자격 불일치 제외 후 관련도순으로 최대 5개입니다. 기존 총점 60점 컷과 MATCH 우선은 제거했습니다.
+  회사 소재지가 있으면 Search Service가 `_common/domain/RegionDictionary`(시·도 약칭·시군구·권역, 2026-10 행정구역)로
+  전국이 아닌 공고 지역 태그와 회사 시·도가 겹치지 않는 공고를 빼지 않고 결과 뒤로 보내 `regionTagMismatch=true`로 표시합니다.
+  본문 인용으로 지역을 확인(`MATCH`)한 공고·태그 없는 공고·해석할 수 없는 회사 지역은 옮기지 않습니다. 태그 기반 정렬·표시이며 자격 판정이 아닙니다.
   자연어 검색 결과의 `eligibilityReview`는 전체 상태 `MATCH`/`REVIEW_REQUIRED`, 기준 `OFFICIAL_API_TEXT`,
   대상·지역별 `status`, `explanation`, `evidence[{field,quote}]`를 추천 이유와 별도로 반환합니다.
   이는 HTML을 정리한 **공식 API 본문 기준**의 검토이며 상세 페이지 전체·첨부 PDF/HWP를 확인했다는 뜻이 아닙니다.

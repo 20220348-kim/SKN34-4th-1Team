@@ -122,14 +122,15 @@ describe('useChatPageViewModel', () => {
     hookMocks.chat.mockImplementation(() => chat)
     const { result, rerender } = renderHook(() => useChatPageViewModel())
 
-    expect(result.current.displayProposal).toEqual({ kind: 'clarification', question: '어느 지역인가요?' })
+    const clarification = { kind: 'clarification', question: '어느 지역인가요?', quickReplies: [], hasUnsentMessage: false }
+    expect(result.current.displayProposal).toEqual(clarification)
     chat = { ...chat, isBusy: true, isInterpreting: operation === 'interpretation', isSearching: operation === 'search' }
     rerender()
     expect(result.current.displayProposal).toBeNull()
 
     chat = { ...chat, isBusy: false, isInterpreting: false, isSearching: false }
     rerender()
-    expect(result.current.displayProposal).toEqual({ kind: 'clarification', question: '어느 지역인가요?' })
+    expect(result.current.displayProposal).toEqual(clarification)
     act(() => result.current.cancelInterpretation())
     rerender()
     expect(cancelInterpretation).toHaveBeenCalledOnce()
@@ -430,6 +431,7 @@ function createChatHook(overrides: Partial<ChatHook> = {}): ChatHook {
     selectSuggestion: vi.fn(),
     startNewConversation: vi.fn(),
     submitMessage: vi.fn().mockResolvedValue(undefined),
+    submitQuickReply: vi.fn().mockResolvedValue(undefined),
     updateDraft: vi.fn(),
     ...overrides,
   }

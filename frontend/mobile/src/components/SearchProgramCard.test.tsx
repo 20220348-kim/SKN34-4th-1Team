@@ -12,6 +12,20 @@ test('unevaluated results do not fabricate scores or evidence and retain the com
   fireEvent.press(screen.getByLabelText(`${program.title}, 상세 보기`))
   expect(open).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id })
 })
+test('programs the server moved back for another region show the tag notice without changing the eligibility badge', () => {
+  const otherRegion = { ...program, regions: ['경북', '전남'], regionTagMismatch: true }
+  const { rerender } = render(<SearchProgramCard program={otherRegion} onOpen={jest.fn()} />)
+  expect(screen.getByText('다른 지역 한정일 수 있음')).toBeTruthy()
+  expect(screen.getByText(/회사 소재지와 공고 분류 지역\(경북 · 전남\)이 달라요\. 그래서 결과 뒤쪽에 두었어요\./)).toBeTruthy()
+  expect(screen.getByText('자격 미평가')).toBeTruthy()
+
+  rerender(<SearchProgramCard program={otherRegion} />)
+  expect(screen.getByText('다른 지역 한정일 수 있음')).toBeTruthy()
+  expect(screen.queryByText(/결과 뒤쪽에 두었어요/)).toBeNull()
+
+  rerender(<SearchProgramCard program={{ ...otherRegion, regionTagMismatch: false }} onOpen={jest.fn()} />)
+  expect(screen.queryByText('다른 지역 한정일 수 있음')).toBeNull()
+})
 test('official-link failures remain explicit', async () => {
   const link = jest.spyOn(Linking, 'openURL').mockRejectedValueOnce(new Error('unavailable'))
   render(<SearchProgramCard program={program} onOpen={jest.fn()} />)

@@ -1,5 +1,6 @@
 package ai.govbiz.core.govagent.service
 
+import ai.govbiz.core._common.domain.RegionDictionary
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.admin.service.exception.AdminAccessDeniedException
@@ -16,7 +17,6 @@ import ai.govbiz.core.govagent.service.dto.GovAgentOutcome
 import ai.govbiz.core.govagent.service.dto.GovAgentResult
 import ai.govbiz.core.partner.domain.PartnerMatchConditions
 import ai.govbiz.core.partner.domain.PartnerMatchProgram
-import ai.govbiz.core.partner.domain.PartnerRegionNames
 import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.service.PlanUsageService
@@ -86,7 +86,8 @@ class GovAgentService(
 
     /**
      * 경로 선택 모델이 함께 돌려준 파트너 조건을 검증합니다. 모든 값은 모델이 본 사용자 말(개인정보를 가린 원문)에 근거 문구가
-     * 그대로 있어야 하고, 지역은 근거 문구에 그 지역 이름이나 "수도권"이, 분야 말은 근거 문구 안의 낱말이어야 합니다. 맞지 않으면 오류입니다.
+     * 그대로 있어야 하고, 지역은 근거 문구를 지역 사전으로 읽은 시·도(서울특별시·강남구·부울경 등)에 들어 있어야 하며, 분야 말은
+     * 근거 문구 안의 낱말이어야 합니다. 맞지 않으면 오류입니다.
      * 역할은 근거 문구에 그 역할 말(주관·참여·수요)이 없으면 사용자가 말하지 않은 역할로 보고 적용하지 않습니다("파트너"만으로 역할을
      * 정하면 결과가 사용자가 묻지 않은 조건으로 줄어들기 때문). 근거 문구가 원문에 없는 출력은 이때도 오류입니다.
      * 근거가 "수도권"인 지역은 서울·경기·인천을 모두 담습니다. "이 공고"는 사용자가 고른 공고가 있을 때만 그 공고로 좁힙니다.
@@ -113,12 +114,11 @@ class GovAgentService(
             val role = PartnerRole.entries.firstOrNull { it.name == value } ?: invalidPartnerConditions()
             role.takeIf { compact(evidence).contains(ROLE_WORDS.getValue(it)) }
         }
-        val regions = items(payload.regions, PartnerRegionNames.SHORT_NAMES.size).flatMap { (value, evidence) ->
-            if (value !in PartnerRegionNames.SHORT_NAMES) invalidPartnerConditions()
+        val regions = items(payload.regions, RegionDictionary.PROVINCES.size).flatMap { (value, evidence) ->
+            if (value !in RegionDictionary.PROVINCES) invalidPartnerConditions()
             when {
                 evidence.contains(CAPITAL_AREA) && value in CAPITAL_AREA_REGIONS -> CAPITAL_AREA_REGIONS
-                evidence.contains(value) || PartnerRegionNames.shortName(evidence.trim()) == value ||
-                    evidence.split(WHITESPACE).any { PartnerRegionNames.shortName(it) == value } -> listOf(value)
+                evidence.contains(value) || value in RegionDictionary.provincesOf(evidence) -> listOf(value)
                 else -> invalidPartnerConditions()
             }
         }
@@ -140,8 +140,7 @@ class GovAgentService(
     companion object {
         private const val MAX_EVIDENCE_LENGTH = 80
         private const val CAPITAL_AREA = "수도권"
-        private val CAPITAL_AREA_REGIONS = listOf("서울", "경기", "인천")
-        private val WHITESPACE = Regex("\\s+")
+        private val CAPITAL_AREA_REGIONS = RegionDictionary.provincesOf(CAPITAL_AREA).toList()
         /** 역할 근거 문구에 있어야 하는 말입니다. "파트너"·"회사"만으로는 역할을 정하지 않습니다. */
         private val ROLE_WORDS = mapOf(PartnerRole.LEAD to "주관", PartnerRole.PARTICIPANT to "참여", PartnerRole.DEMAND to "수요")
     }

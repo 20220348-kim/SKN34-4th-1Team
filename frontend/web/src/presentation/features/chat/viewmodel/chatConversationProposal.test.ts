@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { emptyConversationContext, readyConversationProposal, seoulConversationContext } from '../../../../data/fixtures/supportProgramConversation'
+import { supportFieldQuickReplies } from '../../../../domain/entities/SupportProgramConversation'
 import { createChatConversationProposal } from './chatConversationProposal'
 
 type ProposalSource = Parameters<typeof createChatConversationProposal>[0]
@@ -38,7 +39,19 @@ describe('createChatConversationProposal', () => {
       interpretation: { result: { status: 'CLARIFICATION_REQUIRED',
         clarificationQuestion: '어떤 지원이 필요한가요?', proposedContext: seoulConversationContext, changedFields: [] } },
       pendingClarification: { question: '이전 질문', draftContext: emptyConversationContext },
-    }))).toEqual({ kind: 'clarification', question: '어떤 지원이 필요한가요?' })
+    }))).toEqual({ kind: 'clarification', question: '어떤 지원이 필요한가요?', quickReplies: [], hasUnsentMessage: false })
+  })
+
+  it.each([
+    ['QUERY', supportFieldQuickReplies],
+    ['REGION', []],
+    [null, []],
+  ] as const)('%s 질문에는 그 종류에 맞는 빠른 답변만 붙이고 작성 중인 메시지를 알린다', (kind, quickReplies) => {
+    expect(createChatConversationProposal(createSource({
+      hasUnsentMessage: true,
+      interpretation: { result: { status: 'CLARIFICATION_REQUIRED', clarificationKind: kind,
+        clarificationQuestion: '어떤 지원사업을 찾으시나요?', proposedContext: emptyConversationContext, changedFields: [] } },
+    }))).toEqual({ kind: 'clarification', question: '어떤 지원사업을 찾으시나요?', quickReplies, hasUnsentMessage: true })
   })
 
   it('미확정 질문만 있으면 원본을 바꾸거나 도메인 제안을 만들지 않고 질문만 제공한다', () => {
@@ -47,7 +60,8 @@ describe('createChatConversationProposal', () => {
     })
     const before = structuredClone(source)
 
-    expect(createChatConversationProposal(source)).toEqual({ kind: 'clarification', question: '어느 지역인가요?' })
+    expect(createChatConversationProposal(source))
+      .toEqual({ kind: 'clarification', question: '어느 지역인가요?', quickReplies: [], hasUnsentMessage: false })
     expect(source).toEqual(before)
     expect(source.interpretation.result).toBeUndefined()
   })

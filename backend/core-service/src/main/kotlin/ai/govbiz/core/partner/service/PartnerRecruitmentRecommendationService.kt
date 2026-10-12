@@ -1,5 +1,6 @@
 package ai.govbiz.core.partner.service
 
+import ai.govbiz.core._common.domain.RegionDictionary
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.repository.CompanyPartnerProfileRepository
 import ai.govbiz.core.account.repository.CompanyRepository
@@ -11,7 +12,6 @@ import ai.govbiz.core.partner.domain.PartnerMatchProgram
 import ai.govbiz.core.partner.domain.PartnerMatchProgramSource
 import ai.govbiz.core.partner.domain.PartnerRecruitmentMatcher
 import ai.govbiz.core.partner.domain.PartnerRecruitmentView
-import ai.govbiz.core.partner.domain.PartnerRegionNames
 import ai.govbiz.core.partner.repository.PartnerProposalRepository
 import ai.govbiz.core.partner.repository.PartnerRecruitmentRepository
 import ai.govbiz.core.partner.service.dto.PartnerRecommendationBasis
@@ -57,7 +57,8 @@ class PartnerRecruitmentRecommendationService(
             .map { PartnerMatchMyProgram(it, title = "", PartnerMatchProgramSource.PREPARATION, isOpen = true) }
         val applicant = PartnerMatchApplicant(
             accountId = account.id,
-            region = company?.profile?.region?.let(PartnerRegionNames::shortName),
+            // 시·도 하나로 읽히는 소재지만 비교합니다. 같은 이름의 구처럼 후보가 여럿이면 지역 이유·주의를 붙이지 않습니다.
+            region = company?.profile?.region?.let { RegionDictionary.provincesOf(it).singleOrNull() },
             foundedYear = company?.profile?.foundedYear,
             roles = profile?.roles.orEmpty().toSet(),
             capabilities = profile?.capabilities.orEmpty(),

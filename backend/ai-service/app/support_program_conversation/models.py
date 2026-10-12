@@ -193,6 +193,10 @@ class SupportProgramConversationResponse(BaseModel):
     status: Literal["READY", "CLARIFICATION_REQUIRED", "ANSWERED"]
     updates: list[ConversationUpdate] = Field(max_length=7)
     clarification_question: ShortText | None = Field(alias="clarificationQuestion")
+    # 화면이 질문 종류에 맞는 선택지를 보일 수 있게 정해진 질문 문구의 종류 코드만 전달한다.
+    clarification_kind: ClarificationKind | None = Field(
+        default=None, alias="clarificationKind", exclude_if=lambda value: value is None,
+    )
     answer: AnswerText | None = None
 
     @model_validator(mode="after")
@@ -201,6 +205,8 @@ class SupportProgramConversationResponse(BaseModel):
             raise ValueError("each field can be updated only once")
         if (self.status == "CLARIFICATION_REQUIRED") != (self.clarification_question is not None):
             raise ValueError("only CLARIFICATION_REQUIRED requires a question")
+        if (self.status == "CLARIFICATION_REQUIRED") != (self.clarification_kind is not None):
+            raise ValueError("only CLARIFICATION_REQUIRED carries its question kind")
         if self.status == "ANSWERED":
             if self.answer is None or self.updates:
                 raise ValueError("ANSWERED requires an answer and no updates")

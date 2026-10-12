@@ -1,7 +1,8 @@
-import type {
-  SupportProgramConversationContext,
-  SupportProgramInterpretation,
-  SupportProgramPendingClarification,
+import {
+  clarificationQuickReplies,
+  type SupportProgramConversationContext,
+  type SupportProgramInterpretation,
+  type SupportProgramPendingClarification,
 } from '../../../../domain/entities/SupportProgramConversation'
 
 export const companyConditionFields = [
@@ -26,6 +27,9 @@ export type ChatConversationProposal = {
 } | {
   kind: 'clarification'
   question: string | null
+  /** 질문 종류에 맞는 빠른 답변입니다. 고르면 그 문구를 새 메시지로 보내 다시 해석합니다. */
+  quickReplies: readonly string[]
+  hasUnsentMessage: boolean
 }
 
 type ProposalSource = {
@@ -51,10 +55,14 @@ export function createChatConversationProposal({
   const result = interpretation.result
   if (result?.status === 'ANSWERED') return null
   if (!result) {
-    return pendingClarification ? { kind: 'clarification', question: pendingClarification.question } : null
+    // 종류를 모르는 보관 질문에는 선택지를 붙이지 않고 직접 입력만 받습니다.
+    return pendingClarification
+      ? { kind: 'clarification', question: pendingClarification.question, quickReplies: [], hasUnsentMessage }
+      : null
   }
   if (result.status === 'CLARIFICATION_REQUIRED') {
-    return { kind: 'clarification', question: result.clarificationQuestion }
+    return { kind: 'clarification', question: result.clarificationQuestion,
+      quickReplies: clarificationQuickReplies(result.clarificationKind), hasUnsentMessage }
   }
 
   // 비교 기준은 현재 폼이 아니라 해석 요청 당시의 확정 조건입니다.

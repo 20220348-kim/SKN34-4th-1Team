@@ -169,6 +169,8 @@ foundedYear는 이전 클라이언트와 호환되는 선택 정수입니다. �
 명시된 연도는 FOUNDED_YEAR SET으로 변경하며, ESTABLISHED_ON과 FOUNDED_YEAR 중 하나를 설정·해제하면 다른 정밀도 값은 제거합니다.
 updates의 최대 개수는 7개이고 연도 SET도 현재 메시지의 정확한 연도 인용과 범위를 검증합니다.
 응답은 `schemaVersion`, `status`, `updates`, `clarificationQuestion`, `answer`이며 전체 상태를 재작성하지 않습니다.
+CLARIFICATION_REQUIRED에는 질문을 고른 종류 코드 `clarificationKind`(모델 출력의 7개 코드 그대로)를 더하고, 다른 상태에서는
+이 키를 내지 않습니다. 화면은 이 코드로 질문에 맞는 빠른 답변을 고르며 문구는 계속 Service가 정합니다.
 ANSWERED는 비어 있지 않은 answer와 빈 updates, null 질문을 반환합니다. 다른 상태에서는 answer가 null입니다.
 모델 내부 출력은 자유 문장 대신 `answerKind`·`clarificationKind` 코드만 사용합니다. Service가 허용된 존댓말 안내와
 확인 질문을 작성하며, 검색 건수는 요청의 엄격하게 검증된 정수만 반영합니다. 사용자 입력·모델 문장·미확정 조건을

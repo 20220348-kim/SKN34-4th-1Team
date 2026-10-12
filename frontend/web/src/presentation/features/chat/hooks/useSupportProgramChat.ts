@@ -332,6 +332,15 @@ export function useSupportProgramChat(
     })
   }
 
+  /** 보완 질문의 빠른 답변을 직접 입력한 메시지처럼 보냅니다. 작성 중인 메시지는 덮어쓰지 않습니다. */
+  function submitQuickReply(reply: string) {
+    return dispatchToStore((dispatch: AppDispatch, getState: () => RootState): Promise<void> => {
+      if (getState().chat.draft.trim()) return Promise.resolve()
+      dispatch(draftChanged(reply))
+      return submitMessage()
+    })
+  }
+
   function retryInterpretation() {
     return dispatchToStore((_dispatch: AppDispatch, getState: () => RootState): Promise<void> => {
       const current = getState().chat.interpretation
@@ -396,6 +405,7 @@ export function useSupportProgramChat(
     selectSuggestion,
     startNewConversation,
     submitMessage,
+    submitQuickReply,
     updateDraft,
   }
 }

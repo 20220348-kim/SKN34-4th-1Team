@@ -1,5 +1,6 @@
 package ai.govbiz.core.partner.controller
 
+import ai.govbiz.core._common.domain.RegionDictionary
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.service.exception.AuthenticationRequiredException
 import ai.govbiz.core.partner.controller.dto.CreatePartnerRecruitmentRequest
@@ -12,7 +13,6 @@ import ai.govbiz.core.partner.domain.PartnerMatchProgram
 import ai.govbiz.core.partner.domain.PartnerRecruitmentInput
 import ai.govbiz.core.partner.domain.PartnerRecruitmentQuery
 import ai.govbiz.core.partner.domain.PartnerRecruitmentSort
-import ai.govbiz.core.partner.domain.PartnerRegionNames
 import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.partner.service.PartnerRecruitmentRecommendationService
 import ai.govbiz.core.partner.service.PartnerRecruitmentService
@@ -101,7 +101,7 @@ class PartnerRecruitmentController(
         @RequestParam(defaultValue = "3") @Min(1) @Max(20) limit: Int,
     ): PartnerRecruitmentRecommendationResponse {
         val regions = region.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        if (regions.any { it !in PartnerRegionNames.SHORT_NAMES }) throw RecruitmentMatchConditionInvalidException("region")
+        if (regions.any { it !in RegionDictionary.PROVINCES }) throw RecruitmentMatchConditionInvalidException("region")
         val keywords = keyword.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         if (keywords.size > PartnerMatchConditions.MAX_KEYWORDS || keywords.any { it.length > PartnerMatchConditions.MAX_KEYWORD_LENGTH }) {
             throw RecruitmentMatchConditionInvalidException("keyword")

@@ -90,6 +90,8 @@ export const supportProgramDtoSchema = z.object({
   matchedReasons: z.array(z.string()),
   recommendationScore: z.number().int().min(0).max(100).nullable(),
   eligibilityReview: eligibilityReviewDtoSchema.nullable().default(null),
+  // 이 필드를 보내기 전 Core와 저장된 결과도 열리도록 누락을 표시 없음으로 받고 기존 응답 모양을 유지합니다.
+  regionTagMismatch: z.boolean().optional(),
 }).superRefine((program, context) => {
   requireOfficialSourceUrl(program, context)
   if (!program.eligibilityReview) return
@@ -188,6 +190,8 @@ export function toSupportProgram(dto: SupportProgramDto): SupportProgram {
     sourceUrl: dto.sourceUrl,
     matchedReasons: [...dto.matchedReasons],
     recommendationScore: dto.recommendationScore,
+    // 표시가 필요한 검색 결과에만 둡니다. 목록·저장 공고 등 나머지 공고 모양은 그대로입니다.
+    ...(dto.regionTagMismatch ? { regionTagMismatch: true } : {}),
     eligibilityReview: dto.eligibilityReview ? {
       status: dto.eligibilityReview.status,
       basis: dto.eligibilityReview.basis,

@@ -9,6 +9,7 @@ import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationP
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationUpdatePayload
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
+import ai.govbiz.core.supportprogram.domain.SupportProgramConversationClarificationKind
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationContext
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationField
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationLastSearch
@@ -46,7 +47,8 @@ class SupportProgramConversationServiceTest {
         question: String? = null,
         version: String? = SupportProgramConversationService.SCHEMA_VERSION,
         answer: String? = null,
-    ) = AiSupportProgramConversationPayload(version, status, updates, question, answer)
+        kind: String? = null,
+    ) = AiSupportProgramConversationPayload(version, status, updates, question, answer, kind)
 
     private fun update(field: String = "REGION", value: String? = "부산", evidence: String? = "부산", operation: String? = "SET") =
         AiSupportProgramConversationUpdatePayload(field, operation, value, evidence)
@@ -84,6 +86,41 @@ class SupportProgramConversationServiceTest {
         val cleared = service.interpret("설립 조건 해제", initial, null)
         assertNull(cleared.proposedContext.companyConditions.foundedYear)
         assertNull(cleared.proposedContext.companyConditions.establishedOn)
+    }
+
+    @Test
+    fun keepsTheConfirmedRegionSpellingWhenTheModelOnlyRewritesTheSameRegion() {
+        val registered = context.copy(companyConditions = context.companyConditions.copy(region = "서울특별시"))
+        stub(response(listOf(update(value = "서울", evidence = "서울"))))
+        val same = service.interpret("서울에서 찾아줘", registered, null)
+        assertEquals("서울특별시", same.proposedContext.companyConditions.region)
+        assertEquals(emptyList<SupportProgramConversationField>(), same.changedFields)
+
+        // 미확정 제안이 다른 지역이어도 확정 조건과 같은 지역으로 돌아오면 확정 표기를 씁니다.
+        val busanProposal = registered.copy(companyConditions = registered.companyConditions.copy(region = "부산"))
+        stub(response(listOf(update(value = "서울시", evidence = "서울시"))))
+        val returned = service.interpret("다시 서울시로", registered, null, busanProposal)
+        assertEquals(registered, returned.proposedContext)
+        assertEquals(emptyList<SupportProgramConversationField>(), returned.changedFields)
+
+        // 더 좁은 지역은 실제 변경입니다.
+        stub(response(listOf(update(value = "서울 강남구", evidence = "서울 강남구"))))
+        val narrower = service.interpret("서울 강남구로", registered, null)
+        assertEquals("서울 강남구", narrower.proposedContext.companyConditions.region)
+        assertEquals(listOf(SupportProgramConversationField.REGION), narrower.changedFields)
+    }
+
+    @Test
+    fun passesOnlyAllowedClarificationKindsAndKeepsKindlessQuestionsFromOlderAiServices() {
+        stub(response(status = "CLARIFICATION_REQUIRED", question = "어떤 지원사업을 찾으시나요?", kind = "QUERY"))
+        assertEquals(SupportProgramConversationClarificationKind.QUERY, service.interpret("서울 지원사업", context, null).clarificationKind)
+
+        stub(response(status = "CLARIFICATION_REQUIRED", question = "어떤 지원사업을 찾으시나요?"))
+        assertNull(service.interpret("서울 지원사업", context, null).clarificationKind)
+
+        rejects(response(status = "CLARIFICATION_REQUIRED", question = "어떤 지원사업을 찾으시나요?", kind = "어디인가요?"))
+        rejects(response(listOf(update()), kind = "REGION"))
+        rejects(response(status = "ANSWERED", answer = "설명", kind = "QUERY"))
     }
 
     @Test

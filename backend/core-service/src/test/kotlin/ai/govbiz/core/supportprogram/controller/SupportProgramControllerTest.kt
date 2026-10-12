@@ -151,6 +151,8 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.programs[0].sourceName").value("기업마당"))
             .andExpect(jsonPath("$.programs[0].recommendationScore").value(96))
             .andExpect(jsonPath("$.programs[0].matchedReasons[0]").value("서울 AI 기업 대상"))
+            // 회사 소재지가 없는 검색은 지역 태그를 비교하지 않습니다.
+            .andExpect(jsonPath("$.programs[0].regionTagMismatch").value(false))
             .andExpect(
                 jsonPath("$.programs[0].sourceUrl")
                     .value("https://www.bizinfo.go.kr/detail?id=PBLN_TEST"),
@@ -269,6 +271,7 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.matchedReasons").doesNotExist())
             .andExpect(jsonPath("$.recommendationScore").doesNotExist())
             .andExpect(jsonPath("$.eligibilityReview").doesNotExist())
+            .andExpect(jsonPath("$.regionTagMismatch").doesNotExist())
     }
 
     @Test

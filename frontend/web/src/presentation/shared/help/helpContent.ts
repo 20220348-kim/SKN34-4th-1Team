@@ -15,6 +15,7 @@ export const helpEntries: readonly HelpEntry[] = [
       '대화로 조건을 말하면 지역·업종·설립일·지원 목적 가운데 무엇을 어떻게 바꿀지 제안 카드로 보여 줍니다.',
       '카드에서 검색을 누르면 그 조건으로 검색하고, 취소하면 이전 조건이 그대로 남습니다. 확인하지 않은 제안은 적용되지 않습니다.',
       '조건이 모호하면 검색 대신 질문합니다. 예를 들어 "부산이나 대구로"처럼 하나를 고를 수 없으면 어느 쪽인지 묻고 기존 지역을 바꾸지 않습니다.',
+      '어떤 지원사업을 찾는지 물을 때는 창업·사업화, 정책자금·융자 같은 지원 분야를 눌러 바로 답할 수 있어요. 고른 분야도 카드에서 확인한 뒤에 검색해요.',
     ],
     limitation: '확인을 건너뛰고 바로 검색하는 설정은 없습니다.',
     category: 'blocker',
@@ -24,7 +25,7 @@ export const helpEntries: readonly HelpEntry[] = [
     action: { label: '검색 화면 열기', to: appPaths.chat },
     status: 'available',
     related: ['search-score-meaning'],
-    updatedOn: '2026-09-10',
+    updatedOn: '2026-10-08',
   },
   {
     id: 'search-score-meaning',
@@ -54,6 +55,7 @@ export const helpEntries: readonly HelpEntry[] = [
     body: [
       '검색 결과 카드는 지원 대상과 지역을 각각 "본문 조건 확인" 또는 "확인 필요"로 표시해요.',
       '명백히 맞지 않는 공고는 추천에서 빼지만 확인 필요는 남겨 둬요. 정보가 부족한 것과 자격이 없는 것은 다르기 때문이에요.',
+      '공고의 지역 태그가 전국이 아니고 회사 소재지와 겹치지 않으면 "다른 지역 한정일 수 있음"을 붙여 결과 뒤쪽에 둬요. 태그만 보고 붙이는 표시라 결과에서 빼지 않아요.',
       '확인 필요 공고는 상세 화면의 [원문에 질문하기]에서 해당 조건을 직접 물어 확인할 수 있어요.',
     ],
     limitation: '첨부 파일(PDF·HWP)까지 읽은 최종 자격 판정은 아직 제공하지 않아요.',
@@ -64,7 +66,7 @@ export const helpEntries: readonly HelpEntry[] = [
     action: { label: '검색 화면 열기', to: appPaths.chat },
     status: 'available',
     related: ['search-score-meaning', 'evidence-insufficient'],
-    updatedOn: '2026-10-04',
+    updatedOn: '2026-10-08',
   },
   {
     id: 'status-unknown-source',

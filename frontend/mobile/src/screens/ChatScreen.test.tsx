@@ -8,6 +8,7 @@ import { colors } from '../ui'
 import { programDetail } from '../test/preparationFixtures'
 import { SupportProgramRequestApiError, SupportProgramSearchRestoreApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import type { PlanUsage } from '@govbiz/shared/domain/entities/PlanUsage'
+import { supportFieldQuickReplies } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { LoginRequest } from '../auth/loginFlow'
 import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
 
@@ -249,6 +250,36 @@ describe('mobile AI search', () => {
     fireEvent.press(screen.getByText('이 조건으로 검색'))
     await waitFor(() => expect(client.search).toHaveBeenCalledWith({ query: '사업화 지원', acceptingOnly: true, companyConditions: { region: '서울특별시' } }, expect.anything()))
     await screen.findByText('조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.')
+  })
+
+  it('offers support-field quick replies for the search-intent question and sends a choice through interpretation only', async () => {
+    const question = '어떤 지원사업을 찾으시나요? 필요한 지원 내용이나 목적을 알려 주세요.'
+    const draft = { ...context, query: null }
+    const client = { interpretConversation: jest.fn()
+      .mockResolvedValueOnce({ status: 'CLARIFICATION_REQUIRED', proposedContext: draft, clarificationQuestion: question,
+        changedFields: [], clarificationKind: 'QUERY' })
+      .mockResolvedValueOnce({ status: 'READY', proposedContext: { ...context, query: '수출·해외진출 지원' },
+        clarificationQuestion: null, changedFields: ['QUERY'] }),
+    getSearchReadiness: jest.fn(), search: jest.fn() }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '서울 지원사업')
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    await screen.findByText(question)
+    for (const reply of supportFieldQuickReplies) expect(screen.getByLabelText(reply)).toBeTruthy()
+
+    // 작성 중인 메시지가 있으면 선택지가 그 내용을 덮어쓰지 않습니다.
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '직접 입력 중')
+    fireEvent.press(screen.getByLabelText('수출·해외진출 지원'))
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '')
+
+    fireEvent.press(screen.getByLabelText('수출·해외진출 지원'))
+    await screen.findByText('이 조건으로 검색할까요?')
+    expect(client.interpretConversation).toHaveBeenLastCalledWith(expect.objectContaining({ message: '수출·해외진출 지원',
+      pendingClarification: { question, draftContext: draft } }), expect.anything())
+    expect(screen.queryByLabelText('지원 분야로 답하기')).toBeNull()
+    expect(client.search).not.toHaveBeenCalled()
   })
 
   it('blocks the paid search when the search index is unavailable', async () => {

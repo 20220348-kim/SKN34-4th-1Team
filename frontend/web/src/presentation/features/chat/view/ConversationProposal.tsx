@@ -3,15 +3,17 @@ import { Fragment, useId } from 'react'
 import type { ChatConversationProposal } from '../viewmodel/chatConversationProposal'
 import { chatPageStyles } from './ChatPage.styles'
 
-export function ConversationProposal({ proposal, onConfirm, onCancel, onClarify }: {
+export function ConversationProposal({ proposal, onConfirm, onCancel, onClarify, onQuickReply }: {
   proposal: ChatConversationProposal
   onConfirm: () => void
   onCancel: () => void
   onClarify: () => void
+  onQuickReply: (reply: string) => void
 }) {
   const ready = proposal.kind === 'ready'
   const canConfirm = ready && proposal.canConfirm
   const blockedHintId = useId()
+  const quickReplies = ready ? [] : proposal.quickReplies
   return (
     <section className={chatPageStyles.proposalPanel} aria-label={ready ? '조건 변경 제안' : '조건 추가 확인'}>
       <div className={chatPageStyles.proposalHeader}>
@@ -38,7 +40,21 @@ export function ConversationProposal({ proposal, onConfirm, onCancel, onClarify 
         </ul>
       ) : null}
       {ready && proposal.hasRetainedConditions ? <p className={chatPageStyles.proposalHint}>나머지 조건은 유지됩니다.</p> : null}
-      {!ready ? <p className={chatPageStyles.proposalHint}>답변을 입력해 주세요. 아직 검색하지 않았어요.</p> : null}
+      {quickReplies.length > 0 ? (
+        // 고른 문구는 새 메시지로 보내 다시 해석하며, 작성 중인 메시지가 있으면 덮어쓰지 않도록 막습니다.
+        <div className={chatPageStyles.suggestedQuestions} role="group" aria-label="지원 분야로 답하기">
+          {quickReplies.map((reply) => (
+            <button key={reply} type="button" className={chatPageStyles.suggestedQuestionButton}
+              disabled={!ready && proposal.hasUnsentMessage} onClick={() => onQuickReply(reply)}>
+              {reply}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {!ready ? <p className={chatPageStyles.proposalHint}>
+        {quickReplies.length > 0 ? '지원 분야를 고르거나 답변을 입력해 주세요. 아직 검색하지 않았어요.'
+          : '답변을 입력해 주세요. 아직 검색하지 않았어요.'}
+      </p> : null}
       {/* "검색 조건 자세히"와 같은 줄 오른쪽에 [제안 취소][이 조건으로 검색]을 둡니다. 펼친 조건 표는 왼쪽 칸 아래로 이어집니다. */}
       <div className={chatPageStyles.proposalFooter}>
         {ready ? <details className={chatPageStyles.proposalDetails}>

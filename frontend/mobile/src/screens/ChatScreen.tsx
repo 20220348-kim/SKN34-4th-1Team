@@ -2,7 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native'
 import { randomUUID } from 'expo-crypto'
 import type { ChatConversationSnapshot, ChatConversationSummary, ChatMessage } from '@govbiz/shared/domain/entities/ChatConversation'
-import type { SupportProgramConversationContext, SupportProgramInterpretation, SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
+import { clarificationQuickReplies, type SupportProgramConversationContext, type SupportProgramInterpretation,
+  type SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/SupportProgramSearchResult'
 import { RestoreSupportProgramSearchUseCase } from '@govbiz/shared/domain/usecases/RestoreSupportProgramSearchUseCase'
 import { SearchSupportProgramsUseCase } from '@govbiz/shared/domain/usecases/SearchSupportProgramsUseCase'
@@ -323,11 +324,12 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
 
   function cancel() { generation.current += 1; request.current?.abort(); setBusy(null); clearTimelineScroll() }
 
-  async function interpret() {
-    if (!message.trim() || busy || savingHistory || loadingRecords || deletionId.current || history.length >= 197 || retryUntil > Date.now()) return
+  /** 입력한 메시지나 고른 빠른 답변을 해석합니다. 빠른 답변도 확인 카드를 거쳐야 검색합니다. */
+  async function interpret(reply?: string) {
+    const text = (reply ?? message).trim()
+    if (!text || busy || savingHistory || loadingRecords || deletionId.current || history.length >= 197 || retryUntil > Date.now()) return
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
-    const text = message.trim()
     setBusy('interpret'); setError(null); setRetryAction(null)
     requestTimelineScroll('message')
     pendingRestore.current = null; retryRestore.current = null; setRestoreFailure(null)
@@ -464,6 +466,14 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       </View>}
     </View>
   }
+  const quickReplies = proposal?.status === 'CLARIFICATION_REQUIRED' ? clarificationQuickReplies(proposal.clarificationKind) : []
+  const quickReplyDisabled = Boolean(message.trim()) || blocked
+  function sendQuickReply(reply: string) {
+    // 작성 중인 메시지는 덮어쓰지 않습니다. 고른 문구를 보낼 메시지로 보여 주고 해석합니다.
+    if (quickReplyDisabled) return
+    setMessage(reply)
+    void interpret(reply)
+  }
   return <KeyboardAvoidingView testID="ai-search-keyboard-container" style={local.page}
     behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardOffset} enabled={active}>
     {(token || history.length > 0) && <View style={local.historyToolbar}>
@@ -492,7 +502,14 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
             ? <View testID="ai-search-clarification" style={local.clarification}>
               <Text style={local.clarificationEyebrow}>조금만 더 알려주세요</Text>
               <Text selectable style={local.clarificationQuestion}>{proposal.clarificationQuestion}</Text>
-              <Text style={styles.muted}>답변을 입력해 주세요. 아직 검색하지 않았어요.</Text>
+              {quickReplies.length > 0 && <View accessibilityLabel="지원 분야로 답하기" style={local.quickReplies}>
+                {quickReplies.map(reply => <Pressable key={reply} accessibilityRole="button" accessibilityLabel={reply}
+                  accessibilityState={{ disabled: quickReplyDisabled }} disabled={quickReplyDisabled}
+                  onPress={() => sendQuickReply(reply)} style={[local.quickReply, quickReplyDisabled && { opacity: 0.45 }]}>
+                  <Text style={local.quickReplyText}>{reply}</Text></Pressable>)}
+              </View>}
+              <Text style={styles.muted}>{quickReplies.length > 0 ? '지원 분야를 고르거나 답변을 입력해 주세요. 아직 검색하지 않았어요.'
+                : '답변을 입력해 주세요. 아직 검색하지 않았어요.'}</Text>
               <Button label="추가 내용 입력하기" variant="secondary" onPress={() => composerInput.current?.focus()} />
             </View> : <Text selectable style={local.answer}>{item.text}</Text>}
         </View>}{item.programs !== undefined && renderResults(item)}</Fragment>)}
@@ -597,6 +614,10 @@ const local = StyleSheet.create({
   clarificationQuestion: { color: colors.text, fontSize: 17, lineHeight: 26, fontWeight: '600' },
   name: { color: colors.text, fontSize: 14, fontWeight: '600' }, answer: { color: colors.text, fontSize: 15, lineHeight: 26 },
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+  quickReplies: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  quickReply: { minHeight: 44, justifyContent: 'center', borderWidth: 1, borderColor: colors.fieldBorder, borderRadius: 999,
+    paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.surface },
+  quickReplyText: { color: colors.text, fontSize: 14, lineHeight: 20 },
   locked: { backgroundColor: colors.soft, borderWidth: 1, borderColor: '#BFE3CF', borderRadius: 18, padding: 18, gap: 12 },
   lockPreview: { backgroundColor: colors.track, borderRadius: 12, padding: 14, gap: 12 },
   lockLine: { width: '70%', height: 14, borderRadius: 4, backgroundColor: colors.fieldBorder },

@@ -1,9 +1,11 @@
 package ai.govbiz.core.supportprogram.service.search
 
+import ai.govbiz.core._common.domain.RegionDictionary
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
@@ -127,7 +129,7 @@ class SupportProgramSearchService(
                     companyConditions,
                     searchReferenceDate.takeIf { companyConditions != null },
                 )
-            }
+            }.let { ranked -> demoteOtherRegionPrograms(ranked, companyConditions?.region) }
         }
 
         tracing.recordSelection(candidates.map { it.program.sourceQualifiedId }, programs.map { it.sourceQualifiedId })
@@ -157,6 +159,20 @@ class SupportProgramSearchService(
                 // 공개 필드별 상한의 합보다 넉넉하지만 내부 검색 계약(1000자)을 넘길 수는 없습니다.
                 require(it.length <= 1000) { "condition-aware retrieval query exceeds the internal limit" }
             }
+    }
+
+    /**
+     * 전국이 아닌 지역 태그가 회사 소재지와 겹치지 않는 공고는 빼지 않고 관련도순 결과의 뒤로 보내 표시합니다.
+     * 본문 인용으로 지역을 확인(MATCH)한 공고는 태그보다 본문을 따릅니다. 같은 그룹 안의 관련도 순서는 유지합니다.
+     */
+    private fun demoteOtherRegionPrograms(programs: List<SupportProgram>, companyRegion: String?): List<SupportProgram> {
+        if (companyRegion == null) return programs
+        val (otherRegion, sameOrUnknown) = programs.map { program ->
+            val outside = program.eligibilityReview?.region?.status != SupportProgramEligibilityStatus.MATCH &&
+                RegionDictionary.isOutsideTaggedRegions(companyRegion, program.regions)
+            if (outside) program.copy(regionTagMismatch = true) else program
+        }.partition(SupportProgram::regionTagMismatch)
+        return sameOrUnknown + otherRegion
     }
 
     private fun immutableCanonicalIds(programs: List<SupportProgram>): List<String> =
