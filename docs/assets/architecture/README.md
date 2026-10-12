@@ -7,6 +7,46 @@
 **AWS EKS 확장 구성(2026-10-12)**을 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
+## Kubernetes 내부 리소스 구조 — 2026-10-12
+
+메인 README 5.2.4의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과
+고정된 행 배치로 바꾸고, 관리·요청·저장소 관계를 분리했습니다.
+
+| 그림 | 파일 | 읽는 순서 |
+|---|---|---|
+| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png) · [SVG](govbiz-kubernetes-resources-overview.svg) | 업무 → 평가 → 관측. 각 서비스는 독립된 리소스이며 같은 Ops Pod의 API·sync만 두 컨테이너로 묶습니다. |
+| Ops의 리소스 관계 | [PNG](govbiz-kubernetes-resources-flow.png) · [SVG](govbiz-kubernetes-resources-flow.svg) | 생성·관리 → 실제 요청 → 데이터 보존. 행마다 반복한 Ops·MySQL Pod는 같은 예시입니다. |
+| 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png) · [SVG](govbiz-kubernetes-resources-platform.svg) | Argo·Control Plane·Node → EKS 진입 → 기반 기능 → 설정·접근 제어. |
+
+- **파란 실선**: 생성·배포·실행 관리. **초록 실선**: 실제 요청. **황색 점선**: 마운트·바인딩.
+- Headless Service는 중계 서버로 그리지 않습니다. CoreDNS가 알려준 Pod IP로 직접 접속합니다.
+- Chart·배포 코드의 구조이며, 실제 Argo 인계·자동 배포 완료나 현재 Pod 개수를 증명하지 않습니다.
+- 기본 Chart의 migration Job과 자동 배포 시 이를 교체하는 prepare·resume Job을 구분합니다.
+- SVG는 폭 1,440px, PNG는 2배 해상도입니다. 외부 이미지 요청 없이 볼 수 있도록 SVG에 아이콘을 내장합니다.
+- 아이콘은 [Kubernetes Contributors의 공식 세트](https://github.com/kubernetes/community/tree/main/icons)를
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)로 사용했습니다. 아이콘 원본은 수정하지 않고
+  그림에서 크기·배치만 조정합니다. [원본 출처·고정 커밋·SHA-256](kubernetes-resource-icon-sources.json)을 보관합니다.
+  Argo CD 로고는 기존 [로고 출처 목록](kubernetes-logo-sources.json)의 파일을 재사용합니다.
+
+재생성은 Node.js 24에서 다음 명령을 사용합니다. SVG 생성에는 추가 패키지가 필요 없습니다.
+
+```sh
+node docs/assets/architecture/build-kubernetes-resources.mjs
+node docs/assets/architecture/build-kubernetes-resources.mjs --render
+```
+
+`--render`는 기존 그림 생성 도구와 같이 Playwright·Chromium을 사용합니다.
+필요하면 `GOVBIZ_DIAGRAM_NODE_MODULES`에 Playwright가 있는 모듈 디렉터리,
+`GOVBIZ_DIAGRAM_CHROME`에 Chrome 실행 파일을 지정합니다. 앱 의존성·잠금 파일을 바꾸지 않습니다.
+렌더링은 네트워크를 차단하고 아이콘 해시·로딩·글자 너비와 캔버스 경계를 확인합니다.
+그림 수정 후 PNG·SVG를 함께 갱신하고 메인 README의 `?v=`를 각 파일 SHA-256 앞 12자리로 갱신합니다.
+
+공식 구조 근거: [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/),
+[Service·Headless](https://kubernetes.io/docs/concepts/services-networking/service/#headless-services),
+[StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/),
+[PV·PVC](https://kubernetes.io/docs/concepts/storage/persistent-volumes/),
+[클러스터 구성 요소](https://kubernetes.io/docs/concepts/overview/components/).
+
 ## 메인 README 서비스 요청 관계 — 2026-10-06
 
 - [PNG](govbiz-service-requests.png) · [SVG](govbiz-service-requests.svg) · [Mermaid 원본](govbiz-service-requests.mmd)

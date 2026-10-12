@@ -274,160 +274,100 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 #### 5.2.4 Kubernetes 내부 리소스 구조
 
-이 절은 **전체 리소스 배치 → Ops의 상세 관계 → 서비스별 매핑 → 클러스터 기반 구성** 순서로 읽습니다. 아래는 저장소의 Chart·EKS 설정·자동 배포 코드 기준이며, 실행 중인 모든 객체를 조회한 목록은 아닙니다. 실제 적용 상태는 위 환경별 기록에서 확인합니다. 특히 EKS Argo CD 자동 배포는 [최초 인계·활성화 상태](infrastructure/eks/argo-cd.md)를 별도로 확인합니다.
+아래 그림은 **① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성** 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다.
+
+그림은 저장소에 작성된 배포 설정(Helm Chart·EKS 설정·자동 배포 코드)을 설명합니다. 실제로 배포가 끝났는지는 위 환경별 기록을, EKS Argo CD 자동 배포의 준비 상태는 [최초 인계·활성화 문서](infrastructure/eks/argo-cd.md)를 확인합니다.
 
 **전체 Namespace와 워크로드 배치**
 
-```mermaid
-flowchart TB
-    subgraph cluster["Kubernetes 클러스터 — 로컬 kind / 운영 EKS"]
-        subgraph msaAll["Namespace: govbiz-msa"]
-            msaApps["각 Deployment → ReplicaSet → Pod<br/>core-service · catalog-service · ai-service<br/>ops-service: API + ops-sync<br/>로컬 web / EKS api-gateway"]
-            msaServices["Service<br/>업무 API·웹·gateway: ClusterIP<br/>업무 데이터: Headless"]
-            msaData["각 StatefulSet → Pod → PVC<br/>core-mysql · catalog-mysql · ops-mysql<br/>redis · qdrant · elasticsearch<br/>rabbitmq: 활성화한 환경"]
-            msaJobs["Job → 일회성 Pod<br/>자동 배포: release-prepare / release-resume<br/>기본 Chart: ops-service-migrate"]
-            msaServices -.->|라벨 선택| msaApps
-            msaServices -.->|DNS 대상| msaData
-        end
+![Kubernetes Namespace별 전체 리소스 배치 — 공식 아이콘으로 구분한 업무·평가·관측 구성](docs/assets/architecture/govbiz-kubernetes-resources-overview.png?v=5c5bb33da1d5)
 
-        subgraph evaluationAll["Namespace: govbiz-evaluation"]
-            evalApps["각 Deployment → ReplicaSet → Pod<br/>prefect · evaluation-runner · ops-artifacts"]
-            evalServices["ClusterIP Service<br/>prefect: 4200 · ops-artifacts: 8010<br/>evaluation-runner는 Service 없음"]
-            evalVolumes["PVC<br/>Prefect 전용 DB<br/>실행기·결과 API의 공유 결과 볼륨"]
-            evalServices -.->|라벨 선택| evalApps
-            evalApps -.->|마운트| evalVolumes
-        end
+[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-overview.png?v=5c5bb33da1d5) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-overview.svg?v=35dd055058e8)
 
-        subgraph observabilityAll["Namespace: govbiz-observability"]
-            obsApps["각 Deployment → ReplicaSet → Pod<br/>langfuse-web · langfuse-worker"]
-            obsServices["ClusterIP Service<br/>Langfuse 앱·관측 저장소 각각 구성"]
-            obsData["각 StatefulSet → Pod → PVC<br/>postgres · clickhouse · redis · minio"]
-            obsServices -.->|라벨 선택| obsApps
-            obsServices -.->|라벨 선택| obsData
-        end
-    end
+**Namespace는 관련 프로그램과 설정을 이름으로 묶는 공간**입니다. 이 프로젝트는 업무 서비스(`govbiz-msa`), 평가 도구(`govbiz-evaluation`), 실행 기록을 수집·조회하는 관측 도구(`govbiz-observability`)를 나누어 관리합니다. 실제 프로그램이 실행되는 서버는 **Node**, 그 서버에서 컨테이너를 실행하는 단위는 **Pod**입니다. Namespace 하나가 서버 한 대를 뜻하지는 않습니다.
 
-    classDef workload fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef network fill:#f3f5f4,stroke:#a8b5af,color:#183d32
-    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
-    class msaApps,msaJobs,evalApps,obsApps workload
-    class msaServices,evalServices,obsServices network
-    class msaData,evalVolumes,obsData storage
-```
-
-위 상자는 같은 유형의 리소스를 묶어 표시한 것으로, 나열한 서비스가 하나의 Deployment나 Pod를 공유한다는 뜻은 아닙니다. 예외는 같은 Ops Pod 안에 있는 `ops-service`·`ops-sync` 컨테이너입니다. Namespace 사이의 실제 서비스 호출은 [5.1 서비스 연결](#51-서비스-연결)을 참고합니다.
+그림에서 한 상자에 묶인 서비스도 각각 별도 Pod로 실행됩니다. Ops는 API인 `ops-service`와 동기화 작업인 `ops-sync` 두 컨테이너를 같은 Pod에서 실행합니다. 서비스끼리 주고받는 요청은 [5.1 서비스 연결](#51-서비스-연결)에서 확인할 수 있습니다.
 
 **Ops API와 MySQL의 상세 관계**
 
-```mermaid
-flowchart TB
-    caller["내부 API 호출자<br/>로컬 web / EKS api-gateway"]
+![Kubernetes Ops 내부 구조 — 생성·관리, 요청 전달, 데이터 보존의 세 경로](docs/assets/architecture/govbiz-kubernetes-resources-flow.png?v=c2fef1be08f3)
 
-    subgraph msa["Namespace: govbiz-msa"]
-        direction TB
-        deployment["Deployment: ops-service<br/>replicas: 1 · Recreate"]
-        replicaset["ReplicaSet: ops-service-…<br/>Deployment가 자동 생성"]
-        pod["Pod: ops-service-…-…<br/>컨테이너 ① ops-service: Ops API · 8000<br/>컨테이너 ② ops-sync: 평가 결과 동기화"]
-        service["Service: ops-service<br/>ClusterIP · 8000"]
-        secret["Secret: ops-runtime<br/>앱·DB·연동 자격 정보"]
+[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-flow.png?v=c2fef1be08f3) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-flow.svg?v=4963c5f66756)
 
-        statefulset["StatefulSet: ops-mysql<br/>replicas: 1"]
-        mysql["Pod: ops-mysql-0<br/>컨테이너: mysql · 3306"]
-        dbservice["Service: ops-mysql<br/>Headless · clusterIP: None"]
-        pvc["PersistentVolumeClaim: PVC<br/>MySQL 데이터 볼륨 요청"]
+**파란 실선은 “누가 실행을 관리하는가”**, **초록 실선은 “요청이 어디로 가는가”**, **황색 점선은 “어디에 데이터를 저장하는가”**를 나타냅니다. 그림의 각 행에 반복해서 나오는 Ops·MySQL Pod는 같은 Pod를 서로 다른 관점에서 표시한 것입니다.
 
-        deployment -->|생성·갱신| replicaset
-        replicaset -->|Pod 생성·개수 유지| pod
-        service ==>|라벨로 Ready Pod 선택 · Ops API로 전달| pod
-        secret -.->|환경변수로 주입| pod
+- **프로그램 실행 — Deployment → ReplicaSet → Pod**: Deployment에 “어떤 버전을 몇 개 실행할지”를 정합니다. Kubernetes가 만든 ReplicaSet은 Pod가 부족하면 새로 만들어 그 수를 맞춥니다. 실제 API 프로그램은 Pod 안에서 실행됩니다.
+- **API 접속 — Service → Pod**: Pod가 교체되면 IP가 달라질 수 있으므로, 다른 프로그램은 일정한 접속 주소를 제공하는 Service를 사용합니다. 일반 ClusterIP Service는 이름표(라벨)가 맞고 요청을 받을 준비가 된 Pod로 요청을 보냅니다. Deployment와 ReplicaSet은 실행을 관리할 뿐, API 요청이 지나가는 경로는 아닙니다. Ops Service로 들어온 요청은 같은 Pod의 API 컨테이너가 처리합니다.
+- **데이터 보관 — StatefulSet·PVC·PV**: StatefulSet은 DB처럼 이름과 저장소 연결을 유지해야 하는 Pod를 관리합니다. ReplicaSet을 거치지 않습니다. **PVC는 “이 저장 공간을 사용하겠다”는 요청**, **PV는 실제 저장 볼륨을 Kubernetes에 등록한 정보**입니다. 같은 PVC와 연결된 볼륨을 유지하면 DB Pod가 교체되어도 기존 데이터를 다시 사용할 수 있습니다. PVC까지 삭제해도 데이터가 자동 복구된다는 뜻은 아닙니다.
 
-        statefulset -->|고정 이름의 Pod 관리| mysql
-        pod -.->|DB 주소 DNS 조회| dbservice
-        dbservice -.->|Pod IP 제공| mysql
-        pod ==>|해석한 Pod IP로 MySQL 접속| mysql
-        mysql -.->|데이터 디렉터리에 마운트| pvc
-    end
+Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별도 접속 IP를 두는 대신, 서비스 이름을 조회하면 MySQL Pod의 IP를 알려줍니다. Ops API는 그 주소로 DB에 직접 연결합니다.
 
-    pv["PersistentVolume: PV<br/>Namespace 밖의 클러스터 리소스<br/>kind 로컬 볼륨 / EKS EBS 볼륨"]
-    caller ==>|HTTP| service
-    pvc -.->|볼륨 바인딩| pv
+<details>
+<summary>서비스별 리소스·포트·저장소 상세 펼치기</summary>
 
-    classDef controller fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    classDef workload fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef network fill:#f3f5f4,stroke:#a8b5af,color:#183d32
-    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
-    class deployment,replicaset,statefulset controller
-    class pod,mysql workload
-    class caller,service,dbservice,secret network
-    class pvc,pv storage
-```
-
-**가는 실선**은 컨트롤러의 생성·관리 관계, **굵은 실선**은 실제 요청, **점선**은 DNS·설정·저장소 참조입니다. Namespace는 리소스를 구분하는 논리적 경계이고, Pod는 스케줄러가 선택한 워커 Node에서 실행됩니다.
-
-- **Deployment → ReplicaSet → Pod**: 배포 설정으로 ReplicaSet을 만들고 원하는 Pod 수를 유지합니다. ReplicaSet은 Kubernetes가 생성하므로 Chart에 별도 YAML이 없습니다. 이전 배포의 ReplicaSet이 Pod 수 `0`으로 남을 수 있으며, 업무 서비스 Chart의 이력 보관 수는 `3`입니다.
-- **Service → Pod**: 요청은 Deployment나 ReplicaSet을 통과하지 않습니다. `ops-service` Service는 `app.kubernetes.io/name`과 `app.kubernetes.io/instance` 라벨로 Pod를 선택하고, 준비 상태에 따른 대상 주소는 Kubernetes가 EndpointSlice로 관리합니다. 같은 Pod의 `ops-sync`는 별도 Service 없이 함께 실행됩니다.
-- **StatefulSet → Pod → PVC → PV**: DB·저장소는 ReplicaSet 없이 StatefulSet이 Pod를 관리합니다. Pod는 PVC를 마운트하고 PVC는 실제 저장 볼륨인 PV와 연결됩니다. 기존 복원 PVC를 사용하는 구성에서는 새 Pod도 같은 데이터를 마운트합니다. `ops-mysql`은 가상 ClusterIP가 없는 Headless Service이므로 DNS로 받은 Pod IP에 직접 접속합니다.
-
-| Namespace / 대상 | Pod를 관리하는 리소스 | Service·저장소 연결 |
+| 관리 공간 / 프로그램 | 실행을 관리하는 구성 | 접속 방법·데이터 보관 |
 |---|---|---|
-| `govbiz-msa` / Core·Catalog·AI·Ops | 서비스별 `Deployment → ReplicaSet → Pod` | 각각 ClusterIP Service. Ops Pod에는 API와 `ops-sync` 컨테이너가 함께 실행됩니다. |
-| `govbiz-msa` / 로컬 `web` · EKS `api-gateway` | 각각 `Deployment → ReplicaSet → Pod` | Nginx와 ClusterIP Service로 Core·Ops에 연결합니다. EKS의 ALB Ingress는 `api-gateway` Service를 백엔드로 참조하며, `target-type: ip`로 gateway Pod에 전달합니다. 운영 웹은 Vercel에 있습니다. |
-| `govbiz-msa` / Core·Catalog·Ops MySQL, Redis·Qdrant·Elasticsearch·RabbitMQ | 저장소별 `StatefulSet → Pod` | `govbiz-local-data` Chart의 Headless Service와 데이터 PVC를 사용합니다. RabbitMQ는 활성화한 환경에 배치됩니다. |
-| `govbiz-evaluation` / `prefect`·`evaluation-runner`·`ops-artifacts` | 각각 `Deployment → ReplicaSet → Pod` | Prefect(`4200`)·결과 조회 API(`8010`)에 ClusterIP Service가 있습니다. 실행기는 Service 없이 Prefect 작업을 처리합니다. Prefect DB는 전용 PVC, 실행기와 결과 API는 같은 Node에서 같은 결과 PVC를 각각 쓰기·읽기 전용으로 마운트합니다. |
-| `govbiz-observability` / `langfuse-web`·`langfuse-worker` | 각각 `Deployment → ReplicaSet → Pod` | 각각 ClusterIP Service를 사용하고 관측 저장소에 연결합니다. |
-| `govbiz-observability` / PostgreSQL·ClickHouse·Redis·MinIO | 저장소별 `StatefulSet → Pod` | 각각 일반 ClusterIP Service와 기존 복원 PVC를 사용합니다. 업무 저장소의 Headless Service와는 설정이 다릅니다. |
-| `govbiz-msa` / 배포 Job | `Job → 일회성 Pod` | 기본 Chart의 `ops-service-migrate`는 migration용 `PreSync` Job입니다. 최신 자동 배포 bundle에서는 이를 `ops-service-release-prepare`(`PreSync`: 접수 보호·migration)와 `ops-service-release-resume`(`PostSync`: 연결 확인·접수 복구)으로 교체합니다. 세 Job을 동시에 실행하는 구성이 아닙니다. |
+| `govbiz-msa` / Core·Catalog·AI·Ops | 서비스별 `Deployment → ReplicaSet → Pod` | 각 Service의 내부 접속 주소(ClusterIP)로 호출합니다. Ops Pod 안에서는 API와 `ops-sync`가 함께 실행됩니다. |
+| `govbiz-msa` / 로컬 `web` · EKS `api-gateway` | 각각 `Deployment → ReplicaSet → Pod` | Nginx가 Core·Ops의 Service로 API 요청을 전달합니다. EKS에서는 ALB가 gateway Pod로 요청을 보내며, 운영 웹 화면은 Vercel에서 제공합니다. |
+| `govbiz-msa` / Core·Catalog·Ops MySQL, Redis·Qdrant·Elasticsearch·RabbitMQ | 저장소별 `StatefulSet → Pod` | `govbiz-local-data` Chart로 배포합니다. Headless Service로 각 Pod의 접속 주소를 찾고, PVC로 연결한 볼륨에 데이터를 보관합니다. RabbitMQ는 활성화한 환경에만 배치합니다. |
+| `govbiz-evaluation` / `prefect`·`evaluation-runner`·`ops-artifacts` | 각각 `Deployment → ReplicaSet → Pod` | 평가 작업을 관리하는 Prefect(`4200`)와 결과 조회 API(`8010`)에 Service가 있습니다. 실행기는 별도 Service 없이 Prefect 작업을 가져와 처리합니다. Prefect DB는 전용 PVC를 사용합니다. 실행기와 결과 API는 같은 Node에서 결과 PVC를 공유하며, 실행기는 쓰고 결과 API는 읽기만 합니다. |
+| `govbiz-observability` / `langfuse-web`·`langfuse-worker` | 각각 `Deployment → ReplicaSet → Pod` | 화면과 백그라운드 처리 프로그램에 각각 ClusterIP Service가 있고, 아래 관측용 저장소에 연결합니다. |
+| `govbiz-observability` / PostgreSQL·ClickHouse·Redis·MinIO | 저장소별 `StatefulSet → Pod` | 일반 ClusterIP Service로 접속합니다. 데이터를 복원해 둔 기존 PVC를 연결해 사용합니다. |
+| `govbiz-msa` / 배포 준비·마무리 작업 | `Job → 작업용 Pod` | Job은 특정 작업을 끝낸 뒤 종료하는 Pod를 실행합니다. 기본 Chart의 `ops-service-migrate`는 배포 전 DB 구조를 갱신합니다. 최신 자동 배포 구성은 아래의 준비·마무리 Job 두 개로 이를 교체합니다. |
 
-Secret은 비밀번호·토큰을, ConfigMap은 Nginx·ClickHouse 같은 비밀이 아닌 설정을 제공합니다. PVC·Secret·ConfigMap·Service는 해당 Namespace 안의 리소스이며, PV·StorageClass·Node는 클러스터 범위의 리소스입니다. EKS에서는 `govbiz-ebs-gp3` StorageClass로 EBS `gp3` 볼륨을 구성합니다.
+최신 자동 배포 Job은 다음 순서로 동작합니다. 기본 `ops-service-migrate`와 아래 두 Job을 동시에 실행하지는 않습니다.
 
-현재 업무 서비스 Chart는 **Pod 1개와 `Recreate` 교체 방식**을 사용하므로 다중 복제본의 무중단 배포 구조는 아닙니다. 평가·관측 Chart는 복원 전 기동을 막기 위해 기본 복제본 수를 `0`으로 두고, 복원·설정 후 활성화합니다.
+1. **배포 전(`PreSync`) — `ops-service-release-prepare`**: 새 평가 접수를 잠시 막고 진행 중인 평가가 끝나기를 기다린 뒤, DB 구조를 갱신합니다(migration).
+2. **배포 후(`PostSync`) — `ops-service-release-resume`**: 연결 상태를 확인하고, 이번 배포를 위해 중지했던 평가 접수를 다시 엽니다.
+
+**설정과 저장소의 범위:** Secret은 비밀번호·토큰을, ConfigMap은 Nginx·ClickHouse 등의 일반 설정을 전달합니다. PVC·Secret·ConfigMap·Service는 Namespace별로 관리합니다. 서버인 Node, 저장 볼륨 정보인 PV, 볼륨 생성 규칙인 StorageClass는 클러스터 전체에서 관리합니다. EKS는 `govbiz-ebs-gp3` StorageClass를 사용해 AWS EBS의 `gp3` 볼륨을 만듭니다.
+
+**현재 배포 방식:** 업무 서비스는 각각 **Pod 1개**로 실행하며, 새 버전을 배포할 때 기존 Pod를 종료한 다음 새 Pod를 만드는 **`Recreate` 방식**을 사용합니다. 따라서 교체 중 접속이 잠시 끊길 수 있습니다. 평가·관측 도구는 데이터 복원 전에 실행되지 않도록 기본 Pod 수를 `0`으로 설정했으며, 복원과 설정을 마친 뒤 실행합니다.
+
+**설정 파일에서 확인할 값:** ReplicaSet은 Kubernetes가 자동으로 만들기 때문에 Chart에 별도 YAML이 없습니다. 이전 배포의 ReplicaSet은 Pod 수 `0`으로 남을 수 있으며, 업무 서비스의 이력 보관 설정(`revisionHistoryLimit`)은 `3`입니다. Ops Service는 `app.kubernetes.io/name`과 `app.kubernetes.io/instance` 두 라벨이 일치하는 Pod를 찾습니다. 대상 Pod의 주소와 준비 상태는 Kubernetes가 EndpointSlice에 기록합니다. `ops-sync`에는 별도 Service가 없습니다.
+
+</details>
 
 **클러스터 관리·네트워크·실행 기반**
 
-```mermaid
-flowchart TB
-    git["검증한 이미지로 렌더링한 Git 배포 YAML"]
-    subgraph argo["Namespace: argocd — 자동 배포 구성"]
-        project["AppProject · Application<br/>허용 저장소·리소스·배포 대상 정의"]
-        cd["Argo CD<br/>배포 선언과 클러스터 상태 동기화"]
-        project -.-> cd
-    end
-    control["Control plane<br/>API Server · etcd · Scheduler · Controllers<br/>EKS에서는 AWS가 관리"]
-    node["워커 Node<br/>kubelet · containerd가 Pod 실행<br/>EKS: application / observability 노드 풀"]
-    pods["업무·평가·관측 Pod<br/>Namespace는 논리 구분이며 Node 경계와 다름"]
-    system["Namespace: kube-system<br/>CoreDNS · kube-proxy · CNI<br/>EKS: EBS CSI · Pod Identity · ALB Controller"]
-    ingress["Ingress: api-gateway<br/>backend Service: api-gateway"]
-    alb["EKS 외부 AWS 리소스: 내부 ALB"]
-    gateway["api-gateway Pod<br/>Nginx → Core·Ops Service"]
+![Kubernetes 플랫폼 구성 — 배포·Node·Ingress·네트워크·설정·접근 제어](docs/assets/architecture/govbiz-kubernetes-resources-platform.png?v=067fe6a49ab3)
 
-    git --> cd
-    cd -->|선언 적용| control
-    control -->|상태 관리·스케줄링| node
-    node -->|실행| pods
-    system -.->|DNS·Pod 통신·Service 전달·볼륨 지원| pods
-    ingress -.->|ALB Controller가 감시| system
-    system -.->|ALB Controller가 구성| alb
-    alb ==>|target-type: ip · HTTP| gateway
-```
+[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-platform.png?v=067fe6a49ab3) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-platform.svg?v=5279c3e05046)
 
-위 실선은 배포·실행 관리, 굵은 실선은 HTTP 요청, 점선은 설정·기반 기능 관계입니다. ALB Controller는 요청을 중계하는 프록시가 아니라 Ingress에 맞춰 ALB를 구성하는 컨트롤러입니다.
+이 그림도 **파란색은 배포·실행 관리**, **초록색은 HTTP 요청**입니다. Argo CD는 Git에 있는 배포 설정을 Kubernetes에 반영합니다. Ingress는 “들어온 요청을 어디로 보낼지” 정하는 규칙이고, AWS Load Balancer Controller는 그 규칙에 맞춰 ALB를 설정합니다. 실제 요청을 받아 gateway Pod로 전달하는 것은 **ALB**입니다.
 
-| 구성 요소 | 저장소 기준 역할·적용 범위 |
+<details>
+<summary>플랫폼 구성·권한·적용 범위 상세 펼치기</summary>
+
+| 구성 요소 | 하는 일과 이 프로젝트의 설정 |
 |---|---|
-| **Argo CD·Application·AppProject** | 자동 배포 선언의 관리 주체입니다. 로컬 `govbiz-local`은 웹을 포함한 앱 Deployment 7개, EKS `govbiz-eks`는 Core·Catalog·AI·Ops·평가 실행기·결과 서버 6개를 관리하도록 구성합니다. 이 Application들이 DB·PVC·Secret·Prefect·Langfuse·API Gateway까지 관리하는 것은 아닙니다. |
-| **Ingress·AWS Load Balancer Controller** | 운영의 `api-gateway` Ingress가 Service를 참조하고, Controller가 내부 ALB를 구성합니다. `target-type: ip`이므로 ALB는 gateway Pod IP로 요청을 보냅니다. 로컬은 웹 Service·port-forward 경로를 사용합니다. |
-| **CoreDNS·EndpointSlice·kube-proxy·CNI** | CoreDNS는 Service DNS를 해석하고, EndpointSlice는 Service가 선택한 Pod 주소·준비 상태를 기록합니다. kube-proxy는 Service 전달 규칙을, CNI는 Pod 네트워크를 담당합니다. EKS 설정에는 VPC CNI와 NetworkPolicy 활성화가 포함됩니다. |
-| **NetworkPolicy** | 평가 Chart는 구성 요소별 ingress·egress를, 관측 Chart는 기본 차단과 허용 통신을, gateway는 ALB 접근과 Core·Ops·DNS 출구를 정의합니다. 정책이 없는 모든 업무 Pod까지 격리됐다는 뜻은 아니며, 실제 차단에는 CNI의 정책 집행이 필요합니다. |
-| **ServiceAccount·RBAC·AWS Pod Identity** | 애플리케이션 Pod는 API 토큰 자동 마운트를 끕니다. Kubernetes API 권한은 Role·RoleBinding 등으로, EBS CSI·ALB Controller의 AWS 권한은 IAM·Pod Identity로 구분합니다. 자동 배포용 `release-rbac.yaml`은 CodeBuild에 지정 Deployment·Application의 조회만 허용합니다. |
-| **StorageClass·CSI·PV·PVC** | EKS `govbiz-ebs-gp3`는 EBS CSI, 암호화된 gp3, `Retain`, `WaitForFirstConsumer`를 사용합니다. 기존 볼륨 복원·PVC 마운트와 새 볼륨의 동적 생성은 구분합니다. |
-| **Node·DaemonSet·Pod 배치** | 업무 앱은 Deployment·StatefulSet으로 실행하고, 노드별 네트워크·CSI agent 같은 기반 구성은 DaemonSet 형태로 배치됩니다. EKS는 노드 풀 라벨과 기존 nodeSelector·affinity·PVC 위치를 보존하며, 평가 공유 PVC를 쓰는 Pod들은 같은 Node에 배치합니다. |
-| **ConfigMap·Secret·probe·자원 설정** | 설정·자격 정보 주입 외에 readiness/liveness/startup probe, requests/limits, 보안 컨텍스트, 임시 `emptyDir`도 Pod 명세에 포함됩니다. 이들은 별도 업무 서비스가 아니라 컨테이너 실행·상태 관리 설정입니다. |
+| **Argo CD·Application·AppProject** | Git의 배포 설정을 반영하는 도구입니다. Application은 배포할 대상을, AppProject는 허용할 저장소·배포 위치 등을 정합니다. 로컬 `govbiz-local`은 웹을 포함한 앱 Deployment 7개, EKS `govbiz-eks`는 Core·Catalog·AI·Ops·평가 실행기·결과 서버 6개를 관리하도록 설정했습니다. DB·PVC·Secret·Prefect·Langfuse·API Gateway는 이 두 Application의 관리 범위 밖입니다. |
+| **Ingress·AWS Load Balancer Controller** | EKS의 `api-gateway` Ingress에 연결 대상 Service를 적으면 Controller가 내부 ALB를 구성합니다. `target-type: ip` 설정에 따라 ALB가 gateway Pod IP로 직접 요청을 보냅니다. 로컬에서는 `port-forward`로 PC의 포트를 웹 Service에 연결해 접속합니다. |
+| **CoreDNS·EndpointSlice·kube-proxy·CNI** | CoreDNS는 서비스 이름을 IP 주소로 바꿔 알려줍니다. EndpointSlice는 연결 대상 Pod의 주소·준비 상태 목록입니다. kube-proxy는 일반 Service로 들어온 요청을 Pod로 전달할 네트워크 규칙을 관리하고, CNI는 Pod 사이의 네트워크 연결을 구성합니다. EKS 설정은 VPC CNI와 통신 제한 기능(NetworkPolicy)을 켜도록 작성돼 있습니다. |
+| **NetworkPolicy** | “어떤 Pod와 통신할 수 있는지” 정합니다. 평가 도구는 들어오고 나가는 통신을 제한하고, 관측 도구는 기본 차단 후 필요한 통신을 허용합니다. Gateway는 ALB에서 들어오는 요청과 Core·Ops·DNS로 나가는 연결을 허용합니다. 정책이 없는 업무 Pod까지 자동으로 보호되지는 않으며, 실제 차단은 이를 지원하는 CNI가 수행해야 합니다. |
+| **ServiceAccount·RBAC·AWS Pod Identity** | ServiceAccount는 Pod가 사용하는 Kubernetes 계정이고, Role·RoleBinding 등 RBAC 설정은 그 계정이 할 수 있는 일을 정합니다. 업무 Pod에는 Kubernetes API 토큰을 자동으로 넣지 않습니다. EBS CSI·ALB Controller가 AWS 자원을 다룰 권한은 별도로 IAM·Pod Identity로 연결합니다. `release-rbac.yaml`은 CodeBuild에 지정 Deployment·Application을 조회하는 권한만 줍니다. |
+| **StorageClass·CSI·PV·PVC** | StorageClass는 새 볼륨의 생성 규칙이며, CSI 드라이버는 실제 볼륨 생성·연결을 처리합니다. EKS의 `govbiz-ebs-gp3`는 EBS CSI로 암호화된 `gp3` 볼륨을 만듭니다. Pod가 배치될 위치를 고려해 볼륨을 준비하고(`WaitForFirstConsumer`), PVC를 삭제해도 볼륨은 남깁니다(`Retain`). 남은 볼륨을 다시 사용하는 데는 별도 복구 절차가 필요합니다. 기존 볼륨을 복원해 연결하는 경우와 새 볼륨을 만드는 경우를 구분합니다. |
+| **Node·DaemonSet·Pod 배치** | Node는 Pod가 실행되는 서버입니다. DaemonSet은 필요한 Node마다 네트워크·스토리지 연결용 프로그램 등을 실행합니다. 업무 앱은 Deployment·StatefulSet이 관리합니다. EKS에서는 서버 그룹을 구분하는 라벨과 Pod 배치 조건(`nodeSelector`·`affinity`), 기존 볼륨 위치를 유지합니다. 결과 PVC를 공유하는 평가 실행기와 결과 API는 같은 Node에 배치합니다. |
+| **ConfigMap·Secret·probe·자원 설정** | ConfigMap·Secret으로 설정과 자격 정보를 전달합니다. 상태 검사(probe)는 시작이 끝났는지(`startup`), 요청을 받아도 되는지(`readiness`), 재시작이 필요한지(`liveness`) 확인합니다. `requests`·`limits`는 필요한 CPU·메모리와 사용 한도를 정합니다. 보안 설정은 실행 권한 등을 제한합니다. `emptyDir`은 Pod가 삭제되면 함께 사라지는 임시 저장 공간입니다. |
 
-현재 확인한 업무 Chart에는 HPA·업무용 DaemonSet·CronJob이 없습니다. 따라서 자동 확장·노드마다 업무 앱 실행·Kubernetes CronJob 기반 평가 스케줄은 현재 구조로 표시하지 않습니다. 이미지 pull Secret은 공개 이미지 사용 여부에 따라 설정하는 선택 항목이며, 복원·진단용 임시 Pod는 상시 서비스 목록에 포함하지 않습니다.
+**현재 구성에 포함하지 않은 기능:** 부하에 따라 Pod 수를 바꾸는 HPA, 모든 Node에 업무 앱을 실행하는 업무용 DaemonSet, 정해진 시간마다 작업을 실행하는 Kubernetes CronJob은 업무 Chart에 없습니다. 따라서 그림에도 자동 확장이나 CronJob 기반 평가 스케줄을 표시하지 않았습니다. 이미지 저장소 로그인 정보(`imagePullSecrets`)는 비공개 이미지 등을 사용할 때 선택해 설정합니다. 복원·진단 중에만 쓰는 임시 Pod도 상시 실행 목록에서 제외했습니다.
+
+</details>
+
+<details>
+<summary>구조도 근거·공식 문서·아이콘 출처</summary>
 
 [업무 Deployment·Service·migration Job](infrastructure/gitops/charts/govbiz-service/templates) · [업무 데이터 StatefulSet](infrastructure/gitops/charts/govbiz-local-data/templates) · [평가 실행 리소스](infrastructure/gitops/charts/govbiz-evaluation/templates/workload.yaml) · [관측 리소스](infrastructure/gitops/charts/govbiz-observability/templates) · [EKS API gateway·Ingress](infrastructure/eks/api-gateway)
 
 [EKS 노드·addon 설정](infrastructure/eks/cluster.sydney-demo.yaml) · [EBS StorageClass](infrastructure/eks/storage-class.yaml) · [배포 조회 RBAC](infrastructure/eks/release-rbac.yaml) · [자동 배포 Job 생성](infrastructure/gitops/scripts/local_release.py) · [로컬 자동 배포 범위](infrastructure/gitops/docs/local-auto-sync.md) · [EKS 자동 배포 범위](infrastructure/eks/argo-cd.md)
+
+**공식 문서:** [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Service·Headless](https://kubernetes.io/docs/concepts/services-networking/service/#headless-services) · [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [PV·PVC](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [클러스터 구성 요소](https://kubernetes.io/docs/concepts/overview/components/)
+
+**아이콘:** [Kubernetes Contributors의 공식 아이콘 세트](https://github.com/kubernetes/community/tree/main/icons), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). 원본 SVG를 변형 없이 축소·배치했으며 [출처·고정 버전·해시](docs/assets/architecture/kubernetes-resource-icon-sources.json)를 기록했습니다. 기존 Argo CD 로고의 출처는 [로고 목록](docs/assets/architecture/kubernetes-logo-sources.json)을 따릅니다.
+
+[이미지 재생성 방법](docs/assets/architecture/README.md#kubernetes-내부-리소스-구조--2026-10-12) · [생성 스크립트](docs/assets/architecture/build-kubernetes-resources.mjs)
+
+</details>
 
 <a id="erd"></a>
 
