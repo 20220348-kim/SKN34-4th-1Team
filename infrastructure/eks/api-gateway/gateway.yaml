@@ -15,7 +15,7 @@ spec:
       labels: {app.kubernetes.io/name: api-gateway}
     spec:
       automountServiceAccountToken: false
-      nodeSelector: {govbiz.io/workload-pool: workloads}
+      nodeSelector: {govbiz.io/http-pool: shared}
       terminationGracePeriodSeconds: 620
       topologySpreadConstraints:
         - maxSkew: 1

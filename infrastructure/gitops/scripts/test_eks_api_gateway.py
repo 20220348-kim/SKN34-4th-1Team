@@ -75,7 +75,7 @@ class EksApiGatewayTests(unittest.TestCase):
         self.assertEqual(spec["strategy"], {
             "type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0},
         })
-        self.assertEqual(pod["nodeSelector"], {"govbiz.io/workload-pool": "workloads"})
+        self.assertEqual(pod["nodeSelector"], {"govbiz.io/http-pool": "shared"})
         self.assertEqual(pod["topologySpreadConstraints"], [{
             "maxSkew": 1, "topologyKey": "kubernetes.io/hostname",
             "whenUnsatisfiable": "ScheduleAnyway",

@@ -1,81 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: GovBiz shared EKS worker pool and least-privilege Cluster Autoscaler identity
+Description: Cluster Autoscaler identity for the existing GovBiz application node group
 Parameters:
   ClusterName:
     Type: String
     Default: govbiz-eks
     AllowedValues: [govbiz-eks]
-  KubernetesVersion:
-    Type: String
-    Default: '1.36'
-  PrivateSubnet:
-    Type: AWS::EC2::Subnet::Id
-    Description: Existing private subnet in the same AZ as the retained EBS volumes
-  ClusterSecurityGroup:
-    Type: AWS::EC2::SecurityGroup::Id
-  InstanceType:
-    Type: String
-    Default: m6a.xlarge
-    AllowedValues: [m6a.xlarge, m7i-flex.xlarge]
 Resources:
-  WorkerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: {Service: ec2.amazonaws.com}
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly
-      Tags: [{Key: project, Value: govbiz}]
-  LaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateData:
-        MetadataOptions: {HttpTokens: required, HttpPutResponseHopLimit: 1}
-        SecurityGroupIds: [!Ref ClusterSecurityGroup]
-        BlockDeviceMappings:
-          - DeviceName: /dev/xvda
-            Ebs: {Encrypted: true, VolumeType: gp3, VolumeSize: 80, DeleteOnTermination: true}
-        UserData:
-          Fn::Base64: |
-            MIME-Version: 1.0
-            Content-Type: multipart/mixed; boundary="govbiz-bootstrap"
-
-            --govbiz-bootstrap
-            Content-Type: text/x-shellscript; charset="us-ascii"
-
-            #!/bin/bash
-            set -eu
-            echo 'vm.max_map_count=1048576' > /etc/sysctl.d/99-govbiz-elasticsearch.conf
-            sysctl -p /etc/sysctl.d/99-govbiz-elasticsearch.conf
-            --govbiz-bootstrap--
-        TagSpecifications:
-          - ResourceType: instance
-            Tags: [{Key: project, Value: govbiz}, {Key: Name, Value: govbiz-eks-workloads}]
-          - ResourceType: volume
-            Tags: [{Key: project, Value: govbiz}, {Key: Name, Value: govbiz-eks-workloads-root}]
-  Workloads:
-    Type: AWS::EKS::Nodegroup
-    Properties:
-      ClusterName: !Ref ClusterName
-      NodegroupName: workloads
-      NodeRole: !GetAtt WorkerRole.Arn
-      Subnets: [!Ref PrivateSubnet]
-      Version: !Ref KubernetesVersion
-      AmiType: AL2023_x86_64_STANDARD
-      CapacityType: ON_DEMAND
-      InstanceTypes: [!Ref InstanceType]
-      LaunchTemplate: {Id: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber}
-      # All three fields are required on creation. After bootstrap omit DesiredSize
-      # from stack updates so Cluster Autoscaler retains ownership of the live count.
-      ScalingConfig: {MinSize: 1, DesiredSize: 1, MaxSize: 2}
-      UpdateConfig: {MaxUnavailable: 1}
-      Labels: {govbiz.io/workload-pool: workloads}
-      Tags: {project: govbiz, environment: first-deployment}
   AutoscalerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -102,7 +32,7 @@ Resources:
                   StringEquals:
                     autoscaling:ResourceTag/k8s.io/cluster-autoscaler/enabled: 'true'
                     autoscaling:ResourceTag/k8s.io/cluster-autoscaler/govbiz-eks: owned
-                    autoscaling:ResourceTag/govbiz.io/workload-pool: workloads
+                    autoscaling:ResourceTag/govbiz.io/workload-pool: application
               - Effect: Allow
                 Action:
                   - autoscaling:DescribeAutoScalingGroups
@@ -117,7 +47,7 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action: eks:DescribeNodegroup
-                Resource: !Sub arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:nodegroup/${ClusterName}/workloads/*
+                Resource: !Sub arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:nodegroup/${ClusterName}/application/*
       Tags: [{Key: project, Value: govbiz}]
   AutoscalerIdentity:
     Type: AWS::EKS::PodIdentityAssociation
@@ -127,7 +57,5 @@ Resources:
       ServiceAccount: cluster-autoscaler
       RoleArn: !GetAtt AutoscalerRole.Arn
 Outputs:
-  NodegroupName:
-    Value: !GetAtt Workloads.NodegroupName
   AutoscalerRoleArn:
     Value: !GetAtt AutoscalerRole.Arn

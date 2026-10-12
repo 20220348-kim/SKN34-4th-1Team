@@ -90,6 +90,17 @@ def replica_ignores(settings):
     ]
 
 
+def node_selector(settings, name):
+    if name in replica_bounds(settings) and "httpNodeSelector" in settings:
+        selector = settings["httpNodeSelector"]
+        release.require(
+            selector == {"govbiz.io/http-pool": "shared"},
+            "Autoscaled HTTP services require the shared HTTP node label",
+        )
+        return selector
+    return {"govbiz.io/workload-pool": settings["placement"][name]}
+
+
 def running_replicas(row, bounds):
     desired = row["spec"].get("replicas")
     minimum, maximum = bounds.get(row["metadata"]["name"], (1, 1))
@@ -208,9 +219,9 @@ def bundle(root, record, tag, helm="helm"):
         for name, rows in files.items():
             for row in rows:
                 if row["kind"] in ("Deployment", "Job"):
-                    row["spec"]["template"]["spec"]["nodeSelector"] = {
-                        "govbiz.io/workload-pool": settings["placement"][name]
-                    }
+                    row["spec"]["template"]["spec"]["nodeSelector"] = node_selector(
+                        settings, name
+                    )
                     row["spec"]["template"].setdefault("metadata", {}).setdefault(
                         "annotations", {}
                     )["govbiz.io/source-sha"] = sha
@@ -275,10 +286,9 @@ def application(runtime, settings=None):
             row["spec"]["selector"] == {"matchLabels": labels},
             "Immutable selector differs from the Helm contract",
         )
-        pool = settings["placement"][name]
         release.require(
             row["spec"]["template"]["spec"].get("nodeSelector")
-            == {"govbiz.io/workload-pool": pool},
+            == node_selector(settings, name),
             "Unexpected EKS workload placement",
         )
     patches = runtime_patches(
@@ -417,6 +427,24 @@ def check_application(app, settings=None):
                 op.get("op") in {"add", "replace"} and allowed.fullmatch(op.get("path", "")),
                 "Argo runtime patch must not override release images or commands",
             )
+            if op["path"] == "/spec/template/spec/nodeSelector":
+                target = patch.get("target", {})
+                name = target.get("name")
+                if target.get("kind") == "Deployment" and name in WORKLOADS:
+                    permitted = [node_selector(settings, name)]
+                elif target.get("kind") == "Job" and name in (
+                    "ops-service-release-prepare", "ops-service-release-resume"
+                ):
+                    permitted = [
+                        node_selector(settings, "ops-service"),
+                        {"govbiz.io/workload-pool": "observability"},
+                    ]
+                else:
+                    permitted = []
+                release.require(
+                    op.get("value") in permitted,
+                    "Argo node selector must preserve the configured workload boundary",
+                )
 
 
 def preflight():

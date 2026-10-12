@@ -111,7 +111,7 @@ spec:
     spec:
       serviceAccountName: cluster-autoscaler
       priorityClassName: system-cluster-critical
-      nodeSelector: {govbiz.io/workload-pool: workloads}
+      nodeSelector: {govbiz.io/workload-pool: observability}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

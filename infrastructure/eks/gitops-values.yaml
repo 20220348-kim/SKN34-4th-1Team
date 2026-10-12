@@ -3,7 +3,7 @@ services:
   core-service:
     autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
     resources:
-      requests: {cpu: 250m, memory: 512Mi}
+      requests: {cpu: 200m, memory: 512Mi}
     env:
       ACCOUNT_OAUTH_FRONTEND_BASE_URL: https://govbiz.vercel.app
       DAILY_REPORT_FRONTEND_BASE_URL: https://govbiz.vercel.app
@@ -13,7 +13,7 @@ services:
   ai-service:
     autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
     resources:
-      requests: {cpu: 250m, memory: 512Mi}
+      requests: {cpu: 200m, memory: 512Mi}
       limits: {cpu: "2", memory: 1Gi}
   ops-service:
     env:
@@ -29,11 +29,13 @@ evaluation:
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {cpu: "1", memory: 1Gi}
+# HTTP replicas can use either existing role; data/single-writer workloads retain their pool.
+httpNodeSelector: {govbiz.io/http-pool: shared}
 placement:
-  core-service: workloads
-  catalog-service: workloads
-  ai-service: workloads
-  ops-service: workloads
-  evaluation-runner: workloads
-  ops-artifacts: workloads
+  core-service: application
+  catalog-service: application
+  ai-service: observability
+  ops-service: application
+  evaluation-runner: application
+  ops-artifacts: application
 resultsClaim: results-cutover

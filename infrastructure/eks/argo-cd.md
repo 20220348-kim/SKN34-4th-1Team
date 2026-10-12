@@ -64,7 +64,7 @@ Application을 다시 생성할 때 이 Job 배치도 반영해야 합니다. `g
 
 ## 최초 인계 순서
 
-공용 `workloads` 풀로 전환할 때는 [자동 확장 안내](autoscaling/README.md)를 먼저 따른다.
+기존 두 노드에 자동 확장을 적용할 때는 [자동 확장 안내](autoscaling/README.md)를 먼저 따른다.
 Core·AI는 HPA가 replica 수를 관리하므로 Application의 해당 두 Deployment에만
 `/spec/replicas` 무시와 `RespectIgnoreDifferences=true`를 적용한다. 기존 비공개 patch의
 노드 선택과 Core graceful shutdown 환경값도 함께 갱신한다. 자동 배포는 평가·DB의

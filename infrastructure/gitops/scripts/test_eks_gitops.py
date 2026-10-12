@@ -95,9 +95,13 @@ class EksGitOpsTests(unittest.TestCase):
             }
         return settings
 
-    def runtime(self):
+    def runtime(self, settings=None):
         rows = copy.deepcopy([r for r in self.rows if r["kind"] == "Deployment"])
         for row in rows:
+            if settings is not None:
+                row["spec"]["template"]["spec"]["nodeSelector"] = gitops.node_selector(
+                    settings, row["metadata"]["name"]
+                )
             row["metadata"]["generation"] = 2
             row["status"] = {
                 "observedGeneration": 2,
@@ -180,9 +184,8 @@ class EksGitOpsTests(unittest.TestCase):
         path.write_text("invalid dirty configuration")
         self.assertEqual(gitops.bundle(self.root, self.record, TAG), self.files)
 
-    def test_opted_in_release_renders_hpa_and_shared_pool_from_tested_source(self):
+    def test_opted_in_release_shares_only_http_placement_from_tested_source(self):
         settings = self.scaling_settings()
-        settings["placement"] = {name: "workloads" for name in gitops.WORKLOADS}
         files = dict(self.source_files)
         files["infrastructure/eks/gitops-values.yaml"] = yaml.safe_dump(settings).encode()
         sha = commit_tree(self.root, files)
@@ -199,9 +202,11 @@ class EksGitOpsTests(unittest.TestCase):
         )
         for row in rows:
             if row["kind"] in ("Deployment", "Job"):
+                http = row["metadata"]["name"] in ("core-service", "ai-service")
                 self.assertEqual(
                     row["spec"]["template"]["spec"]["nodeSelector"],
-                    {"govbiz.io/workload-pool": "workloads"},
+                    {"govbiz.io/http-pool": "shared"}
+                    if http else {"govbiz.io/workload-pool": "application"},
                 )
             if row["kind"] == "Deployment":
                 if row["metadata"]["name"] in ("core-service", "ai-service"):
@@ -211,12 +216,8 @@ class EksGitOpsTests(unittest.TestCase):
 
     def test_scaled_adoption_preserves_only_bounded_stateless_replica_ownership(self):
         settings = self.scaling_settings()
-        settings["placement"] = {name: "workloads" for name in gitops.WORKLOADS}
-        runtime = self.runtime()
+        runtime = self.runtime(settings)
         for row in runtime["items"]:
-            row["spec"]["template"]["spec"]["nodeSelector"] = {
-                "govbiz.io/workload-pool": "workloads"
-            }
             if row["metadata"]["name"] == "core-service":
                 row["spec"]["replicas"] = 2
         project, app = gitops.application(runtime, settings)
@@ -235,6 +236,21 @@ class EksGitOpsTests(unittest.TestCase):
         # The shared helper retains its strict local single-writer default.
         with self.assertRaises(ValueError):
             local_release.runtime_patches(runtime, gitops.WORKLOADS, preserve_placement=True)
+        for name in ("core-service", "catalog-service", "evaluation-runner"):
+            wrong = copy.deepcopy(app)
+            entry = next(
+                item for item in wrong["spec"]["source"]["kustomize"]["patches"]
+                if item["target"]["name"] == name
+            )
+            operations = json.loads(entry["patch"])
+            selector = next(op for op in operations if op["path"].endswith("/nodeSelector"))
+            selector["value"] = (
+                {"govbiz.io/workload-pool": "application"}
+                if name == "core-service" else {"govbiz.io/http-pool": "shared"}
+            )
+            entry["patch"] = json.dumps(operations)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "node selector"):
+                gitops.check_application(wrong, settings)
         for name, replicas in (("core-service", 0), ("core-service", 4), ("ops-artifacts", 2)):
             wrong = copy.deepcopy(runtime)
             next(r for r in wrong["items"] if r["metadata"]["name"] == name)["spec"]["replicas"] = replicas
@@ -249,7 +265,7 @@ class EksGitOpsTests(unittest.TestCase):
             lambda a: a["spec"]["ignoreDifferences"][0].update(managedFieldsManagers=["argocd"]),
             lambda a: a["spec"]["syncPolicy"].update(syncOptions=["FailOnSharedResource=true"]),
         ):
-            app = gitops.application(self.runtime(), settings)[1]
+            app = gitops.application(self.runtime(settings), settings)[1]
             mutate(app)
             with self.assertRaisesRegex(ValueError, "sync policy"):
                 gitops.check_application(app, settings)
@@ -269,7 +285,7 @@ class EksGitOpsTests(unittest.TestCase):
     def test_sync_requires_all_scaled_replicas_ready_and_exact_images_and_source(self):
         settings = self.scaling_settings()
         app, record, deployments = self.success()
-        configured = gitops.application(self.runtime(), settings)[1]
+        configured = gitops.application(self.runtime(settings), settings)[1]
         app["spec"] = configured["spec"]
         core = deployments["core-service"]
         core["spec"]["replicas"] = 2
@@ -518,7 +534,7 @@ class EksGitOpsTests(unittest.TestCase):
     def test_preflight_accepts_bounded_hpa_scaling_without_restarting_stopped_workloads(self):
         settings = self.scaling_settings()
         app, _, deployments = self.success()
-        app["spec"] = gitops.application(self.runtime(), settings)[1]["spec"]
+        app["spec"] = gitops.application(self.runtime(settings), settings)[1]["spec"]
         core = deployments["core-service"]
         core["spec"]["replicas"] = 2
         for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas"):
