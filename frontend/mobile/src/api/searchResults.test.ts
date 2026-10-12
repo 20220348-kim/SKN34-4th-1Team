@@ -18,7 +18,9 @@ test('the existing restore HTTP contract uses Bearer authentication, omits cooki
   expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer verified')
   expect(options?.body).toBe(JSON.stringify({ resultToken }))
   expect(restored.programs[0]).toEqual(expect.objectContaining({ id: program.id }))
-  expect(restored.programs[0]).not.toHaveProperty('evidenceQuestionSupported')
+  // 원문 질문 지원 여부는 검색 결과 계약에 들어 있지만 상세 전용 필드는 검색 결과로 옮기지 않습니다.
+  expect(restored.programs[0]).toHaveProperty('evidenceQuestionSupported', true)
+  expect(restored.programs[0]).not.toHaveProperty('applicationRoute')
   expect(fetch).toHaveBeenCalledTimes(1)
 })
 test.each([[401, 'unauthorized'], [410, 'expired'], [503, 'unavailable']])('HTTP %s remains an explicit %s restore failure', async (status, reason) => {

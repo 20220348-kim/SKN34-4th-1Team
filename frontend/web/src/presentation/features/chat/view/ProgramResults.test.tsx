@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { conditionMatchedProgram, relocationReviewRequiredProgram, supportPrograms } from '../../../../data/fixtures/supportPrograms'
-import { appPaths, publicPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { appPaths, publicPaths, supportProgramAskPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import * as supportProgramEligibility from '../supportProgramEligibility'
 import { searchResultInterestKey, searchResultInterestMessages, type SearchResultInterests } from '../viewmodel/useSearchResultInterests'
 import { ProgramResults } from './ProgramResults'
@@ -180,6 +180,63 @@ describe('ProgramResults', () => {
     expect(within(cards[0]).queryByRole('link', { name: '원문 보기' })).toBeNull()
     expect(within(cards[1]).getByRole('link', { name: '원문 보기' }).getAttribute('href')).toBe(programs[1].sourceUrl)
     expect(within(cards[1]).queryByText('제목으로 해당 공지를 확인해 주세요.')).toBeNull()
+  })
+
+  it('같은 공고를 묶은 칸에는 함께 게시 표시와 제공처별 원문 링크를 둔다', () => {
+    const kStartup = { sourceCode: 'KSTARTUP', id: '179197', sourceName: 'K-Startup', evidenceQuestionSupported: false,
+      sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=179197' }
+    const programs = [{ ...conditionMatchedProgram, alsoPostedBy: [kStartup] }, relocationReviewRequiredProgram]
+    render(<ProgramResults programs={programs} />, { wrapper: SearchRouter })
+    const [grouped, single] = screen.getAllByRole('article')
+
+    expect(within(grouped).getByText(`${conditionMatchedProgram.sourceName}·K-Startup 함께 게시`, { exact: true })).toBeTruthy()
+    expect(within(grouped).getByRole('link', { name: `${conditionMatchedProgram.sourceName} 원문` }).getAttribute('href'))
+      .toBe(conditionMatchedProgram.sourceUrl)
+    const other = within(grouped).getByRole('link', { name: 'K-Startup 원문' })
+    expect(other.getAttribute('href')).toBe(kStartup.sourceUrl)
+    expect(other.getAttribute('target')).toBe('_blank')
+    expect(within(grouped).queryByRole('link', { name: '원문 보기' })).toBeNull()
+    expect(within(single).queryByText(/함께 게시/)).toBeNull()
+    expect(within(single).getByRole('link', { name: '원문 보기' })).toBeTruthy()
+  })
+
+  it('원문 질문을 받는 공고에만 질문 동작을 두고 회원은 질문 패널이 열린 상세로, 비회원은 로그인 뒤 그 상세로 보낸다', () => {
+    const supported = { ...conditionMatchedProgram, evidenceQuestionSupported: true }
+    const identity = { sourceCode: supported.sourceCode, sourceProgramId: supported.id }
+    const interests: SearchResultInterests = { accountEmail: 'member@govbiz.local', phase: 'ready', savedKeys: new Set(),
+      pendingKeys: new Set(), errors: {}, toggle: vi.fn(), retry: vi.fn() }
+    render(
+      <MemoryRouter initialEntries={[appPaths.chat]}>
+        <Routes>
+          <Route path={appPaths.chat} element={<ProgramResults programs={[supported, relocationReviewRequiredProgram]} interests={interests} />} />
+          <Route path={appPaths.supportProgramDetail} element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const [first, second] = screen.getAllByRole('article')
+    expect(within(second).queryByRole('link', { name: /질문하기/ })).toBeNull()
+    const ask = within(first).getByRole('link', { name: '이 공고에 질문하기' })
+    expect(ask.getAttribute('href')).toBe(supportProgramAskPath(identity, true, appPaths.chat))
+    expect(new URL(ask.getAttribute('href')!, 'http://localhost').searchParams.get('ask')).toBe('1')
+    fireEvent.click(ask)
+    expect(JSON.parse(screen.getByTestId('detail-location').textContent!).state).toEqual({ searchReturnTo: appPaths.chat })
+    cleanup()
+
+    render(<ProgramResults programs={[supported]} />, { wrapper: SearchRouter })
+    const login = new URL(screen.getByRole('link', { name: '로그인하고 질문하기' }).getAttribute('href')!, 'http://localhost')
+    expect(login.pathname).toBe(publicPaths.login)
+    expect(login.searchParams.get('next')).toBe(supportProgramAskPath(identity, true))
+  })
+
+  it('이 칸의 공고가 원문 질문을 받지 않으면 함께 묶인 기업마당 게시물로 질문한다', () => {
+    const bizInfo = { sourceCode: 'BIZINFO', id: 'PBLN_000000000999999', sourceName: '기업마당', evidenceQuestionSupported: true,
+      sourceUrl: 'https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000999999' }
+    const kStartup = { ...relocationReviewRequiredProgram, sourceCode: 'KSTARTUP', id: '179197', sourceName: 'K-Startup',
+      sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=179197', alsoPostedBy: [bizInfo] }
+    render(<ProgramResults programs={[kStartup]} />, { wrapper: SearchRouter })
+    const login = new URL(screen.getByRole('link', { name: '로그인하고 질문하기' }).getAttribute('href')!, 'http://localhost')
+    expect(login.searchParams.get('next'))
+      .toBe(supportProgramAskPath({ sourceCode: 'BIZINFO', sourceProgramId: bizInfo.id }, true))
   })
 
   it('같은 결과 배열로 부모가 다시 렌더돼도 카드를 재분류하지 않고 새 배열에는 반영한다', () => {

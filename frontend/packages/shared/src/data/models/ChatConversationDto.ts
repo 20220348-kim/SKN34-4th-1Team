@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { govAgentApplicationSchema, govAgentEvidenceSchema, govAgentPartnersSchema, govAgentProgramSchema, govAgentReviewSchema } from './GovAgentDto'
 import { conversationContextDtoSchema, supportProgramInterpretationDtoSchema } from './SupportProgramConversationDto'
-import { supportProgramDtoSchema } from './SupportProgramDto'
+import { supportProgramDtoSchema, supportProgramExclusionCountsDtoSchema } from './SupportProgramDto'
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 const conditions = z.object({ region: z.string().max(50).optional(), industry: z.string().max(100).optional(),
@@ -26,6 +26,7 @@ export const chatConversationSnapshotSchema = z.object({
     failure: z.enum(['search', 'interpretation']).optional(), programs: z.array(supportProgramDtoSchema).max(5).optional(),
     totalCount: z.number().int().min(0).max(5).optional(), resultToken: z.uuid().nullable().optional(),
     expiresAt: z.iso.datetime().nullable().optional(), searchOptions: options.optional(), searchQuery: z.string().max(500).optional(),
+    exclusionCounts: supportProgramExclusionCountsDtoSchema.nullable().optional(),
   })).min(1).max(200),
   searchOptions: options,
   conversationQuery: z.string().max(500).nullable(),

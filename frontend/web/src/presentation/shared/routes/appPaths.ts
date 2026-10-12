@@ -105,6 +105,11 @@ export function supportProgramDetailPath(identity: { sourceCode: string; sourceP
   return `${base}?${withSearchReturnTo(identity, inApp, searchReturnTo)}`
 }
 
+/** 공고 상세를 원문 질문 패널이 열린 채로 엽니다(`?ask=1`). 패널은 로그인한 사용자에게만 열립니다. */
+export function supportProgramAskPath(identity: { sourceCode: string; sourceProgramId: string }, inApp: boolean, searchReturnTo?: string): string {
+  return `${supportProgramDetailPath(identity, inApp, searchReturnTo)}&ask=1`
+}
+
 export function supportProgramQuestionPath(identity: { sourceCode: string; sourceProgramId: string }, inApp: boolean, searchReturnTo?: string): string {
   const base = inApp ? appPaths.supportProgramQuestion : publicPaths.supportProgramQuestion
   return `${base}?${withSearchReturnTo(identity, inApp, searchReturnTo)}`

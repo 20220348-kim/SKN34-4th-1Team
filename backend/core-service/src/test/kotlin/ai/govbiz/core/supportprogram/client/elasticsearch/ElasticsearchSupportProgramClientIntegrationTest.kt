@@ -157,8 +157,69 @@ class ElasticsearchSupportProgramClientIntegrationTest {
         assertEquals("support-program-lexical-v1", mapping.path(index).path("mappings").path("_meta").path("govbizSchema").asString())
     }
 
-    private fun analyze(text: String, analyzer: String): List<String> {
-        val response = rest.post().uri("/$index/_analyze").contentType(MediaType.APPLICATION_JSON)
+    @Test
+    fun v3KeepsAbbreviationsWholeAndExpandsThemOnlyAtSearchTime() {
+        val v3 = createV3Index()
+        assertEquals(listOf("중기부"), analyze("중기부", "korean", v3))
+        assertEquals(listOf("소진공"), analyze("소진공", "korean", v3))
+        assertTrue(analyze("판로개척", "korean", v3).contains("판로"))
+        assertTrue(analyze("수출바우처", "korean", v3).contains("바우처"))
+        assertTrue(analyze("중기부", "korean_search", v3).containsAll(analyze("중소벤처기업부", "korean", v3)))
+        // v3 정의는 아직 운영 클라이언트가 쓰지 않습니다. 같은 이름의 v2 클라이언트는 v3 색인을 거부합니다.
+        val v2Client = ElasticsearchSupportProgramClient(rest, ElasticsearchClientProperties(null, v3, null, null, null), json)
+        assertThrows(ElasticsearchClientException::class.java) { v2Client.indexSnapshot(emptyList()) }
+    }
+
+    @Test
+    fun v3FindsAbbreviationsAndRelatedFundingTermsButKeepsDistinctTermsApart() {
+        val v3 = createV3Index()
+        val texts = mapOf(
+            "mss" to "중소벤처기업부 창업 지원 공고", "semas" to "소상공인시장진흥공단 경영 안정",
+            "budget" to "예산 소진 시까지 접수", "kotra-name" to "대한무역투자진흥공사 해외 진출",
+            "kotra-latin" to "KOTRA 수출 상담회", "rnd-latin" to "R&D 과제 모집", "rnd-korean" to "연구개발 과제 모집",
+            "policy-fund" to "정책자금 안내", "loan" to "운전자금 융자", "grant" to "보조금 지급",
+            "voucher" to "수출바우처 사업", "restaurant" to "음식점", "food" to "식품접객업소",
+        )
+        val body = texts.entries.joinToString("") { (id, text) ->
+            json.writeValueAsString(mapOf("index" to mapOf("_id" to id))) + "\n" +
+                json.writeValueAsString(mapOf("id" to id, "contentHash" to "h", "sortTimestamp" to "2026", "text" to text)) + "\n"
+        }
+        val bulk = rest.post().uri("/$v3/_bulk?refresh=true").contentType(MediaType.parseMediaType("application/x-ndjson"))
+            .body(body.toByteArray(Charsets.UTF_8)).retrieve().body(String::class.java)!!
+        assertFalse(json.readTree(bulk)["errors"].asBoolean())
+
+        for ((query, expected) in listOf(
+            "중기부" to setOf("mss"), "소진공" to setOf("semas"),
+            "코트라" to setOf("kotra-name", "kotra-latin"), "KOTRA" to setOf("kotra-name", "kotra-latin"),
+            "알앤디" to setOf("rnd-latin", "rnd-korean"), "R&D" to setOf("rnd-latin", "rnd-korean"),
+            "연구개발" to setOf("rnd-latin", "rnd-korean"),
+            "융자" to setOf("loan", "policy-fund"), "정책자금" to setOf("loan", "policy-fund"),
+            "바우쳐" to setOf("voucher"), "보조금" to setOf("grant"), "음식점" to setOf("restaurant"),
+        )) {
+            assertEquals(expected, searchIds(v3, query), query)
+        }
+    }
+
+    private fun createV3Index(): String {
+        val name = "test-v3-${UUID.randomUUID()}"
+        val definition = ClassPathResource("elasticsearch/support-program-lexical-v3.json").inputStream.use { it.readBytes() }
+        // lenient=false라 잘못된 사전·동의어 규칙은 여기서 400으로 실패합니다.
+        rest.put().uri("/$name").contentType(MediaType.APPLICATION_JSON).body(definition).retrieve().toBodilessEntity()
+        return name
+    }
+
+    /** 운영 클라이언트와 같은 `match` OR 질의로 일치한 문서 ID만 셉니다. */
+    private fun searchIds(indexName: String, query: String): Set<String> {
+        val response = rest.post().uri("/$indexName/_search").contentType(MediaType.APPLICATION_JSON)
+            .body(json.writeValueAsBytes(mapOf(
+                "size" to 20, "_source" to listOf("id"),
+                "query" to mapOf("match" to mapOf("text" to mapOf("query" to query, "operator" to "or", "zero_terms_query" to "none"))),
+            ))).retrieve().body(String::class.java)!!
+        return json.readTree(response).path("hits").path("hits").toList().map { it.path("_source").path("id").asString() }.toSet()
+    }
+
+    private fun analyze(text: String, analyzer: String, indexName: String = index): List<String> {
+        val response = rest.post().uri("/$indexName/_analyze").contentType(MediaType.APPLICATION_JSON)
             .body(json.writeValueAsBytes(mapOf("text" to text, "analyzer" to analyzer)))
             .retrieve().body(String::class.java)!!
         return json.readTree(response)["tokens"].toList().map { it["token"].asString() }

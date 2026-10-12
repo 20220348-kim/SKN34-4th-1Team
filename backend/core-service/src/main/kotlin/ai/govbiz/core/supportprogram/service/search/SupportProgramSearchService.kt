@@ -5,7 +5,9 @@ import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
+import ai.govbiz.core.supportprogram.domain.SupportProgramDuplicatePostings
 import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramRankingExclusions
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
@@ -111,6 +113,7 @@ class SupportProgramSearchService(
             }
         }
 
+        var exclusionCounts: SupportProgramRankingExclusions? = null
         val programs = when {
             eligiblePrograms.isEmpty() -> emptyList()
             query.isBlank() -> eligiblePrograms
@@ -121,15 +124,20 @@ class SupportProgramSearchService(
                 )
                 .take(SupportProgramRankingFacade.MAX_RESULTS)
                 .map { it.program.copy(matchedReasons = emptyList(), recommendationScore = null, eligibilityReview = null) }
+            // 검색어에 맞는 후보가 하나도 없으면 순위 매기기를 부르지 않고 살펴본 후보 0건으로 알립니다.
+            candidates.isEmpty() -> emptyList<SupportProgram>().also { exclusionCounts = SupportProgramRankingExclusions.NO_CANDIDATES }
             else -> timed("ranking") {
-                rankingFacade.rank(
+                rankingFacade.rankWithExclusions(
                     query,
                     candidates,
                     SupportProgramRankingFacade.MAX_RESULTS,
                     companyConditions,
                     searchReferenceDate.takeIf { companyConditions != null },
-                )
-            }.let { ranked -> demoteOtherRegionPrograms(ranked, companyConditions?.region) }
+                ).also { exclusionCounts = it.exclusions }.programs
+            }
+                // 랭킹 입력은 그대로 두고, 다른 제공처가 따로 올린 같은 공고를 순위가 높은 칸 하나에 묶습니다.
+                .let { ranked -> SupportProgramDuplicatePostings.group(ranked, eligiblePrograms.map(CatalogSupportProgram::program)) }
+                .let { grouped -> demoteOtherRegionPrograms(grouped, companyConditions?.region) }
         }
 
         tracing.recordSelection(candidates.map { it.program.sourceQualifiedId }, programs.map { it.sourceQualifiedId })
@@ -138,6 +146,7 @@ class SupportProgramSearchService(
             result = SupportProgramSearchResult(
                 query = query,
                 programs = java.util.List.copyOf(programs),
+                exclusionCounts = exclusionCounts,
             ),
             candidates = java.util.List.copyOf(candidates),
             presentProgramCount = presentPrograms.size,

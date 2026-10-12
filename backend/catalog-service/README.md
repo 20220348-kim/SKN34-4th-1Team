@@ -91,7 +91,7 @@ readiness는 공공 API·AI Service·Elasticsearch에 요청하지 않으며 DB 
 | `CATALOG_INTERNAL_TOKEN` | 필수, 공백 없는 ASCII 32~1024자; Core의 값과 일치 |
 | `AI_SERVICE_BASE_URL` | 색인 API, `http://127.0.0.1:8000` |
 | `AI_SERVICE_CONNECT_TIMEOUT`, `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | AI 연결/색인 응답 제한, `2s` / `30s` |
-| `ELASTICSEARCH_BASE_URL`, `ELASTICSEARCH_INDEX_NAME`, `ELASTICSEARCH_API_KEY` | ES 연결/색인/인증; 색인 기본 `govbiz-support-program-lexical-v2` |
+| `ELASTICSEARCH_BASE_URL`, `ELASTICSEARCH_INDEX_NAME`, `ELASTICSEARCH_API_KEY` | ES 연결/색인/인증; 색인 기본 `govbiz-support-program-lexical-v2` (v3 정의는 준비만, [전환 절차](../../docs/elasticsearch-lexical-search.md#v2--v3-전환-절차-승인-후-정비-시간에만)) |
 | `ELASTICSEARCH_CONNECT_TIMEOUT`, `ELASTICSEARCH_READ_TIMEOUT` | `2s` / `10s` |
 | `BIZINFO_API_BASE_URL`, `DATA_GO_KR_SERVICE_KEY` | 기업마당 API 주소/키 |
 | `KSTARTUP_API_BASE_URL`, `KSTARTUP_API_KEY`, `KSTARTUP_SYNC_SCOPE` | K-Startup API/키/범위 (`RECENT_YEAR`) |

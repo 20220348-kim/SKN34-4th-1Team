@@ -18,6 +18,7 @@ from .agent import SupportProgramRecommendationAgent
 from .models import (
     ScoredSupportProgram,
     SupportProgramRankingRequest,
+    SupportProgramRankingExclusions,
     SupportProgramRankingResponse,
     SupportProgramEligibility,
 )
@@ -228,4 +229,7 @@ class SupportProgramRankingService:
                 original_query=request.original_query,
                 scoring_version=request.scoring_version,
                 rankings=selected_rankings,
+                exclusion_counts=SupportProgramRankingExclusions(
+                    low_relevance=excluded_low_relevance, target=excluded_target, region=excluded_region,
+                ),
             )

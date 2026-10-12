@@ -153,10 +153,41 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.programs[0].matchedReasons[0]").value("서울 AI 기업 대상"))
             // 회사 소재지가 없는 검색은 지역 태그를 비교하지 않습니다.
             .andExpect(jsonPath("$.programs[0].regionTagMismatch").value(false))
+            // 원문 근거 질문 지원 여부는 상세 응답과 같은 서버 기준입니다.
+            .andExpect(jsonPath("$.programs[0].evidenceQuestionSupported").value(true))
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy").isEmpty())
             .andExpect(
                 jsonPath("$.programs[0].sourceUrl")
                     .value("https://www.bizinfo.go.kr/detail?id=PBLN_TEST"),
             )
+    }
+
+    @Test
+    fun returnsTheSameProgramPostedByAnotherSourceInOneSlotWithItsOfficialLink() {
+        val bizInfo = catalogProgram()
+        val kStartup = catalogProgram().let {
+            it.copy(program = it.program.copy(
+                id = "179197", sourceCode = "KSTARTUP", title = "[서울] 서울 AI 지원 사업", sourceName = "K-Startup",
+                sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=179197",
+            ))
+        }
+        val programs = listOf(bizInfo, kStartup)
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(programs).`when`(retrieval).retrieve("서울 AI", programs)
+        ranking.response = { candidates -> candidates.map { it.program.copy(recommendationScore = 90) } }
+
+        mockMvc.perform(get(PATH).queryParam("query", "서울 AI"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalCount").value(1))
+            .andExpect(jsonPath("$.programs.length()").value(1))
+            .andExpect(jsonPath("$.programs[0].sourceCode").value("BIZINFO"))
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy.length()").value(1))
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy[0].sourceCode").value("KSTARTUP"))
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy[0].id").value("179197"))
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy[0].sourceName").value("K-Startup"))
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy[0].sourceUrl").value(kStartup.program.sourceUrl))
+            // K-Startup 상세 본문도 원문 근거 질문을 받으므로 함께 게시된 칸에도 지원 여부를 그대로 싣습니다.
+            .andExpect(jsonPath("$.programs[0].alsoPostedBy[0].evidenceQuestionSupported").value(true))
     }
 
     @Test
@@ -169,6 +200,21 @@ class SupportProgramControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.query").value("서울"))
             .andExpect(jsonPath("$.programs").isEmpty())
+    }
+
+    @Test
+    fun reportsZeroCandidatesWhenTheSearchFindsNoRelatedProgram() {
+        val programs = listOf(catalogProgram())
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(emptyList<CatalogSupportProgram>()).`when`(retrieval).retrieve("우주 관광", programs)
+
+        mockMvc.perform(get(PATH).queryParam("query", "우주 관광"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.programs").isEmpty())
+            .andExpect(jsonPath("$.exclusionCounts.candidateCount").value(0))
+            .andExpect(jsonPath("$.exclusionCounts.lowRelevance").value(0))
+            .andExpect(jsonPath("$.exclusionCounts.target").value(0))
+            .andExpect(jsonPath("$.exclusionCounts.region").value(0))
     }
 
     @ParameterizedTest
@@ -272,6 +318,7 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.recommendationScore").doesNotExist())
             .andExpect(jsonPath("$.eligibilityReview").doesNotExist())
             .andExpect(jsonPath("$.regionTagMismatch").doesNotExist())
+            .andExpect(jsonPath("$.alsoPostedBy").doesNotExist())
     }
 
     @Test

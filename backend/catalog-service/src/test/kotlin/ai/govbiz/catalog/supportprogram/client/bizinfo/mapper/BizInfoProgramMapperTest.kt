@@ -125,6 +125,32 @@ class BizInfoProgramMapperTest {
     }
 
     @Test
+    fun readsTheRoleOfASingleDateFromTheWordRightAfterIt() {
+        val programs = BizInfoProgramMapper.mapValidated(
+            payloads = listOf(
+                payload(id = "spaced-rolling", applicationPeriod = "2026-08-01 ~ 모집 완료 시까지"),
+                payload(id = "future-rolling", applicationPeriod = "2026-10-01부터 모집 마감 시까지"),
+                // 마감일 뒤의 수시 접수 표현 때문에 마감일을 시작일로 읽으면 마감 뒤에도 접수 중이 됩니다.
+                payload(id = "deadline-with-budget", applicationPeriod = "2026-08-31까지 (예산 소진 시 조기 마감)"),
+                payload(id = "deadline-with-quota", applicationPeriod = "2026.09.30.(수) 18:00까지 (100개사 이상 시 조기 마감)"),
+            ),
+            today = TODAY,
+        )
+        val byId = programs.associateBy({ it.program.id }, { it.program })
+
+        assertEquals(LocalDate.of(2026, 8, 1), byId.getValue("spaced-rolling").applicationStartDate)
+        assertNull(byId.getValue("spaced-rolling").applicationEndDate)
+        assertEquals(SupportProgramStatus.OPEN, byId.getValue("spaced-rolling").status)
+        assertEquals(LocalDate.of(2026, 10, 1), byId.getValue("future-rolling").applicationStartDate)
+        assertEquals(SupportProgramStatus.UPCOMING, byId.getValue("future-rolling").status)
+        assertNull(byId.getValue("deadline-with-budget").applicationStartDate)
+        assertEquals(LocalDate.of(2026, 8, 31), byId.getValue("deadline-with-budget").applicationEndDate)
+        assertEquals(SupportProgramStatus.CLOSED, byId.getValue("deadline-with-budget").status)
+        assertEquals(LocalDate.of(2026, 9, 30), byId.getValue("deadline-with-quota").applicationEndDate)
+        assertEquals(SupportProgramStatus.OPEN, byId.getValue("deadline-with-quota").status)
+    }
+
+    @Test
     fun rejectsNullOrMissingRequiredProgramValues() {
         val invalidPayloads = listOf(
             null,

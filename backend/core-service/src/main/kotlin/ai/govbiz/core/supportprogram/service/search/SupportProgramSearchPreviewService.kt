@@ -26,7 +26,7 @@ class SupportProgramSearchPreviewService(
     ): SupportProgramSearchPreviewResult {
         val searched = searchService.search(query, acceptingOnly, companyConditions)
         val programs = java.util.List.copyOf(searched.programs.take(SupportProgramRankingFacade.MAX_RESULTS).map(::copyProgram))
-        val full = SupportProgramSearchPreviewResult(searched.query, programs, programs.size)
+        val full = SupportProgramSearchPreviewResult(searched.query, programs, programs.size, exclusionCounts = searched.exclusionCounts)
         if (accountId != null || programs.size <= GUEST_RESULT_LIMIT) return full
 
         val context = SupportProgramConversationContext(
@@ -50,6 +50,7 @@ class SupportProgramSearchPreviewService(
         categories = java.util.List.copyOf(program.categories),
         regions = java.util.List.copyOf(program.regions),
         matchedReasons = java.util.List.copyOf(program.matchedReasons),
+        alsoPostedBy = java.util.List.copyOf(program.alsoPostedBy),
         eligibilityReview = program.eligibilityReview?.let { review ->
             review.copy(
                 target = review.target.copy(evidence = java.util.List.copyOf(review.target.evidence)),

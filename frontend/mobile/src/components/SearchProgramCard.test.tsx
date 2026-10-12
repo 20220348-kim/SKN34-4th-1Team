@@ -26,6 +26,43 @@ test('programs the server moved back for another region show the tag notice with
   rerender(<SearchProgramCard program={{ ...otherRegion, regionTagMismatch: false }} onOpen={jest.fn()} />)
   expect(screen.queryByText('다른 지역 한정일 수 있음')).toBeNull()
 })
+const kStartup = { sourceCode: 'KSTARTUP', id: '179197', sourceName: 'K-Startup', evidenceQuestionSupported: false,
+  sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=179197' }
+test('a program the server grouped from two sources names both and opens each official page', async () => {
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true)
+  render(<SearchProgramCard program={{ ...program, alsoPostedBy: [kStartup] }} onOpen={jest.fn()} />)
+  expect(screen.getByText('기업마당·K-Startup 함께 게시')).toBeTruthy()
+  expect(screen.queryByLabelText('원문 보러가기')).toBeNull()
+  fireEvent.press(screen.getByLabelText('기업마당 원문 보러가기'))
+  fireEvent.press(screen.getByLabelText('K-Startup 원문 보러가기'))
+  expect(open).toHaveBeenNthCalledWith(1, program.sourceUrl)
+  expect(open).toHaveBeenNthCalledWith(2, kStartup.sourceUrl)
+  open.mockRestore()
+})
+test('the question action is offered only for programs that accept official-source questions', () => {
+  const ask = jest.fn()
+  const supported = { ...program, evidenceQuestionSupported: true }
+  const { rerender } = render(<SearchProgramCard program={supported} onOpen={jest.fn()} onAsk={ask} signedIn />)
+  fireEvent.press(screen.getByLabelText(`${program.title}, 이 공고에 질문하기`))
+  expect(ask).toHaveBeenLastCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id })
+
+  rerender(<SearchProgramCard program={supported} onOpen={jest.fn()} onAsk={ask} />)
+  fireEvent.press(screen.getByLabelText(`${program.title}, 로그인하고 질문하기`))
+  expect(ask).toHaveBeenCalledTimes(2)
+
+  // K-Startup 칸이라도 함께 묶인 기업마당 게시물이 질문을 받으면 그 게시물로 묻습니다.
+  const bizInfo = { ...kStartup, sourceCode: 'BIZINFO', id: 'PBLN_1', sourceName: '기업마당', evidenceQuestionSupported: true,
+    sourceUrl: 'https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_1' }
+  rerender(<SearchProgramCard program={{ ...program, sourceCode: 'KSTARTUP', sourceName: 'K-Startup', evidenceQuestionSupported: false,
+    alsoPostedBy: [bizInfo] }} onOpen={jest.fn()} onAsk={ask} signedIn />)
+  fireEvent.press(screen.getByLabelText(`${program.title}, 이 공고에 질문하기`))
+  expect(ask).toHaveBeenLastCalledWith({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1' })
+
+  rerender(<SearchProgramCard program={{ ...program, evidenceQuestionSupported: false }} onOpen={jest.fn()} onAsk={ask} signedIn />)
+  expect(screen.queryByLabelText(/질문하기/)).toBeNull()
+  rerender(<SearchProgramCard program={supported} />)
+  expect(screen.queryByLabelText(/질문하기/)).toBeNull()
+})
 test('official-link failures remain explicit', async () => {
   const link = jest.spyOn(Linking, 'openURL').mockRejectedValueOnce(new Error('unavailable'))
   render(<SearchProgramCard program={program} onOpen={jest.fn()} />)

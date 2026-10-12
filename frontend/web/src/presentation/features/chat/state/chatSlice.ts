@@ -8,6 +8,7 @@ import type { Company } from '../../../../domain/entities/Company'
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramSearch } from '../../../../domain/repositories/SupportProgramRepository'
 import type { SupportProgramConversationContext, SupportProgramInterpretation, SupportProgramInterpretRequest, SupportProgramLastSearch, SupportProgramPendingClarification } from '../../../../domain/entities/SupportProgramConversation'
+import { relaxSupportProgramSearch, type SupportProgramSearchRelaxationKind } from '@govbiz/shared/domain/entities/SupportProgramSearchRelaxation'
 import { sessionRestored, signedIn, signedOut } from '../../../shared/auth/state/authSlice'
 import { formatSupportProgramEligibilityCounts } from '../supportProgramEligibility'
 
@@ -260,6 +261,27 @@ const chatSlice = createSlice({
       state.pendingClarification = null
       state.pendingProposal = null
     },
+    /**
+     * 결과가 없던 마지막 검색에서 고른 조건만 뺀 제안을 AI 해석 없이 만듭니다. 고른 문구를 사용자 메시지로 남기고,
+     * 검색은 다른 제안처럼 확인 카드의 [이 조건으로 검색]에서만 합니다.
+     */
+    searchRelaxationProposed: {
+      reducer(state, action: PayloadAction<{ kind: SupportProgramSearchRelaxationKind; label: string; requestId: string; messageId: string }>) {
+        if (isBusy(state) || !state.lastSearch || state.lastSearch.resultCount !== 0) return
+        const { context, changedFields } = relaxSupportProgramSearch(state.lastSearch.context, action.payload.kind)
+        state.messages.push({ id: action.payload.messageId, role: 'user', text: action.payload.label })
+        state.interpretation = {
+          status: 'ready', requestId: action.payload.requestId, messageId: action.payload.messageId,
+          result: { status: 'READY', proposedContext: context, clarificationQuestion: null, answer: null, changedFields },
+        }
+        state.pendingClarification = null
+        state.pendingProposal = context
+        state.searchError = null
+      },
+      prepare(kind: SupportProgramSearchRelaxationKind, label: string) {
+        return { payload: { kind, label, requestId: nanoid(), messageId: nanoid() } }
+      },
+    },
     proposalConfirmed(state, action: PayloadAction<string>) {
       const proposal = state.interpretation
       if (state.draft.trim() || proposal.status !== 'ready' || proposal.requestId !== action.payload || !proposal.result?.proposedContext.query) return
@@ -372,6 +394,7 @@ const chatSlice = createSlice({
           expiresAt: action.payload.expiresAt,
           searchOptions: conversationContextToSearchOptions(context),
           searchQuery: context.query ?? undefined,
+          ...(action.payload.exclusionCounts ? { exclusionCounts: { ...action.payload.exclusionCounts } } : {}),
         })
         state.searchError = null
         state.searchStatus = 'idle'
@@ -423,6 +446,7 @@ export const {
   searchSucceeded,
   searchTimedOut,
   searchValidationFailed,
+  searchRelaxationProposed,
 } = chatSlice.actions
 
 export const selectChatState = (state: RootState) => state.chat

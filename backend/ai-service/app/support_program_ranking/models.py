@@ -353,6 +353,16 @@ class SupportProgramRankingOutput(BaseModel):
         return self
 
 
+class SupportProgramRankingExclusions(BaseModel):
+    """추천에서 뺀 후보 수. 한 후보는 먼저 걸린 사유 하나(관련도 → 지원 대상 → 지역)로만 센다."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    low_relevance: int = Field(alias="lowRelevance", ge=0, le=MAX_CANDIDATES)
+    target: int = Field(ge=0, le=MAX_CANDIDATES)
+    region: int = Field(ge=0, le=MAX_CANDIDATES)
+
+
 class SupportProgramRankingResponse(BaseModel):
     """AI Service가 Core에 반환하는 검증·정렬된 적격 추천 계약."""
 
@@ -361,3 +371,5 @@ class SupportProgramRankingResponse(BaseModel):
     original_query: str = Field(alias="originalQuery")
     scoring_version: Literal[SCORING_VERSION] = Field(alias="scoringVersion")
     rankings: list[ScoredSupportProgram] = Field(min_length=0, max_length=5)
+    # 결과가 없을 때 어떤 조건이 후보를 뺐는지 알리는 용도다. 다시 검색한 결과 수를 보장하지 않는다.
+    exclusion_counts: SupportProgramRankingExclusions | None = Field(default=None, alias="exclusionCounts")

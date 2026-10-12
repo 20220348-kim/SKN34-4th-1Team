@@ -711,6 +711,8 @@ AI Service는 모델의 답변·질문 종류 코드를 허용된 존댓말 문�
 환경변수·장애 계약·테스트·업그레이드는 [Elasticsearch 적용 상세](../../docs/elasticsearch-lexical-search.md)를 참고하세요.
 현재 v2는 지역명·업무 용어 사용자 사전과 검색 시 `여행사/여행업체` 동의어 확장을 사용합니다.
 v1을 사용하던 환경은 **새 v2 인덱스 이름으로 전환하고 재색인**해야 합니다. 기존 공고·벡터·v1 색인은 삭제하지 않습니다.
+줄임말·동의어를 넓힌 `elasticsearch/support-program-lexical-v3.json`(중기부·소진공·코트라·알앤디·정책자금 등)은 정의만 있고
+클라이언트는 여전히 v2를 씁니다. 316문항 비교 전에는 전환·재색인하지 않으며 절차는 Elasticsearch 문서에 있습니다.
 
 - GET 검색: 필수 `query`는 최대 500 UTF-16 코드 단위이며 빈 문자열을 허용합니다. 탭·줄바꿈·캐리지 리턴을 제외한
   Unicode C 범주 문자(예: NUL·제로폭 문자·단독 surrogate)는 DB·AI 호출 전에 400으로 거부합니다.
@@ -793,6 +795,13 @@ v1을 사용하던 환경은 **새 v2 인덱스 이름으로 전환하고 재색
   회사 소재지가 있으면 Search Service가 `_common/domain/RegionDictionary`(시·도 약칭·시군구·권역, 2026-10 행정구역)로
   전국이 아닌 공고 지역 태그와 회사 시·도가 겹치지 않는 공고를 빼지 않고 결과 뒤로 보내 `regionTagMismatch=true`로 표시합니다.
   본문 인용으로 지역을 확인(`MATCH`)한 공고·태그 없는 공고·해석할 수 없는 회사 지역은 옮기지 않습니다. 태그 기반 정렬·표시이며 자격 판정이 아닙니다.
+  그보다 먼저 `domain/SupportProgramDuplicatePostings`가 랭킹 결과에서 서로 다른 제공처가 따로 올린 같은 공고
+  (정규화 제목·기관·마감일이 모두 같고 제목 머리말 지역이 서로 다르지 않음)를 순위가 높은 한 칸으로 묶어 `alsoPostedBy`에 다른 게시물의 원문 주소를 담습니다.
+  랭킹 입력 후보는 바꾸지 않고, 결과에 오르지 못한 같은 공고도 이번 검색 대상에서 찾아 붙이며, 빠진 칸은 채우지 않습니다.
+  검색 결과·목록·저장 공고 응답의 `evidenceQuestionSupported`는 상세와 같은 기준(`SupportProgramEvidenceService.supportsQuestions`)입니다.
+  검색 응답의 `exclusionCounts`는 Ranking Facade의 `rankWithExclusions`가 AI Service 응답의 사유별 제외 후보 수를 보낸 후보 수와
+  맞춰 검증한 `domain/SupportProgramRankingExclusions`입니다(관련도 → 지원 대상 → 지역 순으로 한 사유만 셈). 검색어에 맞는 후보가
+  없으면 순위 매기기를 부르지 않고 모두 0, 수를 모르면 `null`이며 웹·앱의 결과 없음 안내와 조건 빼기에 씁니다.
   자연어 검색 결과의 `eligibilityReview`는 전체 상태 `MATCH`/`REVIEW_REQUIRED`, 기준 `OFFICIAL_API_TEXT`,
   대상·지역별 `status`, `explanation`, `evidence[{field,quote}]`를 추천 이유와 별도로 반환합니다.
   이는 HTML을 정리한 **공식 API 본문 기준**의 검토이며 상세 페이지 전체·첨부 PDF/HWP를 확인했다는 뜻이 아닙니다.
@@ -1129,6 +1138,10 @@ SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/re
   DB 고유키의 비교는 `utf8mb4_0900_ai_ci` collation을 따릅니다.
 - 접수 상태를 DB에 고정 저장하지 않습니다. 조회 시 날짜를 우선 적용하고, 날짜만으로 판단할 수
   없는 경우 원문 표현을 확인합니다. 명시적 종료 표현은 상시 접수 표현보다 우선합니다.
+  수시 접수 표현은 `모집 완료 시`·`모집완료시`처럼 띄어쓰기만 다른 변형을 같게 보지만, 공백을 지운 부분 일치를 쓰지 않아
+  `100개사 이상 시`·`접수 시`·`상시 근로자`·`접수 마감 시간`·`접수 마감 시 별도 안내`를 접수 중으로 읽지 않습니다
+  (`접수·신청 마감 시`는 `까지`가 붙을 때만 수시 접수). 기업마당 기간에 날짜가 하나면
+  날짜 바로 뒤의 `까지`·`부터`·`~`로 마감일·시작일을 정합니다(Catalog의 같은 매퍼·판정 규칙과 동일).
 - 검색·색인 흐름은 [아키텍처](../../docs/architecture.md)에, 20,000건 상한·자동 벡터 삭제 미연결 등
   현재 제약은 [구현 현황](../../docs/implementation-status.md)에 정리합니다.
 

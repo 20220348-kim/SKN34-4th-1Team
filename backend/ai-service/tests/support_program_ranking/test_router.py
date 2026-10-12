@@ -292,6 +292,7 @@ def test_computes_relevance_total_in_service_and_keeps_v5_http_contract() -> Non
             "totalScore": 62,
             "recommendationReasons": ["공고 원문 근거"],
         }],
+        "exclusionCounts": {"lowRelevance": 1, "target": 0, "region": 0},
     }
     assert len(model.calls) == 1
     model.assert_complete()
@@ -850,6 +851,8 @@ def test_selection_logs_count_exclusion_reasons_once_and_keep_unknown_without_pr
         "BIZINFO:diagnostic-3", "BIZINFO:diagnostic-4",
     ]
     assert first.json()["rankings"][0]["targetEligibility"] == "UNKNOWN"
+    # 로그와 같은 수를 응답에도 실어 Core가 결과가 없을 때 뺀 이유별 후보 수를 알릴 수 있게 한다.
+    assert first.json()["exclusionCounts"] == {"lowRelevance": 1, "target": 1, "region": 1}
     messages = [record.getMessage() for record in caplog.records
                 if record.getMessage().startswith("support_program_ranking_selection ")]
     assert messages == [

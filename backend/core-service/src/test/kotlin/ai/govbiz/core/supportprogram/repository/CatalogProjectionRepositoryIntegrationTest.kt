@@ -194,8 +194,18 @@ class CatalogProjectionRepositoryIntegrationTest {
         projection.apply(incoming)
         val refreshed = incoming.copy(programs = incoming.programs.reversed().map { it.copy(program = it.program.copy(
             status = SupportProgramStatus.CLOSED, sourceName = "응답 표시명", matchedReasons = listOf("화면용"), recommendationScore = 90,
+            regionTagMismatch = true,
         )) })
         assertFalse(projection.apply(refreshed))
+    }
+
+    @Test
+    fun storedProgramsHashKeepsTheFormatOfReleasesWithoutResponseOnlyFields() {
+        projection.apply(snapshot(listOf(program("one"))))
+        // 이 값이 바뀌면 이미 반영한 revision이 다른 내용으로 보여 운영의 Catalog 반영이 멈춥니다.
+        // 검색 응답 전용 필드는 RESPONSE_ONLY_PROGRAM_FIELDS에 더하고, 저장 열을 바꾼 경우에만 checkpoint 초기화 migration과 함께 갱신합니다.
+        assertEquals(STORED_PROGRAMS_HASH, jdbc.queryForObject(
+            "SELECT programs_hash FROM catalog_projection_checkpoint WHERE source_code = 'BIZINFO'", String::class.java))
     }
 
     @Test
@@ -395,6 +405,7 @@ class CatalogProjectionRepositoryIntegrationTest {
     }
 
     private companion object {
+        const val STORED_PROGRAMS_HASH = "f7d7b7370be19d3cd9d1c463d889f89d8c4d6d1f8f024ca5f3ef06170d541db1"
         const val CATALOG = "555b6a2e-0b0f-4a91-88bd-59449392c821"
         const val OTHER_CATALOG = "aa9b4c46-e0fb-46b0-b2df-bf52e8f4ad4a"
         val OCCURRED_AT: LocalDateTime = LocalDateTime.of(2026, 9, 19, 10, 0)

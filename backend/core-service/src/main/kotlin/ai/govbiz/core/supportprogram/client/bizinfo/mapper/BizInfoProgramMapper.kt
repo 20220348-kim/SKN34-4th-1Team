@@ -19,6 +19,9 @@ import org.springframework.web.util.HtmlUtils
 /** 기업마당 응답을 검증된 검색 후보로 변환하는 순수 매퍼입니다. */
 internal object BizInfoProgramMapper {
     private val ISO_DATE: Pattern = Pattern.compile("\\d{4}[-./]\\d{2}[-./]\\d{2}")
+    // 날짜 뒤에 올 수 있는 점·요일·시각을 건너뛴 뒤 처음 나오는 역할 표시입니다. 예: "2026.09.30.(수) 18:00까지"
+    private val SINGLE_DATE_ROLE: Pattern =
+        Pattern.compile("\\.?\\s*(?:\\(\\s*[월화수목금토일]\\s*\\)\\s*)?(?:\\d{1,2}:\\d{2}(?::\\d{2})?\\s*)?(까지|부터|[~∼〜-])")
     private val HTML_BLOCK: Pattern = Pattern.compile("(?is)<(script|style)[^>]*>.*?</\\1>")
     private val HTML_BREAK: Pattern = Pattern.compile("(?i)<br\\s*/?>|</p>|</li>")
     private val HTML_TAG: Pattern = Pattern.compile("(?s)<[^>]*>")
@@ -134,18 +137,26 @@ internal object BizInfoProgramMapper {
 
     private fun parseDates(applicationPeriod: String): DateRange {
         val dates = ArrayList<LocalDate>(2)
+        var firstDateEnd = -1
         val matcher = ISO_DATE.matcher(applicationPeriod)
         while (matcher.find() && dates.size < 2) {
             try {
                 dates += LocalDate.parse(
                     matcher.group().replace('.', '-').replace('/', '-'),
                 )
+                if (firstDateEnd < 0) firstDateEnd = matcher.end()
             } catch (_: DateTimeParseException) {
                 // 잘못된 외부 날짜는 원문 기간에 그대로 남기고 추정하지 않습니다.
             }
         }
         if (dates.size >= 2) return DateRange(dates[0], dates[1])
         if (dates.size == 1) {
+            // 날짜 바로 뒤의 "까지"·"부터"·"~"가 그 날짜의 역할입니다. "9월 30일까지(예산 소진 시 조기 마감)"의
+            // 마감일을 수시 접수 표현 때문에 시작일로 읽으면 마감 뒤에도 접수 중으로 계산되므로 문장 전체보다 먼저 봅니다.
+            val role = SINGLE_DATE_ROLE.matcher(normalize(applicationPeriod.substring(firstDateEnd)))
+            if (role.lookingAt()) {
+                return if (role.group(1) == "까지") DateRange(null, dates[0]) else DateRange(dates[0], null)
+            }
             val normalized = normalize(applicationPeriod)
             if ("까지" in normalized && !SupportProgramStatusResolver.isRollingPeriod(normalized)) {
                 return DateRange(null, dates[0])

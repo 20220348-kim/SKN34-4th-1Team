@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
-import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
+import { supportProgramPostedTogetherLabel, supportProgramQuestionTarget, type SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { nationwideRegion, regionNames, toRegionName } from '@govbiz/shared/domain/entities/Region'
@@ -8,7 +8,12 @@ import { Button, Notice, badgeColors, colors, ddayBadgeTone } from '../ui'
 import { ProgramInterestButton, type SearchProgramInterests } from './SearchProgramInterests'
 import { AppIcon } from './AppIcon'
 
-export function SearchProgramCard({ program, onOpen, interests, onLogin, searchRegion }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
+/**
+ * AI 검색 결과 카드입니다. `onOpen`이 있으면 자세한 카드로 원문·상세·원문 질문 동작을 두고, 없으면 소개용 작은 카드입니다.
+ * 원문 질문(`onAsk`)은 서버가 질문을 받는다고 알린 공고(또는 함께 묶인 같은 공고)에만 둡니다.
+ */
+export function SearchProgramCard({ program, onOpen, onAsk, signedIn = false, interests, onLogin, searchRegion }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
+  onAsk?(identity: SupportProgramIdentity): void; signedIn?: boolean
   searchRegion?: string | null
   interests?: SearchProgramInterests; onLogin?(): void }) {
   const [linkError, setLinkError] = useState<string | null>(null)
@@ -21,9 +26,15 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin, searchR
   const otherRegion = requestedRegion !== null && requestedRegion !== nationwideRegion
     && regionNames.some(value => value === requestedRegion) && regions.length > 0
     && regions.every(value => regionNames.some(known => known === value) && value !== nationwideRegion && value !== requestedRegion)
-  async function openSource() {
+  const postedTogether = supportProgramPostedTogetherLabel(program)
+  const questionTarget = supportProgramQuestionTarget(program)
+  const askLabel = signedIn ? '이 공고에 질문하기' : '로그인하고 질문하기'
+  // 함께 게시된 공고는 제공처마다 원문 링크를 두므로 어느 원문인지 이름을 붙입니다.
+  const sourceLabel = program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 보러가기'
+    : postedTogether ? `${program.sourceName} 원문 보러가기` : '원문 보러가기'
+  async function openSource(url: string) {
     setLinkError(null)
-    try { await Linking.openURL(program.sourceUrl) }
+    try { await Linking.openURL(url) }
     catch { setLinkError('공식 원문을 열지 못했습니다. 다시 시도해 주세요.') }
   }
   return <View style={[local.card, !onOpen && { padding: 12, gap: 7 }]}>
@@ -38,6 +49,7 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin, searchR
     {interests?.errors[JSON.stringify([program.sourceCode, program.id])] && <Notice error>{interests.errors[JSON.stringify([program.sourceCode, program.id])]}</Notice>}
     {onOpen && <Text style={local.description}>{[program.organization, ...program.regions].filter(Boolean).join(' · ')}</Text>}
     {onOpen && <Text style={local.description}>{program.applicationPeriod}</Text>}
+    {onOpen && postedTogether && <Text style={local.description}>{postedTogether}</Text>}
     {/* 서버가 지역 사전으로 판정해 뒤로 보낸 공고와, 그 표시가 없는 이전 결과의 화면 판정을 같은 안내 하나로 보여 줍니다. */}
     {onOpen && (program.regionTagMismatch || otherRegion) && <Notice>다른 지역 조건 확인 필요{'\n'}{requestedRegion ? `검색 지역(${requestedRegion})과` : '회사 소재지와'} 공고 분류 지역({program.regions.join(' · ')})이 달라요. {program.regionTagMismatch ? '그래서 결과 뒤쪽에 두었어요. ' : ''}분류만으로 신청 가능 여부를 판단하지 말고 원문의 지역 조건을 확인해 주세요.</Notice>}
     {onOpen && review?.region.status === 'UNKNOWN' && <Text style={local.evidence}>지역 조건 확인 · {review.region.explanation}</Text>}
@@ -53,18 +65,28 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin, searchR
         : <Text style={local.evidence}>확인 가능한 본문 인용이 제공되지 않았습니다.</Text>}
     </View>
     {onOpen && <>
+      {onAsk && questionTarget && <Button label={askLabel} accessibilityLabel={`${program.title}, ${askLabel}`} variant="secondary"
+        onPress={() => onAsk(questionTarget)} />}
       <View style={local.actions}>
-        <Pressable accessibilityRole="link" accessibilityLabel={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 보러가기' : '원문 보러가기'}
-          onPress={() => void openSource()} style={({ pressed }) => [local.sourceLink, pressed && { opacity: 0.9 }]}>
-          <Text style={local.sourceLabel}>{program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 보러가기' : '원문 보러가기'}</Text>
-          <AppIcon name="externalLink" color={colors.primaryText} size={15} />
-        </Pressable>
+        <View style={local.sourceLinks}>
+          <SourceLink label={sourceLabel} onPress={() => void openSource(program.sourceUrl)} />
+          {program.alsoPostedBy?.map(posting => <SourceLink key={posting.sourceCode} label={`${posting.sourceName} 원문 보러가기`}
+            onPress={() => void openSource(posting.sourceUrl)} />)}
+        </View>
         <Button label="상세 보기" accessibilityLabel={`${program.title}, 상세 보기`} variant="secondary"
           onPress={() => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })} /></View>
       {linkError && <Notice error>{linkError}</Notice>}
       <Text style={local.disclaimer}>관련도는 추천 순서용 점수예요. 최종 신청 조건은 원문에서 확인하세요.</Text>
     </>}
   </View>
+}
+
+function SourceLink({ label, onPress }: { label: string; onPress(): void }) {
+  return <Pressable accessibilityRole="link" accessibilityLabel={label} onPress={onPress}
+    style={({ pressed }) => [local.sourceLink, pressed && { opacity: 0.9 }]}>
+    <Text style={local.sourceLabel}>{label}</Text>
+    <AppIcon name="externalLink" color={colors.primaryText} size={15} />
+  </Pressable>
 }
 
 const local = StyleSheet.create({
@@ -84,6 +106,7 @@ const local = StyleSheet.create({
     color: colors.primaryText, backgroundColor: colors.soft, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   evidence: { color: colors.secondaryText, fontSize: 13, lineHeight: 21 },
   actions: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' },
+  sourceLinks: { flexShrink: 1 },
   sourceLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 48, flexShrink: 1 },
   sourceLabel: { color: colors.primaryText, fontSize: 14, fontWeight: '600', flexShrink: 1 },
   disclaimer: { color: colors.muted, fontSize: 12, lineHeight: 19 },

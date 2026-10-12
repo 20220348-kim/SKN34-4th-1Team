@@ -54,6 +54,18 @@ describe('Redux chat flow', () => {
     expect(chat.messages.at(-1)?.programs?.[0]?.id).toBe('fixture-seoul-ai-business')
   })
 
+  it('keeps the server exclusion counts on a zero-result message so the screen can offer counted condition removals', async () => {
+    const exclusionCounts = { candidateCount: 20, lowRelevance: 14, target: 2, region: 4 }
+    const execute = vi.fn().mockResolvedValue(completeSearchResult({ query: 'AI 창업 자금', programs: [], exclusionCounts }))
+    const store = createAppStore()
+    const { result } = renderChatHook(store, createSearchUseCase(execute))
+
+    act(() => store.dispatch(draftChanged('AI 창업 자금')))
+    await act(async () => result.current.submitMessage())
+
+    expect(store.getState().chat.messages.at(-1)).toMatchObject({ programs: [], totalCount: 0, exclusionCounts })
+  })
+
   it('does not start a duplicate search while the first request is pending', async () => {
     const pending = deferredSearchResult()
     const execute = vi.fn().mockReturnValue(pending.promise)
