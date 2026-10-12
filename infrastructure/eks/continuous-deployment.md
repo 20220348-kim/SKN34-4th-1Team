@@ -1,9 +1,14 @@
 # main 병합 후 Argo CD·EKS·Vercel 자동 배포
 
 대상은 **개인 저장소 `ilil1/SKN34-4th-1Team`의 `main`**이다. 개인 포크의
-기존 GHCR 발행·로컬 Argo 경로는 변경하지 않는다. 아래 구성은 코드로 준비한 것이며,
-AWS 스택·GitHub environment·Vercel 프로젝트 설정과 최초 EKS 데이터 복원은 별도로 완료해야 한다.
-활성화 전에는 repository variable `EKS_RELEASE_ENABLED`를 비우거나 `false`로 둔다.
+기존 GHCR 발행·로컬 Argo 경로는 변경하지 않는다. 2026-10-12 현재 AWS 스택·GitHub environment·
+Vercel 프로젝트 설정과 최초 EKS 데이터 복원은 완료했고, 누락됐던 Argo CD 설치·연결과
+배포 역할의 읽기 전용 권한 전환도 적용했다. `EKS_RELEASE_ENABLED=true`이며,
+main `0a523e5e`의 필수 CI 완료 이벤트로 시작된
+[첫 자동 배포](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38193929451)에서
+ECR 발행·Argo 동기화·Vercel 운영 전환까지 모두 성공했다.
+배포 SHA·태그·실제 앱 상태는 [Argo 인계 기록](argo-cd.md#구현과-실제-적용-상태)을 참고한다.
+새 환경에서는 최초 연결을 끝내기 전까지 이 변수를 비우거나 `false`로 둔다.
 학교 저장소의 변경은 개인 저장소 main으로 동기화한 뒤, 그 커밋의 개인 저장소 CI가 통과해야 배포된다.
 학교 저장소에 병합하는 것만으로 개인 main을 갱신하지 않으며, 저장소 간 자동 동기화는 추가하지 않는다.
 
@@ -23,8 +28,8 @@ GitHub의 AWS OIDC·장기 AWS 키·계정 플랜 변경 없이 CodeBuild 서비
 웹 배포를 조율하고, CodeBuild는 VPC 안에서 이미지 빌드·ECR 발행·Git 배포 태그 발행과 상태 조회를 수행한다.
 EKS 앱 적용은 Argo CD가 담당한다. `release.py rollout`과 기존 직접 배포 실행은 차단한다.
 
-연결·스택 생성만으로 자동 배포가 완료되지는 않는다. 아래 최초 연결, 새 코드의 main 반영,
-해당 커밋의 필수 CI, 실제 자동 실행을 확인하기 전까지 `EKS_RELEASE_ENABLED=false`를 유지한다.
+연결·스택 생성만으로 자동 배포가 완료되지는 않는다. 아래 최초 연결과 새 코드의 main 반영을
+끝낸 뒤 활성화하고, 해당 커밋의 필수 CI부터 backend·web 작업까지 실제 성공했는지 확인한다.
 현재 EKS 데이터 복원·수동 운영 상태는 [실배포 기록](sydney-demo.md#2026-10-12-수동-배포-기록)을 참고한다.
 
 ### 2026-10-12 연결 검증
@@ -34,10 +39,12 @@ EKS 앱 적용은 Argo CD가 담당한다. `release.py rollout`과 기존 직접
 - `govbiz-eks-release-deploy`의 읽기 전용 preflight
   `796b0377-5ca1-4fb9-8658-c209c5322ce2`에서 GitHub 소스 다운로드, Python 3.13·Docker·GitHub CLI,
   체크섬 검증한 kubectl, EKS 사설 API 연결, 기존 서비스 Ready 조회를 확인했다.
-- 서비스 조회·갱신 권한은 허용되고 Secret 조회·PVC 삭제 권한은 거절됐다.
+- 이 초기 preflight에서는 서비스 조회·갱신 권한이 허용되고 Secret 조회·PVC 삭제 권한은 거절됐다.
+  이후 Argo 인계에서 갱신 권한을 제거했다. 현재 배포 역할에는 지정한 Deployment·Application의
+  조회만 허용하며, 실제 CodeBuild의 Argo preflight도 이 권한 경계를 확인한다.
 - 사전 검증은 이미지 발행·앱 교체·DB migration·모델 호출을 수행하지 않았다.
-- 이 연결 검증은 최초 자동 배포 완료를 뜻하지 않는다. 변경 코드의 main 반영·필수 CI와
-  webhook을 통한 실제 배포 작업·Vercel 전환 결과는 별도 확인해야 한다.
+- 이 초기 연결 검증 자체는 자동 배포 성공을 뜻하지 않는다. 이후 main `0a523e5e`에서
+  webhook을 통한 실제 CodeBuild 작업·Argo 동기화·Vercel 전환까지 위 첫 자동 배포로 확인했다.
 
 ## 배포 흐름
 
