@@ -26,7 +26,9 @@ class SupportProgramSearchResultRepositoryTest {
     private val key = "govbiz:search-result:v1:" + MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).toHexString()
     private val conditions = SupportProgramCompanyConditions("서울", "AI", LocalDate.of(2020, 1, 2), "기술 개발")
     private val snapshot = SupportProgramSearchSnapshot("서울 AI \"지원\" 😀",
-        listOf(program("BIZINFO").copy(regionTagMismatch = true), program("KSTARTUP")),
+        listOf(program("BIZINFO").copy(regionTagMismatch = true, alsoPostedBy = listOf(
+            SupportProgramPosting("KSTARTUP", "179197", "K-Startup", "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=179197"),
+        )), program("KSTARTUP")),
         SupportProgramConversationContext("서울 AI \"지원\" 😀", false, conditions))
 
     @AfterEach
@@ -112,6 +114,19 @@ class SupportProgramSearchResultRepositoryTest {
         val restored = requireNotNull(repository.claim(token, 1L))
         assertEquals(listOf(false, false), restored.programs.map(SupportProgram::regionTagMismatch))
         assertEquals(snapshot.programs.map { it.copy(regionTagMismatch = false) }, restored.programs)
+    }
+
+    @Test
+    fun resultsSavedBeforeDuplicatePostingsExistedRestoreWithoutThem() {
+        repository.save(token, snapshot)
+        val stored = connection.redis.opsForHash<String, String>().get(key, "payload")!!
+        assertTrue(stored.contains("\"alsoPostedBy\":[{") && stored.contains("pbancSn=179197"))
+        val legacy = json.readTree(stored) as ObjectNode
+        legacy.get("programs").forEach { (it as ObjectNode).remove("alsoPostedBy") }
+        connection.redis.opsForHash<String, String>().put(key, "payload", json.writeValueAsString(legacy))
+
+        val restored = requireNotNull(repository.claim(token, 1L))
+        assertEquals(snapshot.programs.map { it.copy(alsoPostedBy = emptyList()) }, restored.programs)
     }
 
     @Test

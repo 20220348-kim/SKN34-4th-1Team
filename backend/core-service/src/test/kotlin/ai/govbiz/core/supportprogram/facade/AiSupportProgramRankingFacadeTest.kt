@@ -5,7 +5,9 @@ import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramRankingClient
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibility
 import ai.govbiz.core.supportprogram.client.ai.dto.AiScoredSupportProgramPayload
+import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingExclusionsPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingPayload
+import ai.govbiz.core.supportprogram.domain.SupportProgramRankingExclusions
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibilityEvidencePayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibilityEvidenceField
@@ -89,6 +91,40 @@ class AiSupportProgramRankingFacadeTest {
         )
         assertEquals(listOf("OTHER", "BIZINFO"), programs.map { it.sourceCode })
         assertEquals(listOf("SHARED", "SHARED"), programs.map { it.id })
+    }
+
+    @Test
+    fun returnsExclusionCountsWithTheCandidateCountWhenTheyAddUp() {
+        client.reset(response(exclusions = AiSupportProgramRankingExclusionsPayload(lowRelevance = 1, target = 0, region = 1)))
+
+        val ranking = facade().rankWithExclusions(QUERY, candidates(), 5)
+
+        assertEquals(emptyList<SupportProgram>(), ranking.programs)
+        assertEquals(SupportProgramRankingExclusions(candidateCount = 2, lowRelevance = 1, target = 0, region = 1), ranking.exclusions)
+    }
+
+    @Test
+    fun keepsExclusionsUnknownForAnAiServiceThatDoesNotSendThem() {
+        client.reset(response(score("first", semantic = 20, total = 50, reason = "일부 관련")))
+
+        assertEquals(null, facade().rankWithExclusions(QUERY, candidates(), 5).exclusions)
+        assertEquals(listOf("first"), facade().rank(QUERY, candidates(), 5).map { it.id })
+    }
+
+    @Test
+    fun rejectsExclusionCountsThatDoNotMatchTheCandidatesAndRecommendations() {
+        val recommended = score("first", semantic = 20, total = 50, reason = "일부 관련")
+        listOf(
+            // 추천 1건 + 뺀 2건이 보낸 후보 2건을 넘습니다.
+            response(recommended, exclusions = AiSupportProgramRankingExclusionsPayload(2, 0, 0)),
+            // 요청 수(2)보다 적게 추천했는데 남은 후보를 뺀 수로 세지 않았습니다.
+            response(recommended, exclusions = AiSupportProgramRankingExclusionsPayload(0, 0, 0)),
+            response(exclusions = AiSupportProgramRankingExclusionsPayload(1, null, 1)),
+            response(exclusions = AiSupportProgramRankingExclusionsPayload(3, -1, 0)),
+        ).forEach { invalid ->
+            client.reset(invalid)
+            assertThrows(AiServiceCallException::class.java) { facade().rankWithExclusions(QUERY, candidates(), 5) }
+        }
     }
 
     @Test
@@ -479,11 +515,12 @@ class AiSupportProgramRankingFacadeTest {
         matchedReasons = emptyList(),
     )
 
-    private fun response(vararg scores: AiScoredSupportProgramPayload) =
+    private fun response(vararg scores: AiScoredSupportProgramPayload, exclusions: AiSupportProgramRankingExclusionsPayload? = null) =
         AiSupportProgramRankingPayload(
             originalQuery = QUERY,
             scoringVersion = AiSupportProgramRankingFacade.SCORING_VERSION,
             rankings = scores.toList(),
+            exclusionCounts = exclusions,
         )
 
     private fun score(

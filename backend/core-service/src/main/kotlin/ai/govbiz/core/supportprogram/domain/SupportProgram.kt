@@ -32,6 +32,11 @@ data class SupportProgram(
      * 태그 기반 정렬·표시용이며 본문 자격 판정(eligibilityReview)이 아닙니다.
      */
     val regionTagMismatch: Boolean = false,
+    /**
+     * 검색 결과 전용입니다. 같은 공고를 다른 제공처도 올려 이 칸에 함께 묶은 게시물이며, 없으면 빈 목록입니다.
+     * 묶는 기준은 [SupportProgramDuplicatePostings]가 정합니다.
+     */
+    val alsoPostedBy: List<SupportProgramPosting> = emptyList(),
 ) {
     init {
         require(SOURCE_CODE_PATTERN.matches(sourceCode)) {

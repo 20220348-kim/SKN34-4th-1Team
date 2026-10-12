@@ -136,6 +136,9 @@ class SupportProgramEvidenceService(
             "BIZINFO" to "기업마당 상세 본문",
             "KSTARTUP" to "K-Startup 상세 본문",
         )
+
+        /** 화면이 제공처를 직접 비교하지 않도록 상세·검색 결과 응답에 싣는 원문 근거 질문 지원 여부입니다. */
+        fun supportsQuestions(sourceCode: String): Boolean = sourceCode in EVIDENCE_SOURCE_LABELS
         private val REFRESH_AFTER: Duration = Duration.ofHours(6)
     }
 }

@@ -16,7 +16,7 @@ const modes = [{ value: 'ai', label: screenTitles.aiSearch }, { value: 'filter',
 
 export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin, assistantDraft, onDraftConsumed }: {
   mode: SearchMode; headerHeight?: number; onModeChange(mode: SearchMode): void
-  onOpenProgram(identity: SupportProgramIdentity): void; onLogin(request?: LoginRequest): void
+  onOpenProgram(identity: SupportProgramIdentity, options?: { ask?: boolean }): void; onLogin(request?: LoginRequest): void
   assistantDraft?: AssistantDraft | null; onDraftConsumed?(id: string): void
 }) {
   const [visited, setVisited] = useState<Record<SearchMode, boolean>>({ ai: mode === 'ai', filter: mode === 'filter' })

@@ -249,6 +249,31 @@ test('resuming an original question opens input without issuing an AI request', 
   await screen.findByLabelText('공고에 대해 궁금한 점')
   expect(answer).not.toHaveBeenCalled()
 })
+test('entering from the search result question action opens the question sheet once without an AI request', async () => {
+  const login = jest.fn()
+  render(<ProgramScreen identity={identity} onLogin={login} openQuestion />)
+  await screen.findByLabelText('공고에 대해 궁금한 점')
+  expect(screen.getByText('예시 질문')).toBeTruthy()
+  expect(login).not.toHaveBeenCalled()
+  expect(answer).not.toHaveBeenCalled()
+})
+
+test('a guest entering from the question action is asked to log in, and unsupported programs do not ask at all', async () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, invalidateSession } as unknown as ReturnType<typeof useAuth>)
+  const login = jest.fn()
+  const view = render(<ProgramScreen identity={identity} onLogin={login} openQuestion />)
+  await waitFor(() => expect(login).toHaveBeenCalledWith('question'))
+  expect(login).toHaveBeenCalledTimes(1)
+  expect(screen.queryByLabelText('공고에 대해 궁금한 점')).toBeNull()
+  view.unmount()
+
+  login.mockClear()
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...programDetail, evidenceQuestionSupported: false }), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  render(<ProgramScreen identity={identity} onLogin={login} openQuestion />)
+  await screen.findByLabelText('공식 원문 확인')
+  expect(login).not.toHaveBeenCalled()
+})
+
 test('a continuation belonging to a different session cannot save or open questions', async () => {
   const resumed = jest.fn()
   render(<ProgramScreen identity={identity} onLogin={jest.fn()} resumeAction={{ action: 'question', token: 'other' }} onResumed={resumed} />)

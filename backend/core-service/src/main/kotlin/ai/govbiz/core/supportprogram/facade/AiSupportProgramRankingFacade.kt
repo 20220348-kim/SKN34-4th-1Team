@@ -5,6 +5,7 @@ import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramRankingClient
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibility
 import ai.govbiz.core.supportprogram.client.ai.dto.AiScoredSupportProgramPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramCandidateRequest
+import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingExclusionsPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramCompanyConditionsRequest
@@ -19,6 +20,7 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityAssessment
 import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityEvidence
 import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityEvidenceField
+import ai.govbiz.core.supportprogram.domain.SupportProgramRankingExclusions
 import java.time.LocalDate
 import org.springframework.stereotype.Component
 
@@ -33,7 +35,15 @@ class AiSupportProgramRankingFacade(
         limit: Int,
         companyConditions: SupportProgramCompanyConditions?,
         referenceDate: LocalDate?,
-    ): List<SupportProgram> {
+    ): List<SupportProgram> = rankWithExclusions(query, candidates, limit, companyConditions, referenceDate).programs
+
+    override fun rankWithExclusions(
+        query: String,
+        candidates: List<CatalogSupportProgram>,
+        limit: Int,
+        companyConditions: SupportProgramCompanyConditions?,
+        referenceDate: LocalDate?,
+    ): SupportProgramRanking {
         require(query.isNotBlank()) { "query must not be blank" }
         require(candidates.isNotEmpty()) { "candidates must not be empty" }
         require(candidates.size <= SupportProgramRankingFacade.MAX_CANDIDATES) {
@@ -63,11 +73,34 @@ class AiSupportProgramRankingFacade(
             },
         )
         val payload = client.rankSupportPrograms(request)
-        return validate(payload, query, candidates, request)
-            ?: throw AiServiceCallException.invalidResponse(
+        val programs = validate(payload, query, candidates, request)
+        val exclusions = payload.exclusionCounts?.let { validatedExclusions(it, candidates.size, programs?.size ?: 0, request.resultLimit) }
+        if (programs == null || (payload.exclusionCounts != null && exclusions == null)) {
+            throw AiServiceCallException.invalidResponse(
                 "AI Service support program rankings violated the internal contract",
                 null,
             )
+        }
+        return SupportProgramRanking(programs, exclusions)
+    }
+
+    /**
+     * 뺀 후보 수는 보낸 후보 수를 넘을 수 없고, 추천이 요청 수보다 적으면 남은 후보는 모두 뺀 후보여야 합니다.
+     * 맞지 않으면 추천 계약과 같은 내부 계약 오류로 다룹니다.
+     */
+    private fun validatedExclusions(
+        payload: AiSupportProgramRankingExclusionsPayload,
+        candidateCount: Int,
+        recommendedCount: Int,
+        resultLimit: Int,
+    ): SupportProgramRankingExclusions? {
+        val lowRelevance = payload.lowRelevance?.takeIf { it >= 0 } ?: return null
+        val target = payload.target?.takeIf { it >= 0 } ?: return null
+        val region = payload.region?.takeIf { it >= 0 } ?: return null
+        val excluded = lowRelevance + target + region
+        if (excluded + recommendedCount > candidateCount) return null
+        if (recommendedCount < resultLimit && excluded + recommendedCount != candidateCount) return null
+        return SupportProgramRankingExclusions(candidateCount, lowRelevance, target, region)
     }
 
     private fun validate(

@@ -48,6 +48,32 @@ afterEach(() => {
 })
 
 describe('useChatPageViewModel', () => {
+  it('결과가 없던 마지막 검색에만 사유와 조건 빼기를 주고, 고르면 AI 없이 확인 카드를 만든다', () => {
+    const lastSearch = { context: { ...seoulConversationContext, acceptingOnly: true }, resultCount: 0 }
+    const counts = { candidateCount: 6, lowRelevance: 3, target: 0, region: 3 }
+    const chat = createChatHook({ lastSearch, messages: [
+      { id: 'question', role: 'user', text: '서울 AI 창업지원 사업 찾아줘' },
+      { id: 'empty', role: 'assistant', text: '결과 없음', programs: [], totalCount: 0, exclusionCounts: counts },
+    ] })
+    hookMocks.chat.mockReturnValue(chat)
+    const { result, rerender } = renderHook(() => useChatPageViewModel())
+
+    expect(result.current.zeroResultHelp).toEqual({
+      messageId: 'empty',
+      explanation: '관련 후보 6건을 살펴봤지만 요청과 관련이 낮은 공고 3건, 회사 지역과 맞지 않는 공고 3건이라 추천하지 않았어요.',
+      relaxations: [
+        { kind: 'REGION', label: '지역 조건 빼고 찾기', excludedCount: 3 },
+        { kind: 'ACCEPTING_ONLY', label: '마감·예정 공고도 찾기', excludedCount: null },
+      ],
+    })
+    act(() => result.current.handleSearchRelaxation(result.current.zeroResultHelp!.relaxations[0]!))
+    expect(chat.proposeSearchRelaxation).toHaveBeenCalledWith('REGION', '지역 조건 빼고 찾기')
+
+    hookMocks.chat.mockReturnValue(createChatHook({ lastSearch: { ...lastSearch, resultCount: 2 }, messages: chat.messages }))
+    rerender()
+    expect(result.current.zeroResultHelp).toBeNull()
+  })
+
   it('원본 해석 상태 대신 화면에 필요한 제안·초기화·오류 상태를 제공한다', () => {
     const { result } = renderHook(() => useChatPageViewModel())
 
@@ -413,6 +439,7 @@ function createChatHook(overrides: Partial<ChatHook> = {}): ChatHook {
     conversationQuery: null,
     interpretation: { status: 'idle' },
     pendingClarification: null,
+    lastSearch: null,
     isInterpreting: false,
     isBusy: false,
     cancelInterpretation: vi.fn(),
@@ -433,6 +460,7 @@ function createChatHook(overrides: Partial<ChatHook> = {}): ChatHook {
     startNewConversation: vi.fn(),
     submitMessage: vi.fn().mockResolvedValue(undefined),
     submitQuickReply: vi.fn().mockResolvedValue(undefined),
+    proposeSearchRelaxation: vi.fn(),
     updateDraft: vi.fn(),
     ...overrides,
   }

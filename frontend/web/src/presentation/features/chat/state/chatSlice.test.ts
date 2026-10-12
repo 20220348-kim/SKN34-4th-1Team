@@ -23,6 +23,7 @@ import {
   proposalConfirmed,
   searchCancelled,
   searchFailed,
+  searchRelaxationProposed,
   searchStarted,
   searchSucceeded,
   searchTimedOut,
@@ -210,6 +211,57 @@ describe('대화의 로그인 세션 경계', () => {
         result: readyConversationProposal({ ...emptyConversationContext, query: '새 회사 지원사업' }) }))
       expect(store.getState().chat.interpretation.result?.proposedContext.query).toBe('새 회사 지원사업')
     }
+  })
+})
+
+describe('결과가 없을 때의 조건 빼기 제안', () => {
+  const options = { acceptingOnly: true, companyConditions: { region: '서울특별시', industry: '정보통신업' } }
+  const counts = { candidateCount: 20, lowRelevance: 14, target: 2, region: 4 }
+
+  function emptySearch(store: AppStore) {
+    const started = searchStarted('AI 창업 자금', options)
+    store.dispatch(started)
+    store.dispatch(searchSucceeded({ requestId: started.payload.requestId, programs: [], totalCount: 0, resultToken: null, expiresAt: null,
+      exclusionCounts: counts }))
+  }
+
+  it('결과 메시지에 제외 수를 남기고, 고른 조건만 뺀 제안을 AI 해석 없이 확인 카드로 만든다', () => {
+    const store = createAppStore()
+    emptySearch(store)
+    expect(store.getState().chat.messages.at(-1)).toMatchObject({ programs: [], totalCount: 0, exclusionCounts: counts })
+
+    const proposed = searchRelaxationProposed('REGION', '지역 조건 빼고 찾기')
+    store.dispatch(proposed)
+    const chat = store.getState().chat
+    expect(chat.messages.at(-1)).toEqual({ id: proposed.payload.messageId, role: 'user', text: '지역 조건 빼고 찾기' })
+    expect(chat.interpretation).toMatchObject({ status: 'ready', requestId: proposed.payload.requestId,
+      result: { status: 'READY', changedFields: ['REGION'] } })
+    expect(chat.interpretation.request).toBeUndefined()
+    expect(chat.interpretation.result?.proposedContext.companyConditions).toMatchObject({ region: null, industry: '정보통신업' })
+    // 검색은 확인 카드에서 확정할 때만 합니다.
+    expect(chat.searchStatus).toBe('idle')
+    store.dispatch(proposalConfirmed(proposed.payload.requestId))
+    expect(store.getState().chat.confirmedSearch).toMatchObject({ query: 'AI 창업 자금', acceptingOnly: true,
+      companyConditions: { industry: '정보통신업' } })
+    expect(store.getState().chat.confirmedSearch?.companyConditions?.region).toBeUndefined()
+  })
+
+  it('결과가 있던 검색이나 진행 중인 요청에는 조건 빼기 제안을 만들지 않는다', () => {
+    const store = createAppStore()
+    const started = searchStarted('무역 지원', options)
+    store.dispatch(started)
+    store.dispatch(searchSucceeded({ requestId: started.payload.requestId, programs: supportPrograms.slice(0, 1), totalCount: 1,
+      resultToken: null, expiresAt: null }))
+    const before = store.getState().chat
+    store.dispatch(searchRelaxationProposed('REGION', '지역 조건 빼고 찾기'))
+    expect(store.getState().chat).toBe(before)
+
+    const busy = createAppStore()
+    emptySearch(busy)
+    busy.dispatch(searchStarted('다른 검색'))
+    const pending = busy.getState().chat
+    busy.dispatch(searchRelaxationProposed('ACCEPTING_ONLY', '마감·예정 공고도 찾기'))
+    expect(busy.getState().chat).toBe(pending)
   })
 })
 

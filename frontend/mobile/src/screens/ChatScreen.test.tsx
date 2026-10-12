@@ -249,7 +249,66 @@ describe('mobile AI search', () => {
     expect(client.search).not.toHaveBeenCalled()
     fireEvent.press(screen.getByText('이 조건으로 검색'))
     await waitFor(() => expect(client.search).toHaveBeenCalledWith({ query: '사업화 지원', acceptingOnly: true, companyConditions: { region: '서울특별시' } }, expect.anything()))
-    await screen.findByText('조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.')
+    await screen.findByText('조건에 맞는 공고를 찾지 못했어요.')
+  })
+
+  it('offers counted condition removals after zero results and searches only after the relaxed proposal is confirmed', async () => {
+    const exclusionCounts = { candidateCount: 4, lowRelevance: 1, target: 0, region: 3 }
+    const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: ['QUERY'] }),
+      getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+      search: jest.fn()
+        .mockResolvedValueOnce({ query: '사업화 지원', totalCount: 0, programs: [], resultToken: null, expiresAt: null, exclusionCounts })
+        .mockResolvedValueOnce({ query: '사업화 지원', totalCount: 0, programs: [], resultToken: null, expiresAt: null }) }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '서울에서 사업화 지원을 찾고 있어요')
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    await screen.findByText('이 조건으로 검색할까요?')
+    fireEvent.press(screen.getByText('이 조건으로 검색'))
+    await screen.findByText('관련 후보 4건을 살펴봤지만 요청과 관련이 낮은 공고 1건, 회사 지역과 맞지 않는 공고 3건이라 추천하지 않았어요.')
+    expect(screen.queryByLabelText(/업종.*조건 빼고 찾기/)).toBeNull()
+
+    // 작성 중인 메시지는 덮어쓰지 않도록 조건 빼기를 막습니다.
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '직접 입력 중')
+    fireEvent.press(screen.getByLabelText('지역 조건 빼고 찾기 · 뺀 공고 3건'))
+    expect(screen.queryByText('이 조건으로 검색할까요?')).toBeNull()
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '')
+
+    fireEvent.press(screen.getByLabelText('지역 조건 빼고 찾기 · 뺀 공고 3건'))
+    await screen.findByText('이 조건으로 검색할까요?')
+    expect(screen.getByText('지역 조건 빼고 찾기')).toBeTruthy()
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+    expect(client.search).toHaveBeenCalledTimes(1)
+    fireEvent.press(screen.getByText('이 조건으로 검색'))
+    await waitFor(() => expect(client.search).toHaveBeenLastCalledWith({ query: '사업화 지원', acceptingOnly: true, companyConditions: {} }, expect.anything()))
+    // 수를 모르는 다음 결과는 조건이 남은 빼기만 수 없이 보입니다.
+    await screen.findByLabelText('마감·예정 공고도 찾기')
+    expect(screen.queryByLabelText(/지역 조건 빼고 찾기/)).toBeNull()
+  })
+
+  it('shows the search steps while searching and opens a result with its question sheet from the question action', async () => {
+    let finish!: (value: unknown) => void
+    const program = { ...programDetail, matchedReasons: [], recommendationScore: 90, eligibilityReview: null }
+    const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }),
+      getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+      search: jest.fn(() => new Promise((resolve) => { finish = resolve })) }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    const open = jest.fn()
+    render(<ChatScreen onOpenProgram={open} onLogin={jest.fn()} />)
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '사업화 지원')
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    await screen.findByText('이 조건으로 검색할까요?')
+    fireEvent.press(screen.getByText('이 조건으로 검색'))
+    await screen.findByTestId('ai-search-progress')
+    expect(screen.getByText('✓ 조건 정리')).toBeTruthy()
+    expect(screen.getByText('○ 자격 확인')).toBeTruthy()
+    await act(async () => { finish({ query: context.query, totalCount: 1, programs: [program], resultToken: null, expiresAt: null }) })
+    await waitFor(() => expect(screen.queryByTestId('ai-search-progress')).toBeNull())
+
+    fireEvent.press(screen.getByLabelText(`${program.title}, 로그인하고 질문하기`))
+    expect(open).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }, { ask: true })
+    fireEvent.press(screen.getByLabelText(`${program.title}, 상세 보기`))
+    expect(open).toHaveBeenLastCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id })
   })
 
   it('offers support-field quick replies for the search-intent question and sends a choice through interpretation only', async () => {
@@ -658,7 +717,7 @@ describe('mobile AI timeline scrolling', () => {
     timelineSize(500)
     await send()
     await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
-    expect(screen.getByText('조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.')).toBeTruthy()
+    expect(screen.getByText('조건에 맞는 공고를 찾지 못했어요.')).toBeTruthy()
     layout('ai-search-results', 280, 160); flushFrame()
     expect(scrollTo).toHaveBeenCalledWith({ y: 0, animated: true })
   })

@@ -13,7 +13,9 @@ import java.util.HexFormat
 import java.util.UUID
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
+import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.node.ObjectNode
 
 /** 검증된 Catalog snapshot을 기존 공고 FK와 신청서 분석 상태를 보존하며 원자적으로 반영합니다. */
 @Repository
@@ -108,7 +110,11 @@ class CatalogProjectionRepository(
                 eligibilityReview = null,
             ), sortTimestamp = item.sortTimestamp.takeIf(String::isNotBlank).orEmpty())
         }
-        return hash(persistedPrograms)
+        // 검색 응답에만 붙는 필드는 키째 지워 그 필드가 없던 때와 같은 바이트로 셉니다. 남겨 두면 필드를 추가한 배포마다
+        // 이미 반영한 revision이 바뀐 것으로 보여 Catalog 반영이 멈춥니다(저장 열을 바꾼 경우만 V51처럼 checkpoint를 초기화).
+        val tree = objectMapper.valueToTree<JsonNode>(persistedPrograms)
+        tree.forEach { (it.get("program") as ObjectNode).remove(RESPONSE_ONLY_PROGRAM_FIELDS) }
+        return hash(tree)
     }
 
     private fun hash(value: Any): String = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -118,5 +124,7 @@ class CatalogProjectionRepository(
         const val MAX_PROGRAMS = 20_000
         val SOURCES = setOf("BIZINFO", "KSTARTUP", "MSIT", "CNTRADE_NOTICE")
         val FINGERPRINT = Regex("[0-9a-f]{64}")
+        /** [ai.govbiz.core.supportprogram.domain.SupportProgram]의 검색 결과 전용 필드입니다. 저장 열이 아닙니다. */
+        val RESPONSE_ONLY_PROGRAM_FIELDS = listOf("regionTagMismatch", "alsoPostedBy")
     }
 }

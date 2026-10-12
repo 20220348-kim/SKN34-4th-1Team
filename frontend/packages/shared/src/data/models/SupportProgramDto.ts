@@ -85,6 +85,15 @@ function requireOfficialSourceUrl(program: { sourceCode: string; sourceUrl: stri
   }
 }
 
+/** 같은 공고를 다른 제공처도 올렸을 때 그 게시물입니다. 원문 주소도 그 제공처의 공식 주소여야 합니다. */
+const supportProgramPostingDtoSchema = z.object({
+  sourceCode: sourceCodeSchema,
+  id: z.string().min(1),
+  sourceName: z.string().min(1),
+  sourceUrl: z.string().url(),
+  evidenceQuestionSupported: z.boolean(),
+}).superRefine(requireOfficialSourceUrl)
+
 export const supportProgramDtoSchema = z.object({
   ...supportProgramBaseShape,
   matchedReasons: z.array(z.string()),
@@ -92,8 +101,18 @@ export const supportProgramDtoSchema = z.object({
   eligibilityReview: eligibilityReviewDtoSchema.nullable().default(null),
   // 이 필드를 보내기 전 Core와 저장된 결과도 열리도록 누락을 표시 없음으로 받고 기존 응답 모양을 유지합니다.
   regionTagMismatch: z.boolean().optional(),
+  // 원문 질문 지원 여부와 함께 게시는 이 필드를 보내기 전 Core·저장된 대화에서는 없음으로 받습니다.
+  evidenceQuestionSupported: z.boolean().optional(),
+  alsoPostedBy: z.array(supportProgramPostingDtoSchema).max(3).optional(),
 }).superRefine((program, context) => {
   requireOfficialSourceUrl(program, context)
+  const postedSources = new Set([program.sourceCode])
+  program.alsoPostedBy?.forEach((posting, index) => {
+    if (postedSources.has(posting.sourceCode)) {
+      context.addIssue({ code: 'custom', path: ['alsoPostedBy', index, 'sourceCode'], message: '함께 게시는 서로 다른 제공처의 게시물이어야 합니다.' })
+    }
+    postedSources.add(posting.sourceCode)
+  })
   if (!program.eligibilityReview) return
   for (const axisName of ['target', 'region'] as const) {
     program.eligibilityReview[axisName].evidence.forEach((evidence, index) => {
@@ -109,12 +128,26 @@ export const supportProgramDtoSchema = z.object({
   }
 })
 
+const exclusionCount = z.number().int().min(0).max(20)
+
+/** 순위 매기기 후보 수와 사유별 제외 수입니다. 뺀 후보는 보낸 후보를 넘을 수 없습니다. */
+export const supportProgramExclusionCountsDtoSchema = z.object({
+  candidateCount: exclusionCount,
+  lowRelevance: exclusionCount,
+  target: exclusionCount,
+  region: exclusionCount,
+}).refine((counts) => counts.lowRelevance + counts.target + counts.region <= counts.candidateCount, {
+  message: '추천에서 뺀 후보 수가 살펴본 후보 수를 넘을 수 없습니다.',
+})
+
 export const supportProgramSearchResponseDtoSchema = z.object({
   query: z.string(),
   programs: z.array(supportProgramDtoSchema).max(5),
   totalCount: z.number().int().min(0).max(5),
   resultToken: z.uuid().refine((value) => value === value.toLowerCase()).nullable(),
   expiresAt: z.iso.datetime().nullable(),
+  // 이 필드를 보내기 전 Core 응답도 열리도록 없으면 모름으로 받습니다.
+  exclusionCounts: supportProgramExclusionCountsDtoSchema.nullable().optional(),
 }).superRefine((response, context) => {
   const locked = response.resultToken !== null
   if (locked !== (response.expiresAt !== null)
@@ -192,6 +225,8 @@ export function toSupportProgram(dto: SupportProgramDto): SupportProgram {
     recommendationScore: dto.recommendationScore,
     // 표시가 필요한 검색 결과에만 둡니다. 목록·저장 공고 등 나머지 공고 모양은 그대로입니다.
     ...(dto.regionTagMismatch ? { regionTagMismatch: true } : {}),
+    ...(dto.evidenceQuestionSupported ? { evidenceQuestionSupported: true } : {}),
+    ...(dto.alsoPostedBy?.length ? { alsoPostedBy: dto.alsoPostedBy.map((posting) => ({ ...posting })) } : {}),
     eligibilityReview: dto.eligibilityReview ? {
       status: dto.eligibilityReview.status,
       basis: dto.eligibilityReview.basis,

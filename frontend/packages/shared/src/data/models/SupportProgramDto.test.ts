@@ -34,6 +34,44 @@ describe('검색 결과의 다른 지역 한정 가능 표시', () => {
   })
 })
 
+describe('검색 결과의 함께 게시와 원문 질문 지원 여부', () => {
+  const searched = {
+    sourceCode: 'BIZINFO', id: 'PBLN_1', title: 'AI 창업 지원', organization: '창업진흥원', summary: '사업 내용',
+    categories: ['창업'], regions: ['서울'], targetDescription: '창업기업', applicationPeriod: '2026-10-01 ~ 2026-10-31',
+    applicationStartDate: '2026-10-01', applicationEndDate: '2026-10-31', status: 'OPEN', sourceName: '기업마당',
+    sourceUrl: 'https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_1',
+    matchedReasons: [], recommendationScore: 80, eligibilityReview: null,
+  }
+  const kStartup = {
+    sourceCode: 'KSTARTUP', id: '179197', sourceName: 'K-Startup', evidenceQuestionSupported: false,
+    sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=179197',
+  }
+
+  it('묶인 게시물과 지원 여부를 도메인으로 복사하고 이 필드가 없던 응답은 기존 공고 모양을 유지한다', () => {
+    const dto = supportProgramDtoSchema.parse({ ...searched, evidenceQuestionSupported: true, alsoPostedBy: [kStartup] })
+    const domain = toSupportProgram(dto)
+
+    expect(domain).toMatchObject({ evidenceQuestionSupported: true, alsoPostedBy: [kStartup] })
+    expect(domain.alsoPostedBy?.[0]).not.toBe(dto.alsoPostedBy?.[0])
+    for (const response of [searched, { ...searched, evidenceQuestionSupported: false, alsoPostedBy: [] }]) {
+      const program = toSupportProgram(supportProgramDtoSchema.parse(response))
+      expect(program).not.toHaveProperty('evidenceQuestionSupported')
+      expect(program).not.toHaveProperty('alsoPostedBy')
+    }
+  })
+
+  it('공고와 같은 제공처·겹치는 제공처·공식이 아닌 주소·불리언이 아닌 지원 여부를 거부한다', () => {
+    for (const alsoPostedBy of [
+      [{ ...kStartup, sourceCode: 'BIZINFO', sourceUrl: searched.sourceUrl }],
+      [kStartup, { ...kStartup, id: '179198' }],
+      [{ ...kStartup, sourceUrl: 'https://example.com/179197' }],
+      [{ ...kStartup, evidenceQuestionSupported: 'false' }],
+    ]) {
+      expect(supportProgramDtoSchema.safeParse({ ...searched, alsoPostedBy }).success).toBe(false)
+    }
+  })
+})
+
 describe('공고 상세의 공식 문의처·우대 사항·주관 기관 유형', () => {
   it('받은 값을 도메인으로 복사한다', () => {
     const dto = supportProgramDetailDtoSchema.parse({

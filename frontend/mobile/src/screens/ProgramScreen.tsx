@@ -18,10 +18,12 @@ import { ProgramAttachments } from '../components/ProgramAttachments'
 import type { AssistantDraft } from '../assistant/context'
 import { Button, Card, Field, Notice, Page, StatusBadge, Subtitle, Title, colors, ddayBadgeTone, styles } from '../ui'
 
-export function ProgramScreen({ identity, onLogin, resumeAction, onResumed, assistantDraft, onDraftConsumed }: {
+export function ProgramScreen({ identity, onLogin, resumeAction, onResumed, assistantDraft, onDraftConsumed, openQuestion = false }: {
   identity: SupportProgramIdentity; onLogin: (action?: 'save' | 'question') => void
   resumeAction?: { action: 'save' | 'question'; token: string }; onResumed?(): void
   assistantDraft?: AssistantDraft | null; onDraftConsumed?(id: string): void
+  /** 검색 결과의 "이 공고에 질문하기"로 들어왔습니다. 공고를 불러오면 질문 시트를 열고, 비로그인이면 로그인부터 묻습니다. */
+  openQuestion?: boolean
 }) {
   const { session, status, invalidateSession, refreshSession } = useAuth()
   const token = status === 'signedIn' ? session?.accessToken : undefined
@@ -44,6 +46,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed, assi
   const saveWork = useRef<AbortController | null>(null)
   const resumed = useRef(false)
   const consumedDraft = useRef<string | null>(null), draftOwner = useRef(token); draftOwner.current = token
+  const questionRequested = useRef(false)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const sourceCode = identity.sourceCode
   const sourceProgramId = identity.sourceProgramId
@@ -119,6 +122,15 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed, assi
     else if (!saved) void toggleSave()
     else setSaveNotice('이미 관심 공고함에 담은 공고예요.')
   }, [resumeAction, token, program, saved])
+
+  useEffect(() => {
+    if (!openQuestion || questionRequested.current || !program || status === 'loading') return
+    questionRequested.current = true
+    // 질문을 받지 않는 공고는 원문 확인 안내가 이미 보이므로 시트를 열지 않습니다.
+    if (!program.evidenceQuestionSupported) return
+    if (token) setQuestionOpen(true)
+    else if (status === 'signedOut') onLogin('question')
+  }, [openQuestion, program, status, token])
 
   async function ask() {
     if (!program?.evidenceQuestionSupported) return

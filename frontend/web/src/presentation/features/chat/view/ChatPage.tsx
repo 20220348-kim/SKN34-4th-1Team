@@ -14,6 +14,7 @@ import { ConversationProposal } from './ConversationProposal'
 import { ProgramResults } from './ProgramResults'
 import { GovApplicationCard, GovPartnerBrief, GovReviewCard } from './GovWork'
 import { EvidenceQuestionFeedback } from '../../support-program-detail/view/EvidenceQuestionFeedback'
+import { ZeroResultHelp } from './ZeroResultHelp'
 import { SearchIntroTitle } from './SearchIntroTitle'
 import { govToolTexts, type ChatSearchOptions, type GovAgentTool } from '../state/chatSlice'
 import {
@@ -50,6 +51,8 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     handleRetryInterpretation,
     handleClarificationInput,
     handleQuickReply,
+    zeroResultHelp,
+    handleSearchRelaxation,
     canRetrySearch,
     cancelSearch,
     composerInputRef,
@@ -374,6 +377,9 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                     selectGovProgram({ sourceCode: program.sourceCode, sourceProgramId: program.id, title: program.title })
                     composerInputRef.current?.focus()
                   } : undefined} />
+              ) : zeroResultHelp?.messageId === message.id ? (
+                <ZeroResultHelp explanation={zeroResultHelp.explanation} relaxations={zeroResultHelp.relaxations}
+                  disabled={isBusy} onRelax={handleSearchRelaxation} onRephrase={handleClarificationInput} />
               ) : null}
             </div>
           </article>

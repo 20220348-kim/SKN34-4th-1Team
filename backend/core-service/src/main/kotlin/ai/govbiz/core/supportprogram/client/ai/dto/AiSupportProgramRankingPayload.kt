@@ -5,6 +5,14 @@ data class AiSupportProgramRankingPayload(
     val originalQuery: String?,
     val scoringVersion: String?,
     val rankings: List<AiScoredSupportProgramPayload?>?,
+    /** 추천에서 뺀 후보 수입니다. 이 필드를 보내기 전 AI Service 응답은 null입니다. */
+    val exclusionCounts: AiSupportProgramRankingExclusionsPayload? = null,
+)
+
+data class AiSupportProgramRankingExclusionsPayload(
+    val lowRelevance: Int?,
+    val target: Int?,
+    val region: Int?,
 )
 
 enum class AiSupportProgramEligibility {

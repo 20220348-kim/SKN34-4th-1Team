@@ -2,9 +2,11 @@ import { memo } from 'react'
 import { Link, useLocation } from 'react-router'
 import { programStatusLabels } from '@govbiz/shared/domain/labels'
 
-import type { SupportProgram, SupportProgramEligibilityAxis } from '../../../../domain/entities/SupportProgram'
+import {
+  supportProgramPostedTogetherLabel, supportProgramQuestionTarget, type SupportProgram, type SupportProgramEligibilityAxis,
+} from '../../../../domain/entities/SupportProgram'
 import { loginPathFor, signupPathFor } from '../../../shared/auth/returnPath'
-import { appPaths, isAppPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { appPaths, isAppPath, supportProgramAskPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { getSupportProgramEligibilityKind } from '../supportProgramEligibility'
 import { searchResultInterestKey, searchResultInterestMessages, type SearchResultInterests } from '../viewmodel/useSearchResultInterests'
 import { chatPageStyles } from './ChatPage.styles'
@@ -86,6 +88,9 @@ function ProgramCard({ program, interests, onSelectProgram }: { program: Support
   const isSaved = interests?.savedKeys.has(interestKey) ?? false
   const isSaving = interests?.pendingKeys.has(interestKey) ?? false
   const saveLabel = isSaved ? '관심 공고 저장됨' : '관심 공고 저장'
+  const postedTogether = supportProgramPostedTogetherLabel(program)
+  // 원문 질문은 회원 기능입니다(관심 상태가 있으면 회원). 비회원은 로그인 뒤 질문 패널이 열린 상세로 돌아옵니다.
+  const questionTarget = supportProgramQuestionTarget(program)
   return (
     <article className={chatPageStyles.programCard}>
       <div className={chatPageStyles.programCardHeader}>
@@ -111,6 +116,7 @@ function ProgramCard({ program, interests, onSelectProgram }: { program: Support
           {program.regionTagMismatch ? (
             <span className={chatPageStyles.reviewRequiredTag}>다른 지역 한정일 수 있음</span>
           ) : null}
+          {postedTogether ? <span className={chatPageStyles.postedTogetherTag}>{postedTogether}</span> : null}
           {program.recommendationScore !== null ? (
             <span className={chatPageStyles.programRelevance}>관련도 {program.recommendationScore}점</span>
           ) : null}
@@ -155,34 +161,55 @@ function ProgramCard({ program, interests, onSelectProgram }: { program: Support
           ))}
         </div>
       ) : null}
-      {/* 왼쪽은 새 창으로 여는 원문 링크(새 창 아이콘), 오른쪽은 상세 조건 보기입니다. */}
+      {/* 왼쪽은 새 창으로 여는 원문 링크(함께 게시면 제공처마다 하나), 오른쪽은 원문 질문과 상세 조건 보기입니다. */}
       <div className={chatPageStyles.programActions}>
-        {onSelectProgram ? <button type="button" className={chatPageStyles.programDetailsButton}
-          onClick={() => onSelectProgram(program)}>이 공고 선택</button> : null}
-        <a
-          href={program.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className={chatPageStyles.programSourceLink}
-        >
-          {program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록' : '원문 보기'}
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
-          </svg>
-        </a>
-        <Link
-          className={chatPageStyles.programDetailsButton}
-          to={supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp, searchReturnTo)}
-          state={{ searchReturnTo }}
-        >
-          상세 조건 보기
-        </Link>
+        <div className={chatPageStyles.programSourceLinks}>
+          <SourceLink href={program.sourceUrl} label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록'
+            : program.alsoPostedBy?.length ? `${program.sourceName} 원문` : '원문 보기'} />
+          {program.alsoPostedBy?.map((posting) => (
+            <SourceLink key={posting.sourceCode} href={posting.sourceUrl}
+              label={posting.sourceCode === 'CNTRADE_NOTICE' ? `${posting.sourceName} 공지 목록` : `${posting.sourceName} 원문`} />
+          ))}
+        </div>
+        <div className={chatPageStyles.programActionButtons}>
+          {/* Gov 에이전트는 고른 공고로 같은 대화에서 원문 답변·신청 준비를 이어 갑니다. */}
+          {onSelectProgram ? <button type="button" className={chatPageStyles.programDetailsButton}
+            onClick={() => onSelectProgram(program)}>이 공고 선택</button> : null}
+          {questionTarget ? (
+            <Link
+              className={chatPageStyles.programQuestionButton}
+              to={interests ? supportProgramAskPath(questionTarget, inApp, searchReturnTo) : loginPathFor(supportProgramAskPath(questionTarget, true))}
+              state={interests ? { searchReturnTo } : undefined}
+            >
+              {interests ? '이 공고에 질문하기' : '로그인하고 질문하기'}
+            </Link>
+          ) : null}
+          <Link
+            className={chatPageStyles.programDetailsButton}
+            to={supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp, searchReturnTo)}
+            state={{ searchReturnTo }}
+          >
+            상세 조건 보기
+          </Link>
+        </div>
       </div>
       {program.sourceCode === 'CNTRADE_NOTICE' ? (
         <p className={chatPageStyles.conditionsHint}>제목으로 해당 공지를 확인해 주세요.</p>
       ) : null}
     </article>
+  )
+}
+
+/** 새 창으로 여는 공식 원문 링크입니다. 새 창 아이콘을 붙입니다. */
+function SourceLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className={chatPageStyles.programSourceLink}>
+      {label}
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+      </svg>
+    </a>
   )
 }
 

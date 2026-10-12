@@ -1,5 +1,7 @@
 package ai.govbiz.core.supportprogram.service.search
 
+import ai.govbiz.core.supportprogram.domain.SupportProgramRankingExclusions
+import ai.govbiz.core.supportprogram.facade.SupportProgramRanking
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
@@ -131,6 +133,36 @@ class SupportProgramSearchServiceTest {
 
         assertEquals(emptyList<SupportProgram>(), result.programs)
         assertEquals(1, ranking.calls.size)
+        // 수를 알려 주지 않은 순위 매기기는 모름(null)으로 둡니다.
+        assertEquals(null, result.exclusionCounts)
+    }
+
+    @Test
+    fun carriesTheRankingExclusionCountsIntoTheSearchResult() {
+        val query = "서울 AI 창업기업이 받을 지원사업"
+        val open = catalogProgram(id = "open", summary = "AI 창업 지원")
+        Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve(query, listOf(open))
+        Mockito.doReturn(listOf(open)).`when`(supportProgramRepository).findSearchablePresent()
+        ranking.exclusions = SupportProgramRankingExclusions(candidateCount = 1, lowRelevance = 0, target = 0, region = 1)
+
+        val result = service().search(query, true)
+
+        assertEquals(emptyList<SupportProgram>(), result.programs)
+        assertEquals(SupportProgramRankingExclusions(1, 0, 0, 1), result.exclusionCounts)
+    }
+
+    @Test
+    fun reportsNoCandidatesWithoutCallingRankingWhenRetrievalFindsNothing() {
+        val query = "우주 관광 지원"
+        val open = catalogProgram(id = "open", summary = "AI 창업 지원")
+        Mockito.doReturn(emptyList<CatalogSupportProgram>()).`when`(retrieval).retrieve(query, listOf(open))
+        Mockito.doReturn(listOf(open)).`when`(supportProgramRepository).findSearchablePresent()
+
+        val result = service().search(query, true)
+
+        assertEquals(emptyList<SupportProgram>(), result.programs)
+        assertEquals(SupportProgramRankingExclusions.NO_CANDIDATES, result.exclusionCounts)
+        assertEquals(0, ranking.calls.size)
     }
 
     @Test
@@ -282,8 +314,9 @@ class SupportProgramSearchServiceTest {
     @Test
     fun keepsSameRawIdsFromDifferentSourcesDistinctInSearchTrace() {
         val query = "서울 AI 지원"
-        val bizInfo = catalogProgram(id = "SHARED", sourceCode = "BIZINFO")
-        val other = catalogProgram(id = "SHARED", sourceCode = "OTHER")
+        // 제목까지 같으면 같은 공고로 묶이므로 원본 ID만 같은 서로 다른 공고로 둡니다.
+        val bizInfo = catalogProgram(id = "SHARED", title = "기업마당 AI 공고", sourceCode = "BIZINFO")
+        val other = catalogProgram(id = "SHARED", title = "다른 제공처 AI 공고", sourceCode = "OTHER")
         val candidates = listOf(other, bizInfo)
         Mockito.doReturn(candidates).`when`(supportProgramRepository).findSearchablePresent()
         Mockito.doReturn(candidates).`when`(retrieval).retrieve(query, candidates)
@@ -343,6 +376,31 @@ class SupportProgramSearchServiceTest {
         assertEquals(listOf("seoul", "nationwide", "body-match", "gyeongbuk", "jeonnam"), result.programs.map(SupportProgram::id))
         assertEquals(listOf(false, false, false, true, true), result.programs.map(SupportProgram::regionTagMismatch))
         assertEquals(listOf(89, 87, 86, 90, 88), result.programs.map(SupportProgram::recommendationScore))
+    }
+
+    @Test
+    fun groupsTheSameProgramFromAnotherSourceAfterRankingWithoutChangingTheRankingInput() {
+        val query = "AI 창업지원"
+        val end = LocalDate.of(2026, 9, 30)
+        val bizInfo = catalogProgram("PBLN_1", title = "[서울] AI 창업 지원사업", applicationEndDate = end)
+        val other = catalogProgram("PBLN_2", title = "부산 수출 지원", applicationEndDate = end)
+        val kStartup = catalogProgram("179197", title = "AI 창업지원사업", applicationEndDate = end, sourceCode = "KSTARTUP")
+        // 후보에 오르지 못한 같은 공고도 검색 대상에서 찾아 함께 게시로 붙입니다.
+        val notRetrieved = catalogProgram("M1", title = "부산 수출 지원", applicationEndDate = end, sourceCode = "MSIT")
+        val programs = listOf(bizInfo, other, kStartup, notRetrieved)
+        val candidates = listOf(bizInfo, other, kStartup)
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(candidates).`when`(retrieval).retrieve(query, programs)
+        ranking.response = { ranked -> ranked.mapIndexed { index, candidate -> candidate.program.copy(recommendationScore = 90 - index) } }
+
+        val trace = service().searchWithTrace(query, acceptingOnly = true)
+
+        assertEquals(candidates, ranking.calls.single().candidates)
+        assertEquals(listOf("BIZINFO:PBLN_1", "BIZINFO:PBLN_2", "KSTARTUP:179197"), trace.candidateIds)
+        assertEquals(listOf("BIZINFO:PBLN_1", "BIZINFO:PBLN_2"), trace.finalProgramIds)
+        assertEquals(listOf(listOf("KSTARTUP:179197"), listOf("MSIT:M1")),
+            trace.result.programs.map { program -> program.alsoPostedBy.map { "${it.sourceCode}:${it.id}" } })
+        assertEquals(listOf(90, 89), trace.result.programs.map(SupportProgram::recommendationScore))
     }
 
     @Test
@@ -613,6 +671,7 @@ class SupportProgramSearchServiceTest {
     private class RecordingSupportProgramRankingFacade : SupportProgramRankingFacade {
         val calls = mutableListOf<RankingCall>()
         var response: (List<CatalogSupportProgram>) -> List<SupportProgram> = { emptyList() }
+        var exclusions: SupportProgramRankingExclusions? = null
 
         override fun rank(
             query: String,
@@ -624,5 +683,13 @@ class SupportProgramSearchServiceTest {
             calls += RankingCall(query, candidates, limit, companyConditions, referenceDate)
             return response(candidates)
         }
+
+        override fun rankWithExclusions(
+            query: String,
+            candidates: List<CatalogSupportProgram>,
+            limit: Int,
+            companyConditions: SupportProgramCompanyConditions?,
+            referenceDate: LocalDate?,
+        ) = SupportProgramRanking(rank(query, candidates, limit, companyConditions, referenceDate), exclusions)
     }
 }

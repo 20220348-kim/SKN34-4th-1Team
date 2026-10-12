@@ -17,6 +17,6 @@ export default function SearchRoute() {
     onPress={() => requestLogin({ direct: true })} /> : undefined }} />
     <SearchScreen mode={mode === 'filter' ? 'filter' : 'ai'} headerHeight={headerHeight} onModeChange={(next) => router.setParams({ mode: next })}
     assistantDraft={assistant.searchDraft} onDraftConsumed={assistant.consumeSearchDraft}
-    onOpenProgram={(identity) => router.push({ pathname: '/program', params: identity })}
+    onOpenProgram={(identity, options) => router.push({ pathname: '/program', params: options?.ask ? { ...identity, ask: '1' } : identity })}
     onLogin={requestLogin} /></>
 }

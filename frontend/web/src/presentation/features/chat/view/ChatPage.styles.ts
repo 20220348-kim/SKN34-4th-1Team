@@ -76,6 +76,10 @@ export const chatPageStyles = {
   messageActions: 'mt-3 flex flex-wrap items-center gap-2',
   messageRetryButton: 'min-h-10 cursor-pointer rounded-full border border-brand-primary bg-white px-4 py-2 text-xs font-semibold text-brand-primary hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   suggestedQuestions: 'mt-[0.85rem] flex flex-wrap gap-2',
+  zeroResultHelp: 'mt-[0.85rem] flex flex-col gap-2',
+  zeroResultExplanation: 'm-0 text-sm leading-relaxed text-ink-muted [overflow-wrap:anywhere]',
+  zeroResultActions: 'flex flex-wrap gap-2',
+  zeroResultCount: 'font-semibold text-ink-muted',
   suggestedQuestionButton: classes(
     'cursor-pointer rounded-full border bg-white px-[0.78rem] py-[0.6rem] text-left text-[0.78rem]',
     'border-[#b4ddc7] text-ink-muted hover:border-brand-primary hover:bg-[#eef8f2] hover:text-[#115b3c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
@@ -209,10 +213,20 @@ export const chatPageStyles = {
   matchedReasons: 'mt-[0.7rem] flex flex-wrap gap-[0.35rem]',
   matchedReason: 'text-[0.7rem] text-ink-muted',
   programActions: 'mt-[0.85rem] flex flex-wrap items-center justify-between gap-3',
+  programSourceLinks: 'flex flex-wrap items-center gap-x-4 gap-y-1',
+  programActionButtons: 'ml-auto flex flex-wrap items-center justify-end gap-2',
   programDetailsButton: classes(
     'cursor-pointer rounded-full border-0 px-[0.7rem] py-[0.55rem]',
     'bg-brand-primary text-[0.74rem] font-extrabold text-white',
   ),
+  // 상세 조건 보기와 같은 크기의 테두리 버튼입니다. 원문 질문 패널이 열린 상세로 갑니다.
+  programQuestionButton: classes(
+    'cursor-pointer rounded-full border border-brand-primary bg-white px-[0.7rem] py-[0.5rem]',
+    'text-[0.74rem] font-extrabold text-brand-primary hover:bg-brand-soft',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  ),
+  // 같은 공고를 여러 제공처가 올려 한 칸에 묶었다는 표시입니다. 자격·주의 표시가 아니라 회색입니다.
+  postedTogetherTag: 'rounded-[0.35rem] bg-surface-muted px-[0.48rem] py-1 text-[0.68rem] font-extrabold text-ink-muted',
   programSourceLink:
     'inline-flex items-center gap-1 text-[0.8rem] font-bold text-brand-primary no-underline hover:underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
 } as const
