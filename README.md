@@ -718,6 +718,47 @@ flowchart LR
 
 공식 첨부 양식에 **사용자가 입력한 답변을 기입하고 초안을 내려받는 기능**입니다.
 
+<table width="100%">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>① 공고 선택</strong><br>
+      <a href="docs/assets/screenshots/application-documents/01-program-selection.jpg"><img src="docs/assets/screenshots/application-documents/01-program-selection.jpg" alt="전체 검색에서 PDF 신청 양식이 있는 공고를 선택한 화면" width="320"></a><br>
+      관심 공고함이나 전체 검색에서 작성할 공고를 고릅니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>② 양식 확인</strong><br>
+      <a href="docs/assets/screenshots/application-documents/02-form-confirmation.jpg"><img src="docs/assets/screenshots/application-documents/02-form-confirmation.jpg" alt="공식 첨부 양식과 자동 기입 가능한 문항 범위를 확인하는 화면" width="320"></a><br>
+      공식 첨부 양식과 자동 기입 범위를 확인합니다.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>③ 답변 작성</strong><br>
+      <a href="docs/assets/screenshots/application-documents/03-answer-entry.jpg"><img src="docs/assets/screenshots/application-documents/03-answer-entry.jpg" alt="분석된 신청 문항에 답변을 입력하고 자동 저장하는 화면" width="320"></a><br>
+      문항별로 답변을 입력하고 자동으로 저장합니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>④ 답변 검토</strong><br>
+      <a href="docs/assets/screenshots/application-documents/04-answer-review.jpg"><img src="docs/assets/screenshots/application-documents/04-answer-review.jpg" alt="초안 생성 전에 항목별 답변 현황과 비어 있는 문항을 검토하는 화면" width="320"></a><br>
+      작성 현황과 비어 있는 문항을 확인한 뒤 초안을 요청합니다.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>⑤ 생성 결과·다운로드</strong><br>
+      <a href="docs/assets/screenshots/application-documents/05-generation-result.jpg"><img src="docs/assets/screenshots/application-documents/05-generation-result.jpg" alt="로컬 웹에서 생성 완료된 PDF 초안과 기입 현황 및 다운로드 버튼을 확인하는 화면" width="320"></a><br>
+      생성된 파일과 기입 현황을 확인하고 초안을 내려받습니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>⑥ 실제 기입 문서</strong><br>
+      <a href="docs/assets/screenshots/application-documents/06-filled-document.jpg"><img src="docs/assets/screenshots/application-documents/06-filled-document.jpg" alt="다운로드한 PDF 신청서의 업체명 칸에 가상 회사명이 실제로 기입된 모습" width="320"></a><br>
+      내려받은 문서의 입력 위치와 내용을 확인합니다.
+    </td>
+  </tr>
+</table>
+
+사진은 로컬 웹에서 같은 공식 PDF 양식에 가상 회사명 1개를 입력해 생성·다운로드한 시연입니다. ⑥은 내려받은 PDF의 첫 페이지를 렌더링한 모습이며, 기관 제출이나 나머지 문항 작성 완료를 뜻하지 않습니다.
+
 <img src="docs/assets/readme/application-form-caption.svg" alt="양식 분석·답변 준비 — 공식 첨부에서 문항과 입력 위치를 분석해 저장합니다. 사용자는 준비된 양식을 선택하고 문항별 답변을 입력합니다." width="820">
 
 ```mermaid
