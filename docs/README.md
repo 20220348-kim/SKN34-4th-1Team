@@ -97,6 +97,7 @@ C01 문서의 수동 조건 입력 UI와 개발 전략의 최초 UI 계획은 �
 | [C01 기업 조건 검색](company-conditions-search.md) | 익명 조건 입력·적용·초기화, POST 검색 반영, 검증 결과와 후속 범위 |
 | [원문 우선 자격 판정](source-first-eligibility-review.md) | 태그와 신청 요건 구분, 본문 인용 검증, 확인 필요 공고 분리와 검증 한계 |
 | [C02 후속 대화 조건 갱신](conversation-condition-update.md) | 작은 대화 상태·조건 변경 제안·확인 질문·사용자 확인 검색과 검증 범위 |
+| [대화 조건 해석 평가 세트](../evaluation/support-program-conversation/README.md) | 단일 턴 188·여러 턴 76턴 AI 작성 기대 라벨, 대리 모델 입력 내보내기·실제 AI Service 경로 재생·채점(Claude 대리 검증, OpenAI 측정 아님) |
 | [검색 랭킹 시간 초과 수정](support-program-ranking-timeout-fix.md) | 랭킹 전용 시간 예산, 504 구분과 검색 재시도, 장애 관측·검증 기록 |
 | [검색 지연 개선과 실제 비교](search-latency-20260908.md) | 정확일치 캐시·동시 요청 재사용, Fast 비교와 미채택 실험, 호출 한도·검증 |
 | [지역 충돌 판정·Fast 상시 설정](region-conflict-fast-20260908.md) | 서울·안산 충돌과 실제 이전 예외 구분, 고정 회귀 검사·공개 공고 재검사·배포 기록 |

@@ -124,6 +124,36 @@ class SupportProgramConversationServiceTest {
     }
 
     @Test
+    fun evidenceMayDifferFromTheMessageOnlyInSpacingUnicodeFormAndCase() {
+        val cases = listOf(
+            "부산으로  변경" to "부산으로 변경",
+            "부산으로\u00a0변경" to "부산으로 변경",
+            "부\u200b산으로 변경" to "부산",
+            "\u1107\u116e\u1109\u1161\u11ab으로 변경" to "부산",
+            "Busan으로 변경" to "busan",
+        )
+        for ((message, evidence) in cases) {
+            stub(response(listOf(update(evidence = evidence))))
+            assertEquals("부산", service.interpret(message, context, null).proposedContext.companyConditions.region, message)
+        }
+        for ((message, evidence) in listOf("부산으로 변경" to "부 산", "부산으로 변경" to "변경 부산", "부산으로 변경" to "부산\u200b")) {
+            rejects(response(listOf(update(evidence = evidence))), message)
+        }
+    }
+
+    @Test
+    fun acceptsTheDottedNumericDateOfTheKoreanPunctuationRules() {
+        for (evidence in listOf("2021.3.15", "2021. 3. 15.", "2021.03.15.")) {
+            stub(response(listOf(update("ESTABLISHED_ON", "2021-03-15", evidence))))
+            val result = service.interpret("$evidence 설립", context, null)
+            assertEquals(LocalDate.parse("2021-03-15"), result.proposedContext.companyConditions.establishedOn, evidence)
+        }
+        for (evidence in listOf("2021.3", "2021.2.30", "21.3.15", "2021..3.15", "2021.3.15 설립")) {
+            rejects(response(listOf(update("ESTABLISHED_ON", "2021-03-15", evidence))), "$evidence 설립")
+        }
+    }
+
+    @Test
     fun rejectsFutureAndFabricatedFoundationYears() {
         rejects(response(listOf(update(field = "FOUNDED_YEAR", value = "2027", evidence = "2027년"))), "2027년 설립")
         rejects(response(listOf(update(field = "FOUNDED_YEAR", value = "2021", evidence = "설립 5년"))), "설립 5년")

@@ -22,7 +22,7 @@ data class SupportProgramConversationRequest(
     @param:JsonProperty(required = true)
     @field:NotBlank
     @field:Size(max = 500)
-    @field:Pattern(regexp = "(?Us)^(?!\\s*$)(?!.*[\\p{C}&&[^\\n\\r\\t]]).*$")
+    @field:Pattern(regexp = MESSAGE)
     val message: String,
     @param:JsonProperty(required = true)
     @field:Valid
@@ -39,6 +39,14 @@ data class SupportProgramConversationRequest(
     val pendingStateExclusive: Boolean
         get() = pendingClarification == null || pendingProposal == null
 }
+
+/**
+ * 사용자가 직접 쓴 메시지입니다. 다른 글자 필드와 달리 👩‍💻 속 결합 문자(ZWJ)나 웹에서 붙여 넣은 폭 없는 공백 같은 서식 문자(Cf),
+ * 이 Java가 아직 모르는 새 이모지(Cn)는 받습니다. 제어·양방향 제어·대리 쌍·사용자 정의·비문자 코드 포인트와 보이는 글자가
+ * 없는 메시지는 계속 거부합니다. 양방향 제어는 보이는 글과 저장된 글을 다르게 만들 수 있습니다(Trojan Source).
+ */
+private const val MESSAGE = "(?Us)^(?![\\s\\p{Cf}]*$)(?!.*[\\p{C}&&[^\\n\\r\\t\\p{Cf}\\p{Cn}]])" +
+    "(?!.*[\\p{IsNoncharacter_Code_Point}\\x{061C}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}\\x{2066}-\\x{2069}]).*$"
 
 data class SupportProgramConversationContextRequest(
     @param:JsonProperty(required = true)

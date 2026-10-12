@@ -62,7 +62,7 @@ query가 "사업화 지원"일 때 "지원금 위주"라면 QUERY는 "사업화 
 현재 요청을 해석하세요. 단순 취소 요청에 설명으로 응답할 때는 새로운 조건을 말하거나 화면의
 제안 취소를 선택하도록 안내할 수 있지만 실제 취소·조건 적용·검색이 완료되었다고 말하지 마세요.
 
-설립일은 현재 message에 명시한 완전한 YYYY-MM-DD 또는 YYYY년 M월 D일만 허용합니다.
+설립일은 현재 message에 명시한 완전한 YYYY-MM-DD, YYYY년 M월 D일 또는 마침표로 적은 YYYY. M. D.(예: 2021.3.15, 2021. 3. 15.)만 허용합니다.
 ESTABLISHED_ON SET evidence는 앞뒤 설명 없이 날짜 자체만 정확히 인용합니다.
 연·월·일 사이 공백을 허용하며 YYYY-MM-DD로 정규화한 value가 실제 날짜와 같아야 합니다.
 1900-01-01부터 referenceDate까지의 날짜만 허용합니다. "설립 2년", "작년 창업", 연/월만 있는
@@ -70,6 +70,7 @@ ESTABLISHED_ON SET evidence는 앞뒤 설명 없이 날짜 자체만 정확히 �
 이전 질문에 날짜가 있어도 현재 message의 "네"만으로 설립일을 SET하지 마세요.
 설립연도만 아는 경우 foundedYear를 사용합니다. "2021년 설립"은 FOUNDED_YEAR SET value="2021", evidence="2021년"으로 처리하며 월·일을 추가로 요구하지 않습니다.
 FOUNDED_YEAR의 value는 1900부터 referenceDate의 연도까지 네 자리 문자열이고 evidence는 해당 네 자리 연도 또는 "년"을 붙인 값만 허용합니다.
+"21년 설립"·"이천이십일년"처럼 연도가 네 자리 숫자로 적혀 있지 않으면 FOUNDED_YEAR를 SET하지 말고 ESTABLISHMENT로 묻습니다.
 ESTABLISHED_ON과 FOUNDED_YEAR는 같은 설립 정보의 서로 다른 정밀도입니다. 둘을 동시에 SET하지 않습니다. 한쪽을 SET하거나 CLEAR하면 서버가 다른 쪽도 지웁니다.
 이미 foundedYear가 있으면 새로운 검색이나 지역 변경만으로 정확한 설립일을 요구하지 마세요. 설립 정보를 바꾸거나 해제하라는 명시적 요청이 없으면 보존합니다.
 

@@ -685,7 +685,10 @@ nullable 조건도 키 자체는 필수이며 미입력은 명시적 null입니�
 Core가 서울 기준일과 `govbiz-support-program-conversation-v1`을 보내고, 응답의 최대 6개 SET/CLEAR 변경에서
 중복 필드·현재 메시지의 정확한 근거 인용·실제 날짜·문자 및 길이 제한을 검증합니다. 새 계약은 UTF-16 기준으로
 message/query 500, region 50, industry/supportPurpose 100, 날짜 10, 질문/근거 160입니다. 상대 업력으로 설립일을
-생성할 수 없습니다. 미변경 필드는 유지하고, 마지막 질문의 draftContext → pendingProposal → context 순서로
+생성할 수 없습니다. 근거 인용은 AI Service와 같은 규칙(NFC·서식 문자 제거·연속 공백 하나·소문자)으로 메시지와
+비교하고, 설립일 근거는 ISO·`YYYY년 M월 D일`·마침표 숫자 날짜(`2021. 3. 15.`)를 받습니다. message는 다른 조건
+문자열과 달리 이모지 결합 문자(ZWJ) 같은 서식 문자와 새 이모지를 받고 양방향 제어·비문자·서식 문자만 있는 값은
+400으로 거부합니다(`controller/dto/SupportProgramConversationRequest`). 미변경 필드는 유지하고, 마지막 질문의 draftContext → pendingProposal → context 순서로
 병합 기준을 정하되 changedFields는 확정 context와
 비교해 계산합니다. REGION 변경이 확정 조건이나 병합 기준과 표기만 다른 같은 지역이면(`서울특별시`↔`서울`,
 `서울시 강남구`↔`서울 강남구`) `_common/domain/RegionDictionary` 기준으로 기존 표기를 유지해 바뀐 조건으로 세지 않습니다.
@@ -1254,6 +1257,9 @@ C02 회귀는 공개 HTTP의 nullable 필수 키·엄격한 타입·문자/날�
 현재 발화 인용·미변경 조건 보존·직전 초안 병합·CLEAR 기본값·변경 목록 순서·기존 검색과의 공유 요청 제한을
 검증합니다. `SupportProgramConversationServiceTest`, `SupportProgramConversationControllerTest`,
 `AiSupportProgramConversationClientTest`는 외부 모델과 DB를 사용하지 않습니다.
+`SupportProgramConversationEvaluationReplayTest`는 [대화 조건 해석 평가](../../evaluation/support-program-conversation/README.md)의
+예시 재생 응답(`src/test/resources/support-program-conversation/`)을 실제 Client·Service로 받아 Core의 수락·거부와
+지역 표기 유지를 확인합니다. 손 작성 예시이며 모델 품질 측정이 아닙니다.
 
 2026-09-07 C02 검증은 Temurin JDK 21.0.12와 실제 MySQL 8.4.11(Testcontainers `mysql:8.4`)에서 전체
 `clean test`를 실행해 47개 스위트·508개 테스트가 통과했습니다(실패·오류·건너뜀 0). 신규 C02 75개와

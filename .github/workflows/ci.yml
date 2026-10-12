@@ -197,6 +197,9 @@ jobs:
       - name: Test evidence evaluation tools without model calls
         run: uv run --locked --extra dev --group evaluation python -m pytest ../../evaluation/support-program-evidence
 
+      - name: Test conversation evaluation cases and replay tools without model calls
+        run: uv run --locked --extra dev python -m pytest ../../evaluation/support-program-conversation
+
       - name: Test Compose cleanup guards without Docker mutations
         run: uv run --locked --extra dev --group evaluation python -B -m unittest discover -s ../../infrastructure/scripts -p 'test_*.py'
 

@@ -15,6 +15,7 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramConversationLastSearch
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramPendingClarification
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramConversationResult
+import java.text.Normalizer
 import java.time.Clock
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
@@ -52,11 +53,12 @@ class SupportProgramConversationService(
         val updates = payload.updates?.takeIf { it.size <= 7 } ?: invalidResponse()
         val fields = HashSet<SupportProgramConversationField>()
         var proposed = pendingClarification?.draftContext ?: pendingProposal ?: context
+        val quotable = comparable(message)
         for (update in updates) {
             if (update == null) invalidResponse()
             val field = SupportProgramConversationField.entries.firstOrNull { it.name == update.field } ?: invalidResponse()
             if (!fields.add(field)) invalidResponse()
-            val evidence = update.evidence?.takeIf { validText(it, 160) && message.contains(it) } ?: invalidResponse()
+            val evidence = update.evidence?.takeIf { validText(it, 160) && quotable.contains(comparable(it)) } ?: invalidResponse()
             val value = when (update.operation) {
                 "CLEAR" -> {
                     if (update.value != null) invalidResponse()
@@ -151,6 +153,14 @@ class SupportProgramConversationService(
     private fun validText(value: String, maximum: Int, multiline: Boolean = false): Boolean =
         value.isNotBlank() && value.length <= maximum && !(if (multiline) UNSUPPORTED_QUERY_TEXT else UNSUPPORTED_TEXT).containsMatchIn(value)
 
+    /**
+     * 근거가 메시지에서 왔는지 비교할 형태입니다. NFC로 맞추고 폭 없는 공백 같은 서식 문자를 빼고 연속 공백을 하나로 줄이며 소문자로 바꿉니다.
+     * 근거는 이 차이만 허용하고 낱말과 순서는 메시지와 같아야 합니다(AI Service와 같은 규칙).
+     */
+    private fun comparable(text: String): String =
+        FORMAT_CHARACTER.replace(Normalizer.normalize(text, Normalizer.Form.NFC), "")
+            .split(WHITESPACE).filter { it.isNotEmpty() }.joinToString(" ").lowercase()
+
     private fun parseIsoDate(value: String): LocalDate? {
         if (!ISO_DATE.matches(value)) return null
         return try { LocalDate.parse(value) } catch (_: DateTimeParseException) { null }
@@ -158,7 +168,7 @@ class SupportProgramConversationService(
 
     private fun parseEvidenceDate(evidence: String): LocalDate? {
         parseIsoDate(evidence)?.let { return it }
-        val match = KOREAN_DATE.matchEntire(evidence) ?: return null
+        val match = KOREAN_DATE.matchEntire(evidence) ?: DOTTED_DATE.matchEntire(evidence) ?: return null
         return try {
             LocalDate.of(match.groupValues[1].toInt(), match.groupValues[2].toInt(), match.groupValues[3].toInt())
         } catch (_: java.time.DateTimeException) { null }
@@ -172,6 +182,11 @@ class SupportProgramConversationService(
         private val EARLIEST_DATE = LocalDate.of(1900, 1, 1)
         private val ISO_DATE = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
         private val KOREAN_DATE = Regex("([0-9]{4})년(?U)\\s*([0-9]{1,2})월\\s*([0-9]{1,2})일")
+
+        // 한글 맞춤법 문장 부호 규정의 숫자 날짜(2021. 3. 15.)입니다. 마지막 마침표와 마침표 뒤 공백은 생략할 수 있습니다.
+        private val DOTTED_DATE = Regex("([0-9]{4})(?U)\\s*\\.\\s*([0-9]{1,2})\\s*\\.\\s*([0-9]{1,2})\\.?")
+        private val FORMAT_CHARACTER = Regex("\\p{Cf}")
+        private val WHITESPACE = Regex("(?U)\\s+")
         private val UNSUPPORTED_TEXT = Regex("\\p{C}")
         private val UNSUPPORTED_QUERY_TEXT = Regex("[\\p{C}&&[^\\n\\r\\t]]")
     }

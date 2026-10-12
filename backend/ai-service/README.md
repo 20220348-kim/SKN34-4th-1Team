@@ -328,15 +328,17 @@ Core 도우미의 첫 호출·자료 준비·재호출과 부모 연결도 구�
 
 모델은 상태·패치·질문 또는 결과 설명을 출력하고 Service가 검증 후 계약 버전을 붙입니다. 검색/임베딩/랭킹은 호출하지 않습니다.
 
-Service는 현재 message의 exact substring evidence, 중복 없는 0~6개 SET/CLEAR, 명시된 완전한 설립일을
-검증합니다. 날짜 evidence는 ISO 또는 `YYYY년 M월 D일` 날짜 자체만 인용하며 ISO로 정규화한 value와
-같아야 합니다. 상대 업력에서 날짜를 계산하지 않습니다. pendingClarification의 draftContext → pendingProposal
+Service는 현재 message의 연속 부분 문자열 evidence(NFC·서식 문자 제거·연속 공백 하나·소문자로 맞춰 비교),
+중복 없는 0~6개 SET/CLEAR, 명시된 완전한 설립일을 검증합니다. 날짜 evidence는 ISO, `YYYY년 M월 D일` 또는
+마침표 숫자 날짜(`2021.3.15`, `2021. 3. 15.`) 자체만 인용하며 ISO로 정규화한 value와 같아야 합니다. 상대 업력에서 날짜를 계산하지 않습니다. pendingClarification의 draftContext → pendingProposal
 → context 순서로 병합 기준을 정하고 부재 필드는 그대로 보존합니다. READY는 병합 후 query가 필수입니다.
 CLEAR는 문자열을 null, acceptingOnly를 true로 복원합니다. 모호한 값은 유지하고 확인 질문을 제안합니다.
 
 새 계약만 길이를 UTF-16 코드 단위로 검증합니다(message/query 500, region 50, industry/supportPurpose 100,
 날짜 10, question/evidence 160, answer 1,000). null 외 텍스트는 원본을 보존하고 공백뿐인 값을 거부합니다.
-message/query/answer는 LF/CR/tab을 허용하지만 그 외 Unicode C는 거부하며 조건·질문·인용은 모든 C를 거부합니다.
+query/answer는 LF/CR/tab을 허용하지만 그 외 Unicode C는 거부하며 조건·질문·인용은 모든 C를 거부합니다.
+message는 여기에 더해 이모지 결합 문자 같은 서식 문자(Cf)와 새 이모지(Cn)를 받고, 양방향 제어·비문자·대리 쌍·
+사용자 정의 문자와 서식 문자만 있는 값은 거부합니다.
 boolean 강제 변환은 하지 않습니다. 날짜는 실제 달력 날짜이고 설립일은 1900-01-01~referenceDate입니다.
 내부 입력 오류는 기존 FastAPI 422, 모델 장애·잘못된 패치·허위 인용·잘못된 READY는 안전한 503입니다.
 모델·HTTP·전체 실행 시간 초과는 `SupportProgramConversationTimeoutError`로 구분해 내부 504로 반환합니다.

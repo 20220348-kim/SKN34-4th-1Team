@@ -1,3 +1,5 @@
+import unicodedata
+
 from pydantic import ValidationError
 
 from app.support_program_conversation.agent import SupportProgramConversationAgent
@@ -24,6 +26,14 @@ _CLARIFICATION_QUESTIONS = {
 }
 
 
+def comparable(text: str) -> str:
+    """Text for checking that an evidence quote comes from the message: NFC, without format characters such as a
+    zero-width space, runs of whitespace as one space and lower case. A quote may differ from the message only in
+    these; its words and their order may not."""
+    visible = "".join(character for character in unicodedata.normalize("NFC", text) if unicodedata.category(character) != "Cf")
+    return " ".join(visible.split()).lower()
+
+
 class SupportProgramConversationService:
     """변경 근거와 초안 병합 또는 조건을 바꾸지 않는 설명 응답을 검증한다."""
 
@@ -36,7 +46,8 @@ class SupportProgramConversationService:
             if not isinstance(output, SupportProgramConversationOutput):
                 raise SupportProgramConversationError()
             output = SupportProgramConversationOutput.model_validate(output.model_dump(by_alias=True))
-            if any(update.evidence not in request.message for update in output.updates):
+            message = comparable(request.message)
+            if any(comparable(update.evidence) not in message for update in output.updates):
                 raise SupportProgramConversationError()
             merged = self._merge_context(request, output)
             if output.status == "READY" and merged.query is None:

@@ -23,6 +23,28 @@ def validate_text(value: str, maximum: int, *, allow_layout: bool = False) -> st
     return value
 
 
+# Bidirectional controls can make shown text differ from what is stored (Trojan Source, CVE-2021-42574).
+BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+
+def validate_message(value: str) -> str:
+    """The user's own words. Unlike other text it keeps format characters such as the joiner (ZWJ) inside 👩‍💻 or a
+    zero-width space pasted from a web page, and emoji newer than this Unicode version (unassigned here). Control,
+    bidirectional, surrogate, private-use and noncharacter code points are still refused."""
+    if not "".join(character for character in value if unicodedata.category(character) != "Cf").strip():
+        raise ValueError("text must not be blank")
+    if sum(2 if ord(character) > 0xFFFF else 1 for character in value) > 500:
+        raise ValueError("text exceeds the UTF-16 length limit")
+    for character in value:
+        category, code = unicodedata.category(character), ord(character)
+        if (
+            (category == "Cc" and character not in "\n\r\t") or category in {"Cs", "Co"} or character in BIDI_CONTROLS
+            or 0xFDD0 <= code <= 0xFDEF or code & 0xFFFE == 0xFFFE
+        ):
+            raise ValueError("text contains a forbidden control character")
+    return value
+
+
 def validate_calendar_date(value: str) -> str:
     if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
         raise ValueError("date must be YYYY-MM-DD")
@@ -33,6 +55,7 @@ def validate_calendar_date(value: str) -> str:
 QueryText = Annotated[str, Field(min_length=1, max_length=500), AfterValidator(
     lambda value: validate_text(value, 500, allow_layout=True)
 )]
+MessageText = Annotated[str, Field(min_length=1, max_length=500), AfterValidator(validate_message)]
 RegionText = Annotated[str, Field(min_length=1, max_length=50), AfterValidator(
     lambda value: validate_text(value, 50)
 )]
@@ -95,7 +118,7 @@ class SupportProgramConversationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     schema_version: Literal[SCHEMA_VERSION] = Field(alias="schemaVersion")
-    message: QueryText
+    message: MessageText
     context: ConversationContext
     pending_clarification: PendingClarification | None = Field(default=None, alias="pendingClarification")
     pending_proposal: ConversationContext | None = Field(default=None, alias="pendingProposal")
@@ -140,11 +163,15 @@ class ConversationUpdate(BaseModel):
                 raise ValueError("foundedYear must equal the explicitly quoted year")
         elif self.field == "ESTABLISHED_ON":
             validate_calendar_date(self.value)
-            # Quote the full date alone. Neither relative age nor a date mentioned
-            # only in the previous question/context can authorize a new date.
-            korean_date = re.fullmatch(r"([0-9]{4})년\s*([0-9]{1,2})월\s*([0-9]{1,2})일", self.evidence)
-            if korean_date is not None:
-                explicit_date = date(*(int(part) for part in korean_date.groups())).isoformat()
+            # Quote the full date alone: YYYY-MM-DD, YYYY년 M월 D일 or the numeric date of the Korean punctuation
+            # rules (2021. 3. 15.). Neither relative age nor a date mentioned only in the previous question/context
+            # can authorize a new date.
+            spelled_date = (
+                re.fullmatch(r"([0-9]{4})년\s*([0-9]{1,2})월\s*([0-9]{1,2})일", self.evidence)
+                or re.fullmatch(r"([0-9]{4})\s*\.\s*([0-9]{1,2})\s*\.\s*([0-9]{1,2})\.?", self.evidence)
+            )
+            if spelled_date is not None:
+                explicit_date = date(*(int(part) for part in spelled_date.groups())).isoformat()
             else:
                 explicit_date = validate_calendar_date(self.evidence)
             if explicit_date != self.value:
