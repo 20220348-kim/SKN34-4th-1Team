@@ -107,24 +107,26 @@ AWS 자원은 실행 중인 동안 비용이 발생한다. 7일 종료 시 자�
 
 ## 노드와 디스크 배치
 
-| 노드 풀 | 배치할 서비스 | 현재 요청 CPU / 메모리 |
+| 노드 풀 | 배치할 서비스 | 변경 후 노드별 CPU 요청 상한 / 할당 가능 |
 | --- | --- | --- |
-| `application` | 업무 저장소 7개, Core·Catalog·Ops, 평가 실행기·보고서·Prefect | 1.4 vCPU / 2.75GiB, 13개 workload |
-| `observability` | Langfuse와 저장소 4개, AI | 0.8 vCPU / 1.81GiB, 7개 workload |
+| `application` | 업무 저장소 7개, Catalog·Ops, Core·AI 각 1개 | 1690m / 1930m |
+| `observability` | Langfuse·전용 저장소, Prefect·평가 실행기·결과 서버, Core·AI 각 1개 | 1890m / 1930m |
 
-원본 21개 workload 중 웹 1개를 제외해 목적지는 20개다. 웹의 요청량 25m CPU·32Mi 메모리를
-제외한 수치이며, 두 워커 노드와 데이터 PVC 용량은 유지한다.
-[외부 API 게이트웨이](api-entrypoint.md)를 적용하면 application 풀에 1개(25m CPU·32Mi)가 추가된다.
-AWS Load Balancer Controller의 시스템 Pod 자원은 별도로 계산한다.
+최초 EKS 이전 설정은 평가 3종을 application에 두었다. 위 표는 평가를 observability로 모으고
+Core·AI를 두 기본 노드에 분산하는 변경 목표이며, 실제 적용 결과와 구분한다.
+시스템 Pod와 각 노드 Gateway 최대 2개(롤링 교체 포함)를 고려한 CPU 예약값이다.
+Argo controller 50m·repo-server 25m·Autoscaler 25m 조정과 노드당 Core·AI 각 1개 조건을
+전제로 하며 자세한 적용 순서는 [자동 확장 안내](autoscaling/README.md)를 따른다.
 
-요청량은 현재 Mac 구성의 값이며 실제 최대 사용량이나 성능 보장이 아니다. EKS 시스템 Pod의
+요청량은 실제 최대 사용량이나 성능 보장이 아니다. EKS 시스템 Pod의
 요청량·노드 allocatable·실행 중 최대 메모리를 추가 확인한다. 서비스의 메모리 limit 합계가
 각 노드의 8GiB보다 클 수 있으므로 대량 동시 평가·색인을 활성화하지 않는다.
 
-- 두 노드 그룹의 min/desired/max는 각각 1이다. 노드 hostname 대신
+- 최초 클러스터 생성 시 두 노드 그룹은 각각 1대다. 자동 확장 적용 후 application은
+  최소 1 / 최대 2대, observability는 1대로 유지한다. 노드 hostname 대신
   `govbiz.io/workload-pool` 라벨로 배치해 노드 교체에도 같은 풀을 선택한다.
 - 제어 영역에는 두 AZ를 사용하되 데이터 노드는 모두 `ap-southeast-2a`에 둔다.
-  단일 AZ, 서비스별 단일 replica이며 HA 구성이 아니다.
+  단일 AZ이며 DB는 단일 replica다. Core·AI의 복제만으로 전체 시스템의 HA가 제공되지는 않는다.
 - 평가 실행기와 보고서 서비스는 같은 RWO PVC를 사용한다. 같은 풀 지정에 더해 필수 Pod affinity로
   동일 노드에 배치하며, PVC를 쓰는 Deployment는 `Recreate`로 갱신한다.
 - gp3는 암호화·Retain·WaitForFirstConsumer를 사용한다. 복원 Pod도 대상 노드 풀을 지정한다.

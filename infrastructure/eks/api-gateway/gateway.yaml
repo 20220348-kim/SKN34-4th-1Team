@@ -19,8 +19,9 @@ spec:
       terminationGracePeriodSeconds: 620
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels: {app.kubernetes.io/name: api-gateway}
       securityContext:

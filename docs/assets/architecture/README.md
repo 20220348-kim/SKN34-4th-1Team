@@ -59,9 +59,9 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 
 ## Vercel + AWS EKS 전체 구성 — 2026-10-12
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=bf884c9298c5)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=1118356eb704)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=bf884c9298c5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=a6dbc0d6fcab)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=1118356eb704) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=05e47b097793)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
@@ -69,8 +69,9 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 MySQL은 EKS 내부에 유지하며, 모바일·MyBatis·업무·평가·관측 연결과 저장소별 색상을 보존했습니다.
 Catalog → 공고 제공처 API, AI Service → OpenAI의 외부 호출은 별도 보라색 영역에서 표시합니다.
 사설 Pod의 NAT Gateway → Internet Gateway 출구와 VPC 밖 API를 구분합니다.
-자동 배포를 활성화한 목표 구조로, 개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 흐름을 표시합니다.
-실제 활성화·실행 검증 상태는 구성도 설명 문서에 별도로 기록합니다.
+개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 자동 배포 흐름을 표시합니다.
+노드 배치 목표는 기본 EC2 2대·최대 3대, Core·AI 각각 2~3개 분산, 평가 서비스의 observability 배치입니다.
+상단 EC2 표와 아래 Namespace 논리 구분을 분리하며, 실제 전환·실행 검증 상태는 구성도 설명 문서에 별도로 기록합니다.
 
 ## Docker Compose 로컬 전체 구성 — 2026-10-12
 

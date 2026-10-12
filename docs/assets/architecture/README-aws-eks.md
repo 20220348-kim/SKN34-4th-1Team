@@ -3,23 +3,25 @@
 [문서 안내](../../README.md) · [아키텍처 이미지 목록](README.md) · [로컬 Kubernetes 구성](README-local.md)
 
 로컬 `govbiz-local-architecture`의 업무·평가·관측 연결에 **Vercel과 AWS EKS 인프라·자동 배포**를 반영한 별도 그림입니다.
-**자동 배포가 활성화된 목표 구조**를 표현하며, 개인 main의 필수 CI 통과부터 EKS·Vercel 갱신까지 연결합니다.
+**자동 배포 흐름과 노드 배치 변경 목표**를 표현하며, 개인 main의 필수 CI 통과부터 EKS·Vercel 갱신까지 연결합니다.
+평가 서비스의 observability 이전과 Core·AI의 기본 두 노드 분산은 실제 전환 완료 기록과 구분합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=bf884c9298c5)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=1118356eb704)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=bf884c9298c5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=a6dbc0d6fcab) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=1118356eb704) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=05e47b097793) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
 **2026-10-12 저장소의 인프라 구성과 자동 배포 워크플로**를 기준으로 작성했습니다.
-그림에는 자동 배포를 활성화했을 때의 흐름을 표시하고, 실제 활성화·실행 여부는 아래 검증 기록에 남깁니다.
+그림에는 기본 EC2 2대·최대 3대의 배치 목표를 표시하고, 실제 전환·실행 여부는 아래 검증 기록에 남깁니다.
 그림 수정은 배포 설정·운영 데이터·실행 중인 서비스를 변경하지 않습니다.
 
 | 구분 | 반영 내용 | 근거 |
 |---|---|---|
 | 웹·API 진입 | Vercel React 웹 → 서버 미들웨어 → CloudFront VPC origin → 내부 ALB → EKS Nginx | [실배포 기록](../../../infrastructure/eks/sydney-demo.md), [API 진입점](../../../infrastructure/eks/api-entrypoint.md), [Vercel 미들웨어](../../../frontend/web/middleware.ts) |
-| 컴퓨팅·네트워크 | 시드니 EKS, private EC2 워커 2대, NAT 1개, EKS API의 사설 접근·관리 IP 제한 | [클러스터 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml) |
+| 컴퓨팅·네트워크 | 시드니 EKS, private EC2 기본 2대·최대 3대, NAT 1개, EKS API의 사설 접근·관리 IP 제한 | [클러스터 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml), [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
+| 노드 배치 목표 | 업무 DB·Catalog·Ops는 application, Prefect·평가 실행기·결과 저장소·Langfuse·Argo CD는 observability. Core·AI는 기본 두 노드에 각각 1개씩 배치 | [EKS 서비스 설정](../../../infrastructure/eks/gitops-values.yaml), [배포 YAML 생성](../../../infrastructure/eks/gitops.py) |
 | 데이터 | 기존 DB·색인·큐·평가·관측 데이터를 EBS gp3 PVC에 복원, S3에는 암호화한 이전 백업 보관 | [이전 기록](../../../infrastructure/eks/sydney-demo.md), [StorageClass](../../../infrastructure/eks/storage-class.yaml) |
 | 변경 배포 | 같은 최신 main의 필수 CI → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel | [자동 배포 구성·검증 상태](../../../infrastructure/eks/continuous-deployment.md), [워크플로](../../../.github/workflows/eks-release.yml) |
 | Helm·Argo CD | Helm으로 만든 배포 YAML을 Git에 보관하고 Argo CD가 EKS 앱에 반영합니다. Helm은 AWS Load Balancer Controller 설치에도 사용합니다. | [Argo 최초 인계](../../../infrastructure/eks/argo-cd.md), [Controller 설치 절차](../../../infrastructure/eks/api-entrypoint.md#실제-적용-전-준비) |
@@ -27,7 +29,10 @@
 
 ## 요청·데이터 흐름
 
-상단은 요청 순서이고, 가운데는 AWS·VPC·EKS와 namespace의 배치 경계입니다.
+상단은 요청 순서이고, 가운데는 AWS·VPC·EKS 경계입니다.
+EKS 상단의 **EC2 표가 노드 배치 목표**이며, 그 아래 Namespace 상자는 서비스의 **논리 구분**입니다.
+Namespace 상자가 오른쪽이나 왼쪽에 있다는 이유로 해당 노드에서 실행된다는 뜻은 아닙니다.
+평가 서비스를 observability 노드로 옮겨도 Namespace는 `govbiz-evaluation`을 유지합니다.
 번호 ①·②는 API 목적지, ③·④는 EBS 저장소와 ECR 이미지 공급을 연결합니다.
 
 | 경로 | 역할 |
@@ -75,7 +80,10 @@ Core의 Google·Kakao OAuth, Bizno 사업자 조회, SMTP 메일, 기업마당 �
 
 | 구성 | 범위 |
 |---|---|
-| EKS 워커 | `application`과 `observability`에 `m7i-flex.large`가 각각 1대입니다. AI는 observability 노드에 배치됩니다. namespace와 노드 풀은 서로 다른 구분입니다. |
+| EKS 워커 | 기본은 `application`과 `observability`의 `m7i-flex.large` 각 1대입니다. `application`은 최대 2대, `observability`는 1대를 유지해 전체 EC2는 2~3대입니다. Namespace와 노드 풀은 서로 다른 구분입니다. |
+| 기본 두 노드의 배치 목표 | application은 업무 DB·검색·큐·Catalog·Ops, observability는 Langfuse·관측 저장소·Argo CD·Prefect·평가 실행기·결과 저장소를 실행합니다. Core·AI는 각각 두 노드에 1개씩 배치합니다. 기존 PVC를 보존하며 평가 실행기와 결과 API는 같은 노드에서 결과 PVC를 공유합니다. |
+| Pod·노드 자동 확장 | Core·AI HPA는 각각 2~3개이며 같은 서비스의 Pod는 필수 anti-affinity로 노드당 1개만 배치합니다. 세 번째 Pod가 대기하면 Cluster Autoscaler가 application EC2 1대를 추가합니다. Gateway는 HPA 1~3개입니다. 부하 감소 후 Pod가 줄고 남은 Pod를 안전하게 옮길 수 있어야 추가 노드를 제거합니다. |
+| Core·AI 교체 | `RollingUpdate`에서 `maxSurge: 0`, `maxUnavailable: 1`로 최대 1개씩 교체합니다. 최대 3대 상태에서 네 번째 노드를 요구하지 않도록 설정합니다. |
 | 가용 영역 | 제어면 서브넷은 2개 AZ를 사용하지만 두 워커는 `ap-southeast-2a`에 있습니다. 다중 AZ 고가용성 구성으로 표시하지 않습니다. |
 | EBS | 데이터 PVC 13개는 업무 7개·평가 2개·관측 4개입니다. 암호화 gp3와 `Retain`을 사용합니다. MySQL 3개는 EKS StatefulSet으로 유지하며 RDS로 전환한 구성이 아닙니다. |
 | ECR | 수동 이전 당시 실행 이미지 17개를 private ECR에 보존했습니다. 자동 배포 경로는 애플리케이션용 이미지 5개를 빌드하고 digest로 배포합니다. 두 범위를 구분합니다. |
@@ -111,6 +119,8 @@ DB·PVC·네트워크·Langfuse는 별도로 관리합니다.
 기존 환경의 최초 관리권 이전과 자동 배포 활성화는 [전환 절차](../../../infrastructure/eks/argo-cd.md)를 따릅니다.
 
 ## 실제 적용·검증 기록
+
+**노드 배치 변경은 아직 실제 이전 완료로 기록하지 않습니다.** 그림과 설명은 평가 서비스의 observability 이전·Core/AI 분산 설정을 반영한 목표이며, 기존 볼륨 재연결·Pod 준비·노드별 배치 확인 뒤 실행 결과를 남깁니다. 아래 초기 자동 배포 점검은 당시의 기록이며 현재 노드 배치의 완료 근거가 아닙니다.
 
 - 수동 배포 기록에는 웹·Core/AI health·공고 목록·Ops session 응답과 익명 평가 이력 거절 확인이 있습니다.
 - CodeConnections·CodeBuild·ECR·IAM·EKS 접근은 연결 및 읽기 전용 preflight 확인 기록이 있습니다.

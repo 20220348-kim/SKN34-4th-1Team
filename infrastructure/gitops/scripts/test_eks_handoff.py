@@ -122,19 +122,21 @@ def manifest_configuration():
             "image": "docker.io/govbiz-migration/helper@sha256:" + "b" * 64,
         }
     ]
-    claim = resource(
-        "PersistentVolumeClaim",
-        "results",
-        "govbiz-evaluation",
-        spec={"resources": {"requests": {"storage": "20Gi"}}},
-    )
-    config["resources"].append(claim)
-    config["claims"].append(["govbiz-evaluation", "results"])
+    for claim_name in ("results", "prefect-data"):
+        claim = resource(
+            "PersistentVolumeClaim",
+            claim_name,
+            "govbiz-evaluation",
+            spec={"resources": {"requests": {"storage": "20Gi"}}},
+        )
+        config["resources"].append(claim)
+        config["claims"].append(["govbiz-evaluation", claim_name])
     for ns, name in (
         ("govbiz-msa", "ai-service"),
         ("govbiz-msa", "web"),
         ("govbiz-evaluation", "evaluation-runner"),
         ("govbiz-evaluation", "ops-artifacts"),
+        ("govbiz-evaluation", "prefect"),
         ("govbiz-observability", "langfuse-web"),
     ):
         p = {
@@ -149,7 +151,9 @@ def manifest_configuration():
         }
         if ns == "govbiz-evaluation":
             p["volumes"] = [
-                {"name": "data", "persistentVolumeClaim": {"claimName": "results"}}
+                {"name": "data", "persistentVolumeClaim": {
+                    "claimName": "prefect-data" if name == "prefect" else "results"
+                }}
             ]
         config["resources"].append(
             resource(
@@ -394,7 +398,7 @@ class HandoffTests(unittest.TestCase):
             spec = apps[name]["spec"]
             self.assertEqual(
                 spec["template"]["spec"]["nodeSelector"],
-                {handoff.POOL_LABEL: "application"},
+                {handoff.POOL_LABEL: "observability"},
             )
             self.assertEqual(spec["strategy"], {"type": "Recreate"})
             terms = spec["template"]["spec"]["affinity"]["podAffinity"][
@@ -405,7 +409,7 @@ class HandoffTests(unittest.TestCase):
                 terms[0]["labelSelector"]["matchLabels"],
                 {"govbiz.io/evaluation-volume": "shared"},
             )
-        for name in ("web", "ai-service", "langfuse-web"):
+        for name in ("web", "ai-service", "langfuse-web", "prefect"):
             self.assertEqual(
                 apps[name]["spec"]["template"]["spec"]["nodeSelector"],
                 {handoff.POOL_LABEL: "observability"},
@@ -428,7 +432,20 @@ class HandoffTests(unittest.TestCase):
         for claim in out["10-claims.json"]["items"]:
             self.assertNotIn("volumeName", claim["spec"])
         self.assertEqual(out["startup-plan.json"]["automaticStart"], False)
-        self.assertEqual(len(out["startup-plan.json"]["workloads"]), 6)
+        self.assertEqual(len(out["startup-plan.json"]["workloads"]), 7)
+        self.assertEqual(
+            {
+                row["pool"] for row in out["startup-plan.json"]["workloads"]
+                if row["namespace"] == "govbiz-evaluation"
+            },
+            {"observability"},
+        )
+        prefect = apps["prefect"]["spec"]
+        self.assertEqual(prefect["strategy"], {"type": "Recreate"})
+        self.assertEqual(
+            prefect["template"]["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"],
+            "prefect-data",
+        )
         env = apps["evaluation-runner"]["spec"]["template"]["spec"]["containers"][0][
             "env"
         ]
@@ -691,8 +708,13 @@ class HandoffTests(unittest.TestCase):
             handoff.manifest_destination(config, image_map, origin)
 
     def test_pool_restore_helper_uses_same_pool_as_volume_consumers(self):
-        for ns in handoff.NAMESPACES:
+        for ns, expected_pool in (
+            ("govbiz-msa", "application"),
+            ("govbiz-evaluation", "observability"),
+            ("govbiz-observability", "observability"),
+        ):
             pool = handoff.workload_pool(ns, "")
+            self.assertEqual(pool, expected_pool)
             p = handoff.helper(
                 ns, ["restored"], None, "copy", readonly=False, pool=pool
             )

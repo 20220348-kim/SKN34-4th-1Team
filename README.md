@@ -258,14 +258,15 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 <img src="docs/assets/readme/architecture-production-caption.svg" alt="5.2.3 운영 전체 구성도 — 웹은 Vercel, 백엔드·LLMOps는 AWS EKS에 배치합니다. 아래는 main의 CI 통과 후 자동 배포가 적용되는 구조입니다." width="820">
 
-![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=bf884c9298c5)
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=1118356eb704)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=bf884c9298c5) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=a6dbc0d6fcab)
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=1118356eb704) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=05e47b097793)
 
 | 구분 | 운영 구성 |
 |---|---|
 | **웹·API 접근** | Vercel 웹의 API 요청은 CloudFront VPC origin → 내부 ALB → EKS Nginx를 거쳐 Core·Ops로 분기합니다. 모바일은 운영 HTTPS 주소로 같은 Core API를 호출합니다. |
-| **서비스 실행** | 사설 EC2 워커 2대의 EKS에 업무·평가·관측 namespace를 배치합니다. 현재 노드 배치는 단일 AZ입니다. |
+| **서비스 실행·배치 목표** | 기본 EC2는 application·observability 각 1대입니다. application에 업무 DB·Catalog·Ops, observability에 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치하도록 전환합니다. Core·AI는 기본 두 EC2에 각각 1개씩 배치합니다. 단일 AZ 구성입니다. |
+| **자동 확장 설정** | Core·AI는 각각 HPA로 2~3개를 유지하며 같은 서비스의 Pod를 서로 다른 EC2에 배치합니다. 세 번째 Pod가 필요하면 Cluster Autoscaler가 application EC2를 1대 추가해 전체 2~3대로 조절합니다. Gateway HPA는 1~3개입니다. 실제 전환 완료 여부는 아래 적용 기록에서 구분합니다. |
 | **외부 API 연결** | Catalog → 공고 제공처 API, AI Service → OpenAI의 요청은 사설 Pod에서 NAT Gateway → Internet Gateway를 거쳐 나갑니다. 외부 API는 VPC 밖에 있으며, 사용자 요청이 들어오는 ALB 경로와 구분합니다. |
 | **데이터 보존** | MySQL·검색·큐·평가·관측 데이터는 EBS gp3 PVC에 보존합니다. S3는 암호화한 이전 백업을 보관합니다. |
 | **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → Helm 배포 YAML·불변 Git 태그 발행 → Argo CD의 EKS 동기화 → Vercel 웹 전환 순서입니다. |
@@ -273,6 +274,8 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 | **관리·관측** | 관리자 Ops는 같은 React 웹에서 이용합니다. Prefect·Langfuse UI는 EKS 권한을 가진 사용자가 port-forward로 접근합니다. |
 
 [운영 구성·적용 및 검증 기록](docs/assets/architecture/README-aws-eks.md) · [자동 배포 상세](infrastructure/eks/continuous-deployment.md) · [서비스 호출 상세](docs/architecture.md)
+
+그림 상단의 **EC2 표가 실제 노드 배치 목표**입니다. 아래 `govbiz-msa`·`govbiz-evaluation`·`govbiz-observability` 상자는 **Namespace별 논리 구분**이며, 상자의 좌우 위치가 노드를 뜻하지 않습니다. 평가 서비스의 Namespace는 `govbiz-evaluation`을 유지하면서 실행 노드를 `observability`로 옮깁니다.
 
 #### 5.2.4 Kubernetes 내부 리소스 구조
 
@@ -324,7 +327,7 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 
 **설정과 저장소의 범위:** Secret은 비밀번호·토큰을, ConfigMap은 Nginx·ClickHouse 등의 일반 설정을 전달합니다. PVC·Secret·ConfigMap·Service는 Namespace별로 관리합니다. 서버인 Node, 저장 볼륨 정보인 PV, 볼륨 생성 규칙인 StorageClass는 클러스터 전체에서 관리합니다. EKS는 `govbiz-ebs-gp3` StorageClass를 사용해 AWS EBS의 `gp3` 볼륨을 만듭니다.
 
-**현재 배포 방식:** 업무 서비스는 각각 **Pod 1개**로 실행하며, 새 버전을 배포할 때 기존 Pod를 종료한 다음 새 Pod를 만드는 **`Recreate` 방식**을 사용합니다. 따라서 교체 중 접속이 잠시 끊길 수 있습니다. 평가·관측 도구는 데이터 복원 전에 실행되지 않도록 기본 Pod 수를 `0`으로 설정했으며, 복원과 설정을 마친 뒤 실행합니다.
+**배포 방식:** 기본 Chart의 단일 실행 서비스와 Catalog·Ops는 **Pod 1개 / `Recreate` 방식**이므로 교체 중 접속이 잠시 끊길 수 있습니다. EKS의 Core·AI는 각각 **HPA 2~3개 / `RollingUpdate`**로 설정하며, 노드당 같은 서비스의 Pod를 1개만 허용합니다. 교체 시 추가 Pod 없이 기존 Pod를 최대 1개씩 바꿔 최대 3대의 노드 안에서 갱신합니다. 평가·관측 Chart의 초기 Pod 수 `0`은 데이터 복원 전 실행 방지용이며, 복원 후 실제 실행 개수와 구분합니다.
 
 **설정 파일에서 확인할 값:** ReplicaSet은 Kubernetes가 자동으로 만들기 때문에 Chart에 별도 YAML이 없습니다. 이전 배포의 ReplicaSet은 Pod 수 `0`으로 남을 수 있으며, 업무 서비스의 이력 보관 설정(`revisionHistoryLimit`)은 `3`입니다. Ops Service는 `app.kubernetes.io/name`과 `app.kubernetes.io/instance` 두 라벨이 일치하는 Pod를 찾습니다. 대상 Pod의 주소와 준비 상태는 Kubernetes가 EndpointSlice에 기록합니다. `ops-sync`에는 별도 Service가 없습니다.
 
@@ -349,10 +352,11 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 | **NetworkPolicy** | “어떤 Pod와 통신할 수 있는지” 정합니다. 평가 도구는 들어오고 나가는 통신을 제한하고, 관측 도구는 기본 차단 후 필요한 통신을 허용합니다. Gateway는 ALB에서 들어오는 요청과 Core·Ops·DNS로 나가는 연결을 허용합니다. 정책이 없는 업무 Pod까지 자동으로 보호되지는 않으며, 실제 차단은 이를 지원하는 CNI가 수행해야 합니다. |
 | **ServiceAccount·RBAC·AWS Pod Identity** | ServiceAccount는 Pod가 사용하는 Kubernetes 계정이고, Role·RoleBinding 등 RBAC 설정은 그 계정이 할 수 있는 일을 정합니다. 업무 Pod에는 Kubernetes API 토큰을 자동으로 넣지 않습니다. EBS CSI·ALB Controller가 AWS 자원을 다룰 권한은 별도로 IAM·Pod Identity로 연결합니다. `release-rbac.yaml`은 CodeBuild에 지정 Deployment·Application을 조회하는 권한만 줍니다. |
 | **StorageClass·CSI·PV·PVC** | StorageClass는 새 볼륨의 생성 규칙이며, CSI 드라이버는 실제 볼륨 생성·연결을 처리합니다. EKS의 `govbiz-ebs-gp3`는 EBS CSI로 암호화된 `gp3` 볼륨을 만듭니다. Pod가 배치될 위치를 고려해 볼륨을 준비하고(`WaitForFirstConsumer`), PVC를 삭제해도 볼륨은 남깁니다(`Retain`). 남은 볼륨을 다시 사용하는 데는 별도 복구 절차가 필요합니다. 기존 볼륨을 복원해 연결하는 경우와 새 볼륨을 만드는 경우를 구분합니다. |
-| **Node·DaemonSet·Pod 배치** | Node는 Pod가 실행되는 서버입니다. DaemonSet은 필요한 Node마다 네트워크·스토리지 연결용 프로그램 등을 실행합니다. 업무 앱은 Deployment·StatefulSet이 관리합니다. EKS에서는 서버 그룹을 구분하는 라벨과 Pod 배치 조건(`nodeSelector`·`affinity`), 기존 볼륨 위치를 유지합니다. 결과 PVC를 공유하는 평가 실행기와 결과 API는 같은 Node에 배치합니다. |
+| **Node·DaemonSet·Pod 배치** | Node는 Pod가 실행되는 서버입니다. DaemonSet은 필요한 Node마다 네트워크·스토리지 연결용 프로그램 등을 실행합니다. 업무 앱은 Deployment·StatefulSet이 관리합니다. EKS Core·AI는 필수 Pod anti-affinity로 같은 서비스끼리 노드를 분리합니다. 평가 실행기·결과 API·Prefect의 배치 목표는 observability이며 Namespace는 유지합니다. 결과 PVC를 공유하는 실행기와 결과 API는 같은 Node에 배치합니다. |
+| **HPA·Cluster Autoscaler** | HPA는 CPU 사용률에 따라 Core·AI 각각 2~3개, Gateway 1~3개로 Pod 수를 조절합니다. Cluster Autoscaler는 자원·배치 조건 때문에 대기하는 Pod가 있으면 application 노드를 1→2대로 늘립니다. observability 1대를 합해 EC2는 기본 2대·최대 3대입니다. 부하가 내려가 Pod가 줄고 남은 Pod를 안전하게 옮길 수 있어야 추가 노드를 제거합니다. |
 | **ConfigMap·Secret·probe·자원 설정** | ConfigMap·Secret으로 설정과 자격 정보를 전달합니다. 상태 검사(probe)는 시작이 끝났는지(`startup`), 요청을 받아도 되는지(`readiness`), 재시작이 필요한지(`liveness`) 확인합니다. `requests`·`limits`는 필요한 CPU·메모리와 사용 한도를 정합니다. 보안 설정은 실행 권한 등을 제한합니다. `emptyDir`은 Pod가 삭제되면 함께 사라지는 임시 저장 공간입니다. |
 
-**현재 구성에 포함하지 않은 기능:** 부하에 따라 Pod 수를 바꾸는 HPA, 모든 Node에 업무 앱을 실행하는 업무용 DaemonSet, 정해진 시간마다 작업을 실행하는 Kubernetes CronJob은 업무 Chart에 없습니다. 따라서 그림에도 자동 확장이나 CronJob 기반 평가 스케줄을 표시하지 않았습니다. 이미지 저장소 로그인 정보(`imagePullSecrets`)는 비공개 이미지 등을 사용할 때 선택해 설정합니다. 복원·진단 중에만 쓰는 임시 Pod도 상시 실행 목록에서 제외했습니다.
+**그림과 설정의 범위:** 위 내부 리소스 그림은 기본 리소스 관계를 보여주며 EKS HPA·Cluster Autoscaler의 세부 흐름은 5.2.3과 [자동 확장 설정](infrastructure/eks/autoscaling/README.md)을 따릅니다. 모든 Node에 업무 앱을 실행하는 업무용 DaemonSet과 Kubernetes CronJob 기반 평가 스케줄은 사용하지 않습니다. 이미지 저장소 로그인 정보(`imagePullSecrets`)는 비공개 이미지 등을 사용할 때 선택해 설정합니다. 복원·진단 중에만 쓰는 임시 Pod는 상시 실행 목록에서 제외했습니다.
 
 </details>
 

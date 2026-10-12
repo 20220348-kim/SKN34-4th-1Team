@@ -89,7 +89,7 @@ class EksGitOpsTests(unittest.TestCase):
         for name in ("core-service", "ai-service"):
             settings["services"][name]["autoscaling"] = {
                 "enabled": True,
-                "minReplicas": 1,
+                "minReplicas": 2,
                 "maxReplicas": 3,
                 "targetCPUUtilizationPercentage": 70,
             }
@@ -97,24 +97,27 @@ class EksGitOpsTests(unittest.TestCase):
 
     def runtime(self, settings=None):
         rows = copy.deepcopy([r for r in self.rows if r["kind"] == "Deployment"])
+        bounds = gitops.replica_bounds(settings) if settings is not None else {}
         for row in rows:
             if settings is not None:
                 row["spec"]["template"]["spec"]["nodeSelector"] = gitops.node_selector(
                     settings, row["metadata"]["name"]
                 )
+            replicas = bounds.get(row["metadata"]["name"], (1, 1))[0]
+            row["spec"]["replicas"] = replicas
             row["metadata"]["generation"] = 2
             row["status"] = {
                 "observedGeneration": 2,
-                "replicas": 1,
-                "readyReplicas": 1,
-                "updatedReplicas": 1,
-                "availableReplicas": 1,
+                "replicas": replicas,
+                "readyReplicas": replicas,
+                "updatedReplicas": replicas,
+                "availableReplicas": replicas,
             }
         return {"cluster": "govbiz-eks.ap-southeast-2.eksctl.io", "items": rows}
 
-    def success(self):
-        runtime = self.runtime()
-        app = gitops.application(runtime)[1]
+    def success(self, settings=None):
+        runtime = self.runtime(settings)
+        app = gitops.application(runtime, settings)[1]
         record = {**self.record, "tag": TAG, "gitopsRevision": "b" * 40}
         app["status"] = {
             "sync": {"status": "Synced", "revision": record["gitopsRevision"]},
@@ -151,6 +154,9 @@ class EksGitOpsTests(unittest.TestCase):
                 for c in pod["containers"]:
                     self.assertIn(c["image"], self.record["images"].values())
                 if row["metadata"]["name"] in ("evaluation-runner", "ops-artifacts"):
+                    self.assertEqual(
+                        pod["nodeSelector"], {"govbiz.io/workload-pool": "observability"}
+                    )
                     self.assertEqual(
                         pod["containers"][0]["resources"]["requests"]["memory"], "256Mi"
                     )
@@ -240,16 +246,70 @@ class EksGitOpsTests(unittest.TestCase):
         for row in rows:
             if row["kind"] in ("Deployment", "Job"):
                 http = row["metadata"]["name"] in ("core-service", "ai-service")
+                pool = (
+                    "observability"
+                    if row["metadata"]["name"] in ("evaluation-runner", "ops-artifacts")
+                    else "application"
+                )
                 self.assertEqual(
                     row["spec"]["template"]["spec"]["nodeSelector"],
                     {"govbiz.io/http-pool": "shared"}
-                    if http else {"govbiz.io/workload-pool": "application"},
+                    if http else {"govbiz.io/workload-pool": pool},
                 )
             if row["kind"] == "Deployment":
                 if row["metadata"]["name"] in ("core-service", "ai-service"):
                     self.assertNotIn("replicas", row["spec"])
+                    self.assertEqual(row["spec"]["strategy"], {
+                        "type": "RollingUpdate",
+                        "rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1},
+                    })
+                    pod = row["spec"]["template"]["spec"]
+                    self.assertNotIn("topologySpreadConstraints", pod)
+                    self.assertEqual(pod["affinity"], {
+                        "podAntiAffinity": {
+                            "requiredDuringSchedulingIgnoredDuringExecution": [{
+                                "labelSelector": row["spec"]["selector"],
+                                "namespaces": ["govbiz-msa"],
+                                "topologyKey": "kubernetes.io/hostname",
+                            }],
+                        },
+                    })
                 else:
                     self.assertEqual(row["spec"]["replicas"], 1)
+                    self.assertNotIn("podAntiAffinity", row["spec"]["template"]["spec"].get("affinity", {}))
+            if row["kind"] == "HorizontalPodAutoscaler":
+                self.assertEqual(row["spec"]["minReplicas"], 2)
+                self.assertEqual(row["spec"]["maxReplicas"], 3)
+            if row["kind"] == "Job":
+                self.assertNotIn("affinity", row["spec"]["template"]["spec"])
+
+    def test_http_disruption_budgets_allow_node_removal_without_losing_every_replica(self):
+        path = ROOT / "infrastructure/eks/autoscaling/pdb.yaml"
+        rows = list(yaml.safe_load_all(path.read_text()))
+        for name in ("core-service", "ai-service"):
+            matching = [
+                row for row in rows
+                if row["spec"]["selector"]["matchLabels"].get("app.kubernetes.io/name") == name
+            ]
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0]["metadata"]["namespace"], "govbiz-msa")
+            self.assertEqual(matching[0]["spec"], {
+                "minAvailable": 1,
+                "selector": {"matchLabels": {
+                    "app.kubernetes.io/name": name,
+                    "app.kubernetes.io/instance": name,
+                }},
+            })
+
+    def test_distributed_release_rejects_a_single_replica_minimum(self):
+        for name in ("core-service", "ai-service"):
+            settings = self.scaling_settings()
+            settings["services"][name]["autoscaling"]["minReplicas"] = 1
+            files = dict(self.source_files)
+            files["infrastructure/eks/gitops-values.yaml"] = yaml.safe_dump(settings).encode()
+            sha = commit_tree(self.root, files)
+            with self.subTest(service=name), self.assertRaisesRegex(ValueError, "at least two"):
+                gitops.bundle(self.root, receipt(sha), TAG)
 
     def test_scaled_adoption_preserves_only_bounded_stateless_replica_ownership(self):
         settings = self.scaling_settings()
@@ -321,14 +381,16 @@ class EksGitOpsTests(unittest.TestCase):
 
     def test_sync_requires_all_scaled_replicas_ready_and_exact_images_and_source(self):
         settings = self.scaling_settings()
-        app, record, deployments = self.success()
-        configured = gitops.application(self.runtime(settings), settings)[1]
-        app["spec"] = configured["spec"]
-        core = deployments["core-service"]
-        core["spec"]["replicas"] = 2
-        for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas"):
-            core["status"][key] = 2
+        app, record, deployments = self.success(settings)
         self.assertTrue(gitops.synced(app, record, deployments, settings))
+        for name in ("core-service", "ai-service"):
+            for replicas in (1, 3):
+                changed = copy.deepcopy(deployments)
+                changed[name]["spec"]["replicas"] = replicas
+                for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas"):
+                    changed[name]["status"][key] = replicas
+                with self.subTest(service=name, replicas=replicas):
+                    self.assertEqual(gitops.synced(app, record, changed, settings), replicas == 3)
         for mutate in (
             lambda d: d["core-service"]["spec"].update(replicas=4),
             lambda d: d["core-service"]["status"].update(readyReplicas=1),
@@ -570,8 +632,7 @@ class EksGitOpsTests(unittest.TestCase):
 
     def test_preflight_accepts_bounded_hpa_scaling_without_restarting_stopped_workloads(self):
         settings = self.scaling_settings()
-        app, _, deployments = self.success()
-        app["spec"] = gitops.application(self.runtime(settings), settings)[1]["spec"]
+        app, _, deployments = self.success(settings)
         core = deployments["core-service"]
         core["spec"]["replicas"] = 2
         for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas"):

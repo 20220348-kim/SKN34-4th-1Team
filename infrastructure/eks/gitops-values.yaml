@@ -1,7 +1,7 @@
 # Public desired configuration. Runtime environment/Secret references are adopted privately.
 services:
   core-service:
-    autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
+    autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
     resources:
       requests: {cpu: 100m, memory: 512Mi}
     env:
@@ -11,7 +11,7 @@ services:
       SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 270s
   catalog-service: {}
   ai-service:
-    autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
+    autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 3, targetCPUUtilizationPercentage: 60}
     resources:
       requests: {cpu: 100m, memory: 512Mi}
       limits: {cpu: "2", memory: 1Gi}
@@ -29,13 +29,13 @@ evaluation:
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {cpu: "1", memory: 1Gi}
-# HTTP replicas can use either existing role; data/single-writer workloads retain their pool.
+# HTTP replicas use both roles; evaluation and its two PVCs belong to observability.
 httpNodeSelector: {govbiz.io/http-pool: shared}
 placement:
   core-service: application
   catalog-service: application
   ai-service: observability
   ops-service: application
-  evaluation-runner: application
-  ops-artifacts: application
+  evaluation-runner: observability
+  ops-artifacts: observability
 resultsClaim: results-cutover

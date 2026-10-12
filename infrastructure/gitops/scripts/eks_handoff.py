@@ -731,11 +731,12 @@ def destination(config, node, elasticsearch_image):
 
 
 def workload_pool(namespace, name):
-    # One node per pool; keep all namespace PVCs and their consumers together.
+    # Keep namespace PVC restore helpers and consumers in the same pool.
+    # Prefect and evaluation/result workers belong with the observation services.
     # AI/web have no PVCs and leave more CPU headroom on the application node.
     return (
         "observability"
-        if namespace == "govbiz-observability"
+        if namespace in {"govbiz-observability", "govbiz-evaluation"}
         or (namespace == "govbiz-msa" and name in {"ai-service", "web"})
         else "application"
     )

@@ -141,7 +141,11 @@ def bundle(root, record, tag, helm="helm"):
         write_files(checkout, source)
         gitops = checkout / PREFIX
         settings = read_settings(checkout)
-        replica_bounds(settings)
+        bounds = replica_bounds(settings)
+        release.require(
+            all(minimum >= 2 for minimum, _ in bounds.values()),
+            "EKS distributed HTTP services require at least two replicas for rolling updates",
+        )
 
         def values(path):
             return yaml.safe_load((gitops / path).read_text())
@@ -225,6 +229,27 @@ def bundle(root, record, tag, helm="helm"):
                     row["spec"]["template"].setdefault("metadata", {}).setdefault(
                         "annotations", {}
                     )["govbiz.io/source-sha"] = sha
+                    if row["kind"] == "Deployment" and name in bounds:
+                        # EKS keeps one replica of each HTTP service per host. Drop
+                        # one old replica before replacing it so a full three-node
+                        # pool does not need a fourth host just for a rolling update.
+                        row["spec"]["strategy"] = {
+                            "type": "RollingUpdate",
+                            "rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1},
+                        }
+                        pod = row["spec"]["template"]["spec"]
+                        pod.pop("topologySpreadConstraints", None)
+                        pod["affinity"] = {
+                            "podAntiAffinity": {
+                                "requiredDuringSchedulingIgnoredDuringExecution": [
+                                    {
+                                        "labelSelector": row["spec"]["selector"],
+                                        "namespaces": [row["metadata"]["namespace"]],
+                                        "topologyKey": "kubernetes.io/hostname",
+                                    }
+                                ]
+                            }
+                        }
                     if row["kind"] == "Deployment" and name in (
                         "catalog-service", "ops-service"
                     ):

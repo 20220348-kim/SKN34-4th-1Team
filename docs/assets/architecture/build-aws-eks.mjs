@@ -54,7 +54,7 @@ function label(x, y, value, max=360, fill=muted) {
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
 <title id="title">GovBiz AWS EKS 아키텍처 — Vercel 웹 · 모바일 · 업무 · LLMOps</title>
-<desc id="desc">2026-10-12 저장소 구성과 워크플로에 근거한 자동 배포 활성화 목표 구조. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. 모바일은 같은 Core API 계약을 사용하며 운영 기기 연결은 별도 검증한다. 시드니 EKS의 사설 EC2 워커 2대는 한 가용 영역에 있고 업무·평가·관측 namespace를 운영한다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 활성화·검증 상태는 설명 문서에 기록한다.</desc>
+<desc id="desc">2026-10-12 저장소 구성과 워크플로에 근거한 노드 배치 변경 목표. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. 모바일은 같은 Core API 계약을 사용하며 운영 기기 연결은 별도 검증한다. 시드니 EKS는 한 가용 영역의 기본 EC2 두 대를 유지한다. application에는 업무 저장소·Catalog·Ops, observability에는 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치한다. Core와 AI는 기본 두 노드에 각각 한 개씩 배치하며 서비스별 두 개에서 세 개로 확장한다. 같은 서비스의 Pod는 노드당 최대 한 개이므로 세 번째 Pod에 추가 application EC2 한 대가 필요하다. 아래 namespace 상자는 논리 구분이며 노드 경계가 아니다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 배치 전환·검증 상태는 설명 문서에 기록한다.</desc>
 <defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
@@ -64,7 +64,7 @@ text(305,91,'AWS EKS 시스템 아키텍처',{size:38,weight:600});
 text(70,142,'Vercel 웹 · React Native 모바일 · EKS 업무·평가·관측 · AWS 네트워크·저장소',{size:25,fill:muted,max:2050});
 card(2390,51,540,62,'#FFF5E6','#E8C68E',16);
 text(2660,91,'VERCEL + AWS EKS',{size:27,weight:700,anchor:'middle',fill:'#98631F',max:500});
-text(2930,142,'2026.10.12 · 자동 배포 적용 구성',{size:21,fill:muted,anchor:'end',max:700});
+text(2930,142,'2026.10.12 · 노드 배치 변경 목표',{size:21,fill:muted,anchor:'end',max:700});
 
 // The top band shows the request sequence, not physical subnet placement.
 card(60,190,2880,400,'#F8FBFD','#D2DFEB',26);
@@ -117,16 +117,18 @@ icon('kubernetes',140,860,50);
 text(207,902,'Amazon EKS · govbiz-eks',{size:33,weight:700,max:1240});
 text(2850,882,'관리형 제어면 · EKS API: private + 관리 IP 제한 public',{size:22,fill:muted,anchor:'end',max:1390});
 text(2850,919,'제어면 서브넷 2개 AZ · 워커는 ap-southeast-2a에 배치',{size:22,fill:muted,anchor:'end',max:1390});
-for (const [x,w,name,detail] of [
-  [140,1360,'application · EC2 1대','Core · Catalog · Ops · 업무 저장소 · Prefect · 평가 실행·결과'],
-  [1540,1320,'observability · EC2 1대','AI Service · Langfuse · 관측 저장소 · ALB Controller'],
+for (const [x,w,name,detail,scaling] of [
+  [140,1360,'application · 기본 EC2 1대','업무 DB·검색·큐 · Catalog · Ops · Core 1개 + AI 1개','확장 시 application EC2 최대 1대 추가 · Core/AI 확장 Pod'],
+  [1540,1320,'observability · 기본 EC2 1대','Langfuse·관측 저장소 · Argo CD · Core 1개 + AI 1개','Prefect · 평가 실행기 · 결과 저장소'],
 ]) {
   card(x,952,w,125,'#F9FBFE','#C6D9E7',18);
-  icon('ec2',x+22,972,43);
-  text(x+83,1007,name,{size:28,weight:700,max:w-110});
-  text(x+22,1051,detail,{size:23,fill:muted,max:w-44});
+  icon('ec2',x+22,964,40);
+  text(x+83,998,name,{size:28,weight:700,max:w-110});
+  text(x+22,1033,detail,{size:23,fill:muted,max:w-44});
+  text(x+22,1064,scaling,{size:22,fill:muted,max:w-44});
 }
-text(150,1114,'관리형 노드 그룹 · m7i-flex.large × 2 · 아래 namespace는 서비스의 논리 경계이며 노드 경계와 다름',{size:23,fill:muted,max:2690});
+text(150,1108,'배치 목표: EC2 기본 2대 → 최대 3대 · Core·AI 각각 HPA 2~3개 · 같은 서비스는 EC2당 최대 1개',{size:23,fill:muted,max:2690});
+text(150,1138,'아래 namespace 상자는 서비스의 논리 구분 · 오른쪽/왼쪽 상자 위치가 실행 노드를 뜻하지 않음',{size:21,fill:muted,max:2690});
 parts.push('<g transform="translate(100 200)">');
 card(85,950,1505,1160,'#FFFFFF','#C6D9EB',24);
 text(112,994,'govbiz-msa · 업무 서비스',{size:30,weight:700,max:1430});
@@ -347,7 +349,7 @@ for(const [x,kind,name] of [[80,'runtime','요청 · 데이터 관계'],[700,'co
   edge(`M${x} 3564H${x+62}`,kind);
   text(x+82,3572,name,{size:24,max:740});
 }
-text(80,3624,'자동 배포를 활성화한 목표 구성 · 실제 적용·검증 기록은 구성도 설명 문서 참고 · 실행 완료 ≠ 품질 합격',{size:22,fill:muted,max:2850});
+text(80,3624,'노드 배치 변경 목표 · 실제 전환·검증 기록은 구성도 설명 문서 참고 · 실행 완료 ≠ 품질 합격',{size:22,fill:muted,max:2850});
 parts.push('</g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);

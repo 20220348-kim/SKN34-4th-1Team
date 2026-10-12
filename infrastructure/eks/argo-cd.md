@@ -44,12 +44,16 @@ Argo 4개 구성 요소는 기존 `govbiz.io/workload-pool=observability` 노드
 
 | 구성 요소 | CPU 요청 / 제한 | 메모리 요청 / 제한 |
 |---|---|---|
-| application-controller | 100m / 1 | 256Mi / 768Mi |
-| repo-server | 100m / 1 | 256Mi / 768Mi |
+| application-controller | 50m / 1 | 256Mi / 768Mi |
+| repo-server | 25m / 1 | 256Mi / 768Mi |
 | ApplicationSet controller | 25m / 200m | 64Mi / 128Mi |
 | Redis | 25m / 200m | 64Mi / 128Mi |
 
 초기화 컨테이너는 25m/64Mi 요청, 200m/128Mi 제한을 사용합니다.
+평가 서비스의 observability 이전 설정에서는 controller·repo-server CPU 요청을 기존 각각
+100m에서 위 값으로 조정합니다. 소규모 Application 1개인 현재 클러스터에서 관측한 CPU는
+각각 2~3m·1m이며, CPU 사용 상한과 메모리는 유지합니다. 초기 관측값이 배포 중 최대 사용량을
+보장하지 않으므로 이후 관리 Application 수가 늘어나면 요청량을 다시 산정합니다.
 업무 노드의 CPU 미예약분은 인계 시점에 65m로, 배포 전후 Job의 요청량 100m보다 작았습니다.
 PVC를 사용하지 않는 `ops-service-release-prepare`·`ops-service-release-resume` Job만
 Application의 기존 Kustomize patch에 `/spec/template/spec/nodeSelector`를 추가해

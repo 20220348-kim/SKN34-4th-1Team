@@ -77,8 +77,8 @@ class EksApiGatewayTests(unittest.TestCase):
         })
         self.assertEqual(pod["nodeSelector"], {"govbiz.io/http-pool": "shared"})
         self.assertEqual(pod["topologySpreadConstraints"], [{
-            "maxSkew": 1, "topologyKey": "kubernetes.io/hostname",
-            "whenUnsatisfiable": "ScheduleAnyway",
+            "maxSkew": 1, "minDomains": 2, "topologyKey": "kubernetes.io/hostname",
+            "whenUnsatisfiable": "DoNotSchedule",
             "labelSelector": {"matchLabels": spec["selector"]["matchLabels"]},
         }])
         hpa = self.resource("HorizontalPodAutoscaler")

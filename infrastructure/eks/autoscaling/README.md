@@ -18,16 +18,36 @@ EKS·ALB·NAT·데이터 EBS 비용은 별도이며 크레딧 잔액과 실제 �
 
 ## 확장 경로
 
-`CPU 사용 증가 → HPA가 API Pod 증가 → 자원 요청을 수용할 노드 부족 → Cluster Autoscaler가 EC2 추가`
+`CPU 사용 증가 → HPA가 API Pod 증가 → 자원·분산 조건을 만족할 노드 부족 → Cluster Autoscaler가 EC2 추가`
 
-- API Gateway·Core·AI: CPU 요청량 대비 60%, Pod 최소 1 / 최대 3.
+- Core·AI: CPU 요청량 대비 60%, **각각 최소 2 / 최대 3개**. 서비스별 required Pod
+  anti-affinity로 같은 서비스는 한 노드에 하나만 배치한다. 정상적인 기본 2노드 상태에서는
+  application과 observability에 Core·AI가 각각 하나씩 실행된다. 세 번째 Core 또는 AI가
+  필요하면 CPU 여유가 있더라도 분산 조건 때문에 세 번째 application 노드가 필요하다.
+- API Gateway: 최소 1 / 최대 3개, CPU 기준 60%. `DoNotSchedule`, `maxSkew: 1`,
+  `minDomains: 2`로 한 노드 몰림을 제한한다. 2노드에서 정상 실행 3개 또는 롤링 교체
+  4개는 노드당 최대 2개다. 종료 중 Pod는 자원을 계속 점유하므로 교체 중에는 추가 대기가
+  생길 수 있다.
 - Core·AI CPU 요청은 기존 운영값인 각각 100m를 유지한다. CPU 사용 상한과 다른 값이며,
   HPA·스케줄러·노드 확장이 동일한 요청량을 사용한다. 기존 100m를 200m로 늘리면 총합이
   두 노드 용량 안이어도 개별 노드의 빈 공간에 배치되지 않아 세 번째 노드가 상시 필요해진다.
+- 평가 실행기·결과 저장소·Prefect와 기존 결과·Prefect PVC는 observability로 모은다.
+  각 서비스의 기존 CPU 요청 100m와 메모리·사용 상한을 유지한다. Application controller
+  50m, repo-server 25m, Cluster Autoscaler 25m로 제어 도구의 CPU 요청을 조정하며,
+  메모리·CPU 상한은 유지한다. Application 1개·노드 최대 3개인 현재 규모의 관측 CPU는
+  각각 2~3m·1m·2m다. 이 값은 고부하 성능 측정이 아니므로 운영 규모 변경 시 다시 산정한다.
+- 변경 후 Core·AI 각 하나와 Gateway 최대 두 개를 포함한 정상 CPU 요청은
+  application **1690m / 1930m**, observability **1890m / 1930m**다. 관측 노드의 여유 40m는
+  repo-server·Autoscaler 각각의 25m 롤링 교체를 수용한다. 동시에 교체하면 한쪽이 잠시
+  대기할 수 있다. 종료 중 Pod와 신규 시스템 애드온은 추가 자원을 사용하므로 따로 확인한다.
+- Core·AI 롤링 배포는 `maxSurge: 0`, `maxUnavailable: 1`로 최대 3노드에서도 교체할
+  수 있게 한다. 각각의 PDB는 `minAvailable: 1`로 노드 축소 중 마지막 실행본을 보호한다.
+  배포 교체 중에는 한 개만 Ready일 수 있으며 PDB가 Deployment의 교체 종료를 막지는 않는다.
 - 두 기존 노드 그룹에 `govbiz.io/http-pool=shared` 라벨을 추가한다. Gateway·Core·AI만
   이 라벨로 배치하며, 새 application 노드에도 EKS가 같은 라벨을 부여한다.
-- Catalog·Ops·평가·DB·Langfuse는 단일 실행과 기존 역할별 배치를 유지한다.
-  PVC 이동이나 DB 재배치는 하지 않는다. 평가 실행기와 결과 서버의 동일 호스트 affinity도 유지한다.
+- Catalog·Ops·업무 DB는 application, 평가·Langfuse는 observability에서 단일 실행을 유지한다.
+  평가 실행기와 결과 서버의 동일 호스트 affinity를 유지한다. 평가 이전 시 기존 RWO 볼륨을
+  같은 AZ의 observability 노드에 재부착하며 PVC·PV·데이터는 삭제하거나 새로 만들지 않는다.
 - Catalog·Ops는 각각 `catalog-mysql`·`ops-mysql`과 같은 노드에 배치한다. 기존 노드와
   추가 노드가 같은 application 라벨을 사용하므로 라벨만으로 제한하면 이 두 단일 실행
   서비스가 추가 노드에 남고 PDB가 축소를 막는다. DB Pod를 기준으로 배치하여 특정 EC2의
@@ -66,13 +86,23 @@ EKS·ALB·NAT·데이터 EBS 비용은 별도이며 크레딧 잔액과 실제 �
    | `govbiz.io/workload-pool` | `application` |
 
    IAM 변경 권한은 세 태그를 모두 가진 ASG에만 부여한다. observability ASG에는 붙이지 않는다.
-6. `kubectl apply -f infrastructure/eks/autoscaling/pdb.yaml`로 단일 실행 Pod를 보호한다.
+6. `kubectl apply -f infrastructure/eks/autoscaling/pdb.yaml`로 단일 실행 Pod 및 Core·AI의
+   마지막 실행본을 보호한다.
    기존 PVC나 Pod template을 변경하지 않는다. `cluster-autoscaler.yaml`을 적용하고
    Pod Identity 인증·ASG 발견을 확인한다. 수동 drain 때도 PDB를 존중하며 강제로 무시하지 않는다.
 7. 전환 중 배포 workflow를 잠시 보류한다. Argo 비공개 Kustomize patch에서는 Core·AI만
    공용 HTTP 라벨로 바꾸고 Core graceful shutdown 환경값도 반영한다.
    `/spec/replicas` 무시는 Core·AI에만 적용하고 `RespectIgnoreDifferences=true`를 유지한다.
-8. 변경 커밋의 필수 CI가 통과한 뒤 자동 배포한다. 이미지·설정·단일 실행 서비스 검증은 유지한다.
+   평가 두 Deployment의 nodeSelector patch도 observability로 바꿔 공개 배치값을 덮어쓰지
+   않게 한다. Prefect는 Argo의 6개 앱 관리 범위 밖이며 최초 배치는 `eks_handoff.py`에서
+   정한다. 기존 클러스터는 평가 접수를 잠시 닫고 진행 중 실행이 없는 것을 확인한 뒤,
+   실행기·결과 서버·Prefect를 정상 정지하고 기존 PVC를 observability에 재부착한다.
+   Prefect·결과 서버·실행기 순서로 재개하고 연결·데이터 보존을 확인한 뒤 접수를 복구한다.
+8. 기존 최소 1개 구성에서 처음 전환할 때는 Core·AI의 HPA 최소값을 먼저 2로 올리고
+   **각각 2개 이상 Ready**를 확인한 뒤 분산 템플릿을 배포한다. HPA 적용 직후만 확인하고
+   진행하면 `maxUnavailable: 1`이 마지막 기존 Pod를 종료할 수 있다. 이 초기 확대에는
+   임시로 세 번째 노드가 필요할 수 있다. 변경 커밋의 필수 CI가 통과한 뒤 자동 배포하며,
+   이미지·설정·단일 실행 서비스 검증과 최종 최소 2개 Ready 검사는 유지한다.
 9. API Gateway는 `kubectl apply -k infrastructure/eks/api-gateway`로 갱신한다.
    HPA 적용 후 `replicas`를 수동 고정하지 않는다. 기존 ALB·Ingress·Secret을 유지한다.
 10. 서비스 준비·기존 PVC 13개 Bound·운영 API 응답을 확인한다. 유료 모델 호출 없이 제한된
