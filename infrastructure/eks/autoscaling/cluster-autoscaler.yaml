@@ -135,6 +135,8 @@ spec:
             - --scale-down-utilization-threshold=0.5
             - --scale-down-delay-after-add=10m
             - --scale-down-unneeded-time=10m
+            # Preserve the gateway's 620s drain budget during node eviction.
+            - --max-graceful-termination-sec=660
           env:
             - {name: AWS_REGION, value: ap-southeast-2}
             - {name: AWS_STS_REGIONAL_ENDPOINTS, value: regional}
