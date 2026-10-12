@@ -70,7 +70,7 @@ function finish() {
 }
 
 // 01: Inventory uses aligned namespace rows, with no implied service-call arrows.
-start('govbiz-kubernetes-resources-overview',1570,'01','어떤 리소스가 어디에 있나요?','현재 EKS 실행·저장소 구성 · Namespace는 논리 구분이며 Node 경계가 아닙니다.');
+start('govbiz-kubernetes-resources-overview',1985,'01','어떤 리소스가 어디에 있나요?','현재 EKS 업무·평가·관측·배포 관리 · Namespace와 Node는 별개입니다.');
 function namespace(y,h,name,label) {
   rect(48,y,1344,h);
   icon('ns',72,y+20,52);
@@ -114,11 +114,23 @@ card(858,1080,510,142,'sts','StatefulSet → Pod + PVC',[
 icon('svc',82,1241,36); text(132,1268,'앱과 관측 저장소 각각 ClusterIP Service 사용',{size:25,max:1190});
 text(80,1318,'EKS: observability · 업무용 MySQL·Redis와 분리한 관측 저장소 4개 · 각각 독립 PVC',{size:24,fill:palette.muted,max:1280});
 
-rect(48,1372,1344,126,{fill:'#EDF3FE',stroke:'#BFCFF2'});
-icon('ns',72,1394,58);
-lines(152,1414,[
+namespace(1372,390,'argocd · Argo CD Core','배포 관리 · Pod 4개');
+card(72,1454,762,180,'deploy','Deployment → ReplicaSet → Pod',[
+  'repo-server · applicationset-controller',
+  'Redis · 각각 별도 Deployment / Pod',
+],{size:28});
+card(858,1454,510,180,'sts','StatefulSet → Pod',[
+  'application-controller',
+  'Pod 1개 · PVC 없음',
+],{size:27});
+icon('svc',82,1650,36); text(132,1677,'repo-server·Redis 내부 Service · Core 설치에는 별도 웹 서버 없음',{size:25,max:1190});
+text(80,1732,'EKS: observability · Argo 전용 Namespace · Kubernetes API 권한으로 업무·평가 앱 동기화',{size:24,fill:palette.muted,max:1280});
+
+rect(48,1786,1344,126,{fill:'#EDF3FE',stroke:'#BFCFF2'});
+icon('ns',72,1808,58);
+lines(152,1828,[
   'Namespace는 논리적 구분입니다. Node와 1:1로 대응하지 않습니다.',
-  '제어 계층(argocd · kube-system)은 ③ 플랫폼 구성에서 이어집니다.',
+  'Argo의 배포 제어와 kube-system 기반 기능은 ③에서 이어집니다.',
 ],{size:26,gap:42,max:1195});
 finish();
 
@@ -159,11 +171,11 @@ finish();
 // 03: Separate the API control path, ALB traffic, autoscaling, shared add-ons and policies.
 start('govbiz-kubernetes-resources-platform',2430,'03','클러스터를 관리하고 연결하는 구성','현재 EKS의 배포·요청·Pod 및 노드 확장 관계 · 로컬의 접속 방식은 따로 표시합니다.');
 panel(180,302,'A. 배포·실행 관리');
-card(80,266,372,162,'argocd','Argo CD',['AppProject · Application','검증된 Git YAML 적용']);
+card(80,266,372,162,'argocd','Argo CD Core',['argocd · observability','4개 Pod · Git YAML 적용'],{size:25});
 card(534,266,372,162,'control-plane','Control Plane',['API · etcd · 컨트롤러','Scheduler · EKS: AWS 관리'],{size:26});
 card(988,266,372,162,'node','Worker Node',['kubelet · containerd','Pod 실행·상태 보고']);
 arrow(460,346,520,346); arrow(914,346,974,346);
-text(80,462,'EKS 노드 풀: application / observability · Namespace와 Node 배치는 별도입니다.',{size:24,fill:palette.muted,max:1270});
+text(80,462,'Argo도 Worker Node의 Pod · Kubernetes API 권한으로 다른 Namespace에 배포합니다.',{size:24,fill:palette.muted,max:1270});
 
 panel(506,336,'B. EKS 외부 요청 진입 — Ingress 설정과 HTTP 요청 경로를 구분합니다.',{color:palette.teal,fill:'#F4FBFA'});
 icon('ing',80,588,45);
