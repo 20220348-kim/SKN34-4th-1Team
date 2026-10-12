@@ -188,13 +188,17 @@ Core 공개 API는 적용 완료된 복제본을 읽습니다. 인증·통신·�
 
 이 모드에서 Core의 수집·색인 writer bean은 생성되지 않습니다. 기존 구현은 전환 호환성을 위해 남아 있으며,
 `infrastructure/compose.yaml` 단독 실행과 AWS 재배포용 템플릿은 기존 embedded 모드입니다.
-현재 운영 환경은 없으며 이 변경으로 AWS를 배포하지 않습니다. 아래 기존 수집 흐름 설명은 embedded 모드를 기준으로 하며,
+위 내용은 Catalog 분리 모드의 초기 도입 기록이며, 당시 변경에는 AWS 배포가 포함되지 않았습니다. 아래 기존 수집 흐름 설명은 embedded 모드를 기준으로 하며,
 분리 모드의 계약·소유권·제약은 [Catalog 분리 안내](catalog-service-extraction.md)를 참고하세요.
 
-AWS 운영 진입 경로는 `Vercel routing middleware → CloudFront VPC origin → Nginx → Core`입니다.
-미들웨어는 프록시 공유 비밀값·신뢰 IP만 추가하며 업무/AI 실행을 맡지 않습니다. Core는 운영 Compose에서
-Nginx 한 IP의 전달 헤더만 신뢰하고 기존 계정·Origin 검증을 유지합니다.
-[운영 설정 안내](deployment-aws-vercel.md)와 [배포 확인 기록을 반영한 구성도](assets/architecture/README-aws-deployed.md)를 참고하세요.
+현재 EKS 업무 API 진입 경로는 `Vercel routing middleware → CloudFront VPC origin → 내부 ALB → Nginx Gateway → Core·Ops Service`입니다.
+GovBiz 사용자·Ops 화면은 Vercel에서 제공합니다. 미들웨어는 프록시 공유 비밀값·신뢰 IP를 추가하고,
+Gateway가 경로별 인증·전달을 담당하며 업무/AI 실행은 백엔드 서비스가 맡습니다.
+Argo 배포 관리 화면은 EKS의 `argocd` Namespace·observability 노드에 있는 `argocd-server` Pod에서 제공합니다.
+관리자 브라우저는 `CloudFront HTTPS /argocd/ → 기존 내부 ALB → Gateway → argocd-server Service → Pod`로 접속합니다.
+관리자 IPv4·전용 origin 비밀값·Argo 로그인을 확인하며, Gateway에서 Argo의 ClusterIP `8080`으로 연결할 때 서버 인증서를 검증합니다.
+[현재 EKS 구성도](assets/architecture/README-aws-eks.md)와 [Argo 관리 웹 접속 안내](../infrastructure/eks/argocd-dashboard.md)를 참고하세요.
+이전 Compose 운영 구성은 [기존 운영 설정 안내](deployment-aws-vercel.md)에 별도로 남겨 두었습니다.
 구성도는 실시간 상태 확인이나 모든 운영 기능의 검증 완료를 의미하지 않습니다.
 
 기존 계정별 수동 분석 API는 `ApplicationFormDiscoveryJobController → ApplicationFormDiscoveryJobService → Repository → MyBatis → MySQL`

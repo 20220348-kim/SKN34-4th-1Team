@@ -38,6 +38,7 @@ http {
         # ALB and Kubernetes probes; this endpoint never calls an application.
         location = /healthz { access_log off; return 200 '{"status":"ok"}'; }
         location = /api { return 404; }
+        include /tmp/argocd.conf;
         location /api/ {
             if ($govbiz_proxy_allowed = 0) { return 403; }
             if ($http_x_govbiz_client_ip = "") { return 400; }

@@ -1,9 +1,14 @@
-# Vercel → CloudFront → EKS API 연결
+# CloudFront → EKS API·Argo 대시보드 연결
 
 이 구성은 시드니 시연의 **Vercel 웹에서 EKS Core·Ops API를 호출하는 경로**다.
 2026-10-12 시드니 EKS에 실제 적용하고 `https://govbiz.vercel.app`과 연결했다.
 운영 주소에서 Core·AI health, 저장 공고 조회, Ops session은 200이며 익명 평가 이력 조회는 401이다.
 CloudFront 직접 API 요청은 프록시 비밀값 없이 403으로 차단된다. 관리자 로그인 후 검증은 별도다.
+Argo CD는 같은 CloudFront의 `/argocd/`에서 관리자 IPv4·Argo 전용 origin 비밀값·Argo 로그인을
+사용하는 별도 경로다. 기존 Vercel API 인증과 분리하며 [설치·접속 안내](argocd-dashboard.md)를 따른다.
+2026-10-13 이 경로를 실제 적용해 앱 내 브라우저의 로그인 후 Applications 화면·admin API 로그인과
+`govbiz-eks`의 `Synced / Healthy`를 확인했다. 기존 Vercel Core health 200과 직접 CloudFront API 403도 유지됐다.
+상세 검증 범위는 [운영 기록](argo-cd.md#2026-10-13-운영-대시보드-추가)에 남긴다.
 다른 환경에서 `kubectl apply -k api-gateway`를 실행하면 ALB를 생성하므로 비용 승인·복원 후 적용한다.
 
 ```text
@@ -14,6 +19,10 @@ govbiz.vercel.app /api/*
   → EKS api-gateway:8080 (비밀값 검증·전달 헤더 제한)
       ├─ /api/v1/ops, /api/v1/ops/* → ops-service:8000 → Core 관리자 세션 확인
       └─ 나머지 /api/* → core-service:8080
+
+관리자 브라우저 → HTTPS CloudFront /argocd/ (실제 관리자 IPv4 확인)
+  → 같은 내부 ALB → api-gateway (Argo 전용 origin 비밀값 + 접근 허용 표식 확인)
+  → HTTPS argocd-server.argocd:8080 (서버 인증서 pin 검증) → Argo 로그인
 ```
 
 ## 구성과 경계
@@ -31,7 +40,8 @@ govbiz.vercel.app /api/*
 - 사용자 요청의 프록시 헤더는 버린다. Vercel이 확인한 IP와 HTTPS 정보만 전달하며,
   Core의 현재 `server.forward-headers-strategy=none`을 임의로 사설망 전체 신뢰로 바꾸지 않는다.
   따라서 이 단계만으로 Core의 실제 클라이언트 IP 기반 제한까지 검증했다고 해석하지 않는다.
-- 게이트웨이만 egress를 Core·Ops·DNS로 제한한다. 기존 Core·Ops 통신을 차단하는 새 ingress
+- 게이트웨이의 egress를 Core·Ops·DNS·Argo 서버로 제한한다. Argo의 ingress는 이 Gateway의 Pod만
+  허용한다. 기존 Core·Ops 통신을 차단하는 새 ingress
   격리 정책은 추가하지 않는다. 기존 NetworkPolicy를 유지하며 목적지의 추가 제한은 따로 확인한다.
 - Nginx 비동기 DNS resolver는 `resolv.conf`의 검색 도메인을 적용하지 않는다. Core·Ops를
   각각 `core-service.govbiz-msa.svc.cluster.local`, `ops-service.govbiz-msa.svc.cluster.local`로
@@ -39,6 +49,10 @@ govbiz.vercel.app /api/*
   `ops-service.govbiz-msa.svc.cluster.local`, `DJANGO_CSRF_TRUSTED_ORIGINS`에
   `https://govbiz.vercel.app`이 필요하다.
   Core·Ops 쿠키는 Secure 설정을 유지한다. Origin·CSRF 검증과 관리자 판정은 Django·Core가 수행한다.
+- Argo는 `govbiz-msa/argocd-dashboard-proxy`의 `origin-secret`·`tls.crt`를 사용한다.
+  CloudFront Function은 외부에서 보낸 `x-govbiz-argo-access`를 지우고 허용 IPv4에만 표식을 부여한다.
+  Gateway는 CloudFront의 별도 `x-govbiz-argo-origin` 비밀값도 함께 확인한다. 이 값들은 Argo에 전달하지 않는다.
+  Argo Secret이 없으면 `/argocd`와 하위 경로만 `403`으로 닫히고 API는 계속 동작한다.
 
 ## 실제 적용 전 준비
 

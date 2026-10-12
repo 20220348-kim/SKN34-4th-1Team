@@ -24,3 +24,9 @@ spec:
               service:
                 name: api-gateway
                 port: {name: http}
+          - path: /argocd
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port: {name: http}

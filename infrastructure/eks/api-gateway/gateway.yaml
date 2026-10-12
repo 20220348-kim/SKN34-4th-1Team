@@ -47,6 +47,9 @@ spec:
             - name: GOVBIZ_PROXY_SECRET
               valueFrom:
                 secretKeyRef: {name: api-gateway-secret, key: GOVBIZ_PROXY_SECRET}
+            - name: GOVBIZ_ARGO_PROXY_SECRET
+              valueFrom:
+                secretKeyRef: {name: argocd-dashboard-proxy, key: origin-secret, optional: true}
           ports: [{name: http, containerPort: 8080}]
           resources:
             requests: {cpu: 25m, memory: 32Mi}
@@ -57,12 +60,18 @@ spec:
             httpGet: {path: /healthz, port: http}
           volumeMounts:
             - {name: config, mountPath: /etc/govbiz, readOnly: true}
+            - {name: argocd-trust, mountPath: /etc/govbiz-argocd, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
           configMap: {name: api-gateway-config}
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 32Mi}
+        - name: argocd-trust
+          secret:
+            secretName: argocd-dashboard-proxy
+            optional: true
+            items: [{key: tls.crt, path: tls.crt}]
 ---
 apiVersion: v1
 kind: Service

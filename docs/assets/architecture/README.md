@@ -11,23 +11,25 @@
 
 메인 README 5.2.4의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과
 고정된 행 배치로 바꾸고, 관리·요청·저장소 관계를 분리했습니다.
-현재 EKS 설정의 HPA·Cluster Autoscaler·노드 배치와 Argo CD Core 설치 구성을 반영하며 로컬 web은 별도로 표시합니다.
+현재 EKS 설정의 HPA·Cluster Autoscaler·노드 배치와 Argo CD Core·상시 대시보드 구성을 반영하며 로컬 web은 별도로 표시합니다.
 
 | 그림 | 파일 | 읽는 순서 |
 |---|---|---|
-| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png) · [SVG](govbiz-kubernetes-resources-overview.svg) | 업무 → 평가 → 관측 → Argo CD. EKS의 실행 개수와 물리 노드 배치를 함께 표시하며 Namespace와 Node를 구분합니다. |
+| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png?v=7d1c9d8f8c22) · [SVG](govbiz-kubernetes-resources-overview.svg?v=17ca7f7f13b2) | 업무 → 평가 → 관측 → Argo CD. EKS의 실행 개수와 물리 노드 배치를 함께 표시하며 Namespace와 Node를 구분합니다. |
 | Ops의 리소스 관계 | [PNG](govbiz-kubernetes-resources-flow.png) · [SVG](govbiz-kubernetes-resources-flow.svg) | 생성·관리 → 실제 요청 → 데이터 보존. 행마다 반복한 Ops·MySQL Pod는 같은 예시입니다. |
-| 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png) · [SVG](govbiz-kubernetes-resources-platform.svg) | Argo·Control Plane·Node → EKS 진입 → Metrics Server·HPA → 대기 Pod·Cluster Autoscaler·EC2 → 기반 기능 → 설정·접근 제어. |
+| 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png?v=bd6814f7aa99) · [SVG](govbiz-kubernetes-resources-platform.svg?v=19382a66453b) | Argo·Control Plane·Node → EKS 진입과 업무 API·Argo 웹 분기 → Metrics Server·HPA → 대기 Pod·Cluster Autoscaler·EC2 → 기반 기능 → 설정·접근 제어. |
 
 - **파란 실선**: 생성·배포·실행 관리와 자동확장 제어. **초록 실선**: 실제 요청. **황색 점선**: 마운트·바인딩.
 - EKS Core·AI는 HPA 각각 최소 2개·최대 3개, Gateway는 최소 1개·최대 3개이며 CPU requests 대비 평균 사용률 목표는 60%입니다.
   Cluster Autoscaler는 배치 대기 Pod에 맞춰 application 최소 1대·최대 2대, observability 고정 1대로 전체 최소 2대·최대 3대를 유지합니다.
   Core·AI의 필수 노드 분산과 PDB에 따른 퇴거 제한·축소 조건을 함께 표시합니다.
 - 평가·관측은 observability에 배치하고 Catalog·Ops는 각각 업무 DB와 같은 application 노드에 배치합니다.
-- `argocd`는 별도 Namespace이며 Argo CD Core의 4개 Pod는 observability Node에서 실행합니다.
+- `argocd`는 별도 Namespace이며 EKS는 Core 4개와 상시 대시보드 1개, 총 Pod 5개를 observability Node에 배치합니다.
   application-controller는 StatefulSet, repo-server·ApplicationSet controller·Redis는 각각 Deployment입니다.
-  현재 Core 설치의 Argo 구성 요소는 PVC를 사용하지 않으며 별도 웹 서버 Pod가 없습니다.
-  플랫폼 그림의 Argo는 이 4개 Pod를 요약한 것이며 Kubernetes API로 다른 Namespace에 배포합니다.
+  대시보드 `argocd-server`도 Deployment이며 CloudFront `/argocd/` → 기존 내부 ALB·Gateway → ClusterIP `8080` → 서버 Pod로 접속합니다.
+  GovBiz 업무 웹은 Vercel에서 제공하고 Argo 웹은 EKS에서 제공합니다. 플랫폼 그림에 Gateway의 두 경로를 별도 화살표로 표시합니다.
+  관리자 IPv4·전용 origin 비밀값·HTTPS·`admin` 인증을 사용하며 별도 PVC·ALB·프록시 Pod·EC2는 추가하지 않습니다. 로컬 kind는 웹 서버 없는 Core Pod 4개입니다.
+  플랫폼 그림의 Argo는 EKS의 5개 Pod를 요약하며 `govbiz-eks`가 Kubernetes API로 업무·평가 앱 Deployment 6개와 관련 배포 리소스를 관리합니다.
 - Headless Service는 중계 서버로 그리지 않습니다. CoreDNS가 알려준 Pod IP로 직접 접속합니다.
 - Chart·배포 코드의 구조이며, 실제 Argo 인계·자동 배포 완료나 현재 Pod 개수를 증명하지 않습니다.
 - 기본 Chart의 migration Job과 자동 배포 시 이를 교체하는 prepare·resume Job을 구분합니다.
@@ -56,6 +58,7 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 [Gateway HPA](../../../infrastructure/eks/api-gateway/hpa.yaml) ·
 [Cluster Autoscaler·PDB·축소 조건](../../../infrastructure/eks/autoscaling/README.md) ·
 [Argo 설치·노드 배치](../../../infrastructure/eks/argo-cd.md#현재-argo-자원-배치) ·
+[EKS 대시보드 설치·접속](../../../infrastructure/eks/argocd-dashboard.md) ·
 [고정 Argo CD Core 3.5.3 리소스](https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/core-install.yaml).
 
 공식 구조 근거: [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/),
@@ -76,9 +79,9 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 
 ## Vercel + AWS EKS 전체 구성 — 2026-10-13
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=3729d08aeb9e)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=27631e4266f5)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=3729d08aeb9e) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=366cba82f9bb)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=27631e4266f5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=bc65fcd202fd)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
@@ -87,8 +90,9 @@ MySQL은 EKS 내부에 유지하며, 모바일·MyBatis·업무·평가·관측 
 Catalog → 공고 제공처 API, AI Service → OpenAI의 외부 호출은 별도 보라색 영역에서 표시합니다.
 사설 Pod의 NAT Gateway → Internet Gateway 출구와 VPC 밖 API를 구분합니다.
 개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 자동 배포 흐름을 표시합니다.
-EKS 내부 `argocd` 영역에는 observability 노드에 배치하는 Argo CD Core의 4개 Pod와
-Kubernetes API를 통한 배포 제어 경로를 표시합니다. 하단 배포 흐름의 Argo와 같은 구성입니다.
+EKS 내부 `argocd` 영역에는 observability 노드에 배치하는 Core 4개·상시 대시보드 1개와
+Kubernetes API를 통한 배포 제어 경로를 표시합니다. 대시보드는 기존 CloudFront `/argocd/`·내부 ALB·Gateway를 거쳐 관리자 IPv4 제한·HTTPS·`admin` 인증으로 접근합니다.
+하단 배포 흐름의 Argo와 같은 구성이며 로컬 Core Pod 4개와 구분합니다.
 운영 설정은 기본 EC2 2대·최대 3대, Core·AI 각각 2\~3개 분산, 평가 서비스의 observability 배치입니다.
 로드밸런싱 확대도에 ALB → Gateway Pod → Core·AI Service와 준비된 Pod의 관계를 표시합니다.
 HPA의 Pod 조절 → 배치 대기 → Cluster Autoscaler의 application EC2 추가는 녹색 제어선으로 구분합니다.
