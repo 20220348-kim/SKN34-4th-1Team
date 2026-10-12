@@ -10,9 +10,14 @@ import ai.govbiz.core.aiusage.helper.AiUsageContextHelper
 import ai.govbiz.core.govagent.client.AiGovAgentClient
 import ai.govbiz.core.govagent.client.dto.AiGovAgentPayload
 import ai.govbiz.core.govagent.client.dto.AiGovAgentRequest
+import ai.govbiz.core.govagent.client.dto.AiGovPartnerConditionPayload
+import ai.govbiz.core.govagent.client.dto.AiGovPartnerConditionsPayload
 import ai.govbiz.core.govagent.domain.GovAgentProgram
 import ai.govbiz.core.govagent.domain.GovAgentQuestion
 import ai.govbiz.core.govagent.service.dto.GovAgentOutcome
+import ai.govbiz.core.partner.domain.PartnerMatchConditions
+import ai.govbiz.core.partner.domain.PartnerMatchProgram
+import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
@@ -160,6 +165,86 @@ class GovAgentServiceTest {
             assertNull(result.evidence)
             assertTrue(!result.message.isNullOrBlank())
         }
+        verifyNoInteractions(conversation, evidence, usage)
+    }
+
+    private val partnerMessage = "서울에서 AI 참여기관 구하는 이 공고 모집글 보여줘"
+    private fun partnerQuestion(selected: GovAgentProgram? = program) = GovAgentQuestion(partnerMessage, context, null, null, null, selected)
+    private fun condition(value: String, evidence: String) = AiGovPartnerConditionPayload(value, evidence)
+    private fun partnerPayload(
+        roles: List<AiGovPartnerConditionPayload> = listOf(condition("PARTICIPANT", "참여기관 구하는")),
+        regions: List<AiGovPartnerConditionPayload> = listOf(condition("서울", "서울에서")),
+        keywords: List<AiGovPartnerConditionPayload> = listOf(condition("AI", "AI")),
+        selectedProgramEvidence: String? = "이 공고",
+        action: String = "PARTNERS",
+    ) = AiGovAgentPayload(action, AiGovPartnerConditionsPayload(roles, regions, keywords, selectedProgramEvidence))
+
+    private fun decidePartners(payload: AiGovAgentPayload, selected: Boolean = true) {
+        doReturn(payload).`when`(client).decide(AiGovAgentRequest(partnerMessage, selected, null, null))
+    }
+
+    @Test
+    fun partnersReturnsConditionsWhoseEvidenceIsInTheUserMessage() {
+        decidePartners(partnerPayload())
+        val result = service.answer(admin, "127.0.0.1", partnerQuestion())
+
+        assertEquals(GovAgentOutcome.PARTNERS, result.outcome)
+        assertEquals(
+            PartnerMatchConditions(setOf(PartnerRole.PARTICIPANT), setOf("서울"), listOf("AI"), PartnerMatchProgram("BIZINFO", "P001")),
+            result.partnerConditions,
+        )
+        assertEquals("말씀하신 조건으로 모집글을 찾아봤어요.", result.message)
+        verifyNoInteractions(conversation, evidence, usage)
+    }
+
+    @Test
+    fun partnersWithoutSpokenConditionsChoosesFromTheAccountInformation() {
+        decidePartners(AiGovAgentPayload("PARTNERS"))
+        val result = service.answer(admin, "127.0.0.1", partnerQuestion())
+
+        assertEquals(PartnerMatchConditions(), result.partnerConditions)
+        assertEquals("우리 회사 정보와 관심 공고에 맞는 모집글을 찾아봤어요.", result.message)
+    }
+
+    @Test
+    fun capitalAreaEvidenceCoversSeoulGyeonggiAndIncheonEvenWhenTheModelNamesOnlyOne() {
+        val message = "수도권 데이터 회사 파트너 찾아줘"
+        val payload = AiGovAgentPayload("PARTNERS", AiGovPartnerConditionsPayload(
+            emptyList(), listOf(condition("서울", "수도권")), listOf(condition("데이터", "데이터")), null,
+        ))
+        doReturn(payload).`when`(client).decide(AiGovAgentRequest(message, false, null, null))
+        val result = service.answer(admin, "127.0.0.1", GovAgentQuestion(message, context, null, null, null, null))
+
+        assertEquals(PartnerMatchConditions(emptySet(), setOf("서울", "경기", "인천"), listOf("데이터")), result.partnerConditions)
+    }
+
+    @Test
+    fun rolesWithoutTheRoleWordInTheirEvidenceAreNotApplied() {
+        // 모델이 "모집글"만 보고 참여기관을 붙여도, 사용자가 역할을 말하지 않았으므로 역할로 거르지 않습니다.
+        decidePartners(partnerPayload(roles = listOf(condition("PARTICIPANT", "모집글"), condition("LEAD", "참여기관 구하는"))))
+        val result = service.answer(admin, "127.0.0.1", partnerQuestion())
+        assertEquals(emptySet<PartnerRole>(), result.partnerConditions?.seekingRoles)
+        assertEquals(setOf("서울"), result.partnerConditions?.regions)
+    }
+
+    @Test
+    fun partnerConditionsOutsideTheContractFailInsteadOfBeingDropped() {
+        val invalid = listOf(
+            partnerPayload(regions = listOf(condition("부산", "부산에서"))),
+            partnerPayload(regions = listOf(condition("전국", "서울에서"))),
+            partnerPayload(roles = listOf(condition("OWNER", "참여기관 구하는"))),
+            partnerPayload(keywords = listOf(condition("데이터", "AI"))),
+            partnerPayload(keywords = List(4) { condition("AI", "AI") }),
+            partnerPayload(regions = listOf(condition("서울", "AI"))),
+            partnerPayload(action = "SEARCH"),
+        )
+        for (payload in invalid) {
+            decidePartners(payload)
+            assertThrows(AiServiceCallException::class.java) { service.answer(admin, "127.0.0.1", partnerQuestion()) }
+        }
+        // 고른 공고가 없는데 "이 공고"로 좁히라고 하면 공고를 지어내지 않고 오류입니다.
+        decidePartners(partnerPayload(), selected = false)
+        assertThrows(AiServiceCallException::class.java) { service.answer(admin, "127.0.0.1", partnerQuestion(null)) }
         verifyNoInteractions(conversation, evidence, usage)
     }
 

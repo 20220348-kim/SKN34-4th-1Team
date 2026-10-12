@@ -1,103 +1,14 @@
-import { Link } from 'react-router'
-
-import type { PartnerRecruitmentSummary } from '../../../../domain/entities/PartnerRecruitment'
-import {
-  workspacePageStyles,
-  workspaceTagClassName,
-} from '../../../shared/workspace/WorkspacePage.styles'
+import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
 import { EmptyState } from '../../../shared/workspace/EmptyState'
 import { PeopleIcon, SearchIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { FilterMultiChoices } from '../../../shared/workspace/FilterMultiChoices'
 import { SelectField } from '../../../shared/workspace/SelectField'
-import {
-  companyInitial,
-  companySummaryLine,
-  programDeadlineLabel,
-  recruitmentConditionTags,
-  recruitmentDeadlineText,
-} from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
-import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
+import { RecruitmentCard } from '../../../shared/partner-recruitment/RecruitmentCard'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { usePartnerRecruitmentListViewModel } from '../viewmodel/usePartnerRecruitmentListViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
 import { RecruitmentCardSkeleton } from './RecruitmentCardSkeleton'
-
-function RecruitmentCard({ recruitment }: { recruitment: PartnerRecruitmentSummary }) {
-  const cardClassName = recruitment.isMine
-    ? workspacePageStyles.outlinedCard
-    : workspacePageStyles.card
-
-  return (
-    <article className={cardClassName} aria-label={recruitment.title}>
-      <div className={partnerRecruitmentStyles.cardTop}>
-        {/* 남은 날은 신청 문서 카드처럼 왼쪽 태그 옆 D-day 배지로, 오른쪽에는 마감 날짜만 둡니다. */}
-        <span className={partnerRecruitmentStyles.tagRow}>
-          <span className={workspaceTagClassName(recruitment.isMine ? 'warn' : 'ok')}>
-            {recruitment.isMine ? '내가 쓴 모집글' : '기업마당 공고'}
-          </span>
-          {/* 상태 태그가 없는 카드라 마감된 글은 여기서 "모집 마감"을 알리고, 모집 중이면 D-day를 붙입니다. */}
-          {recruitment.status === 'CLOSED' ? <span className={workspaceTagClassName('muted')}>모집 마감</span> : null}
-          <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={recruitment.status === 'CLOSED'} />
-        </span>
-        <span className={partnerRecruitmentStyles.mineDeadline}>
-          {recruitmentDeadlineText(recruitment.recruitmentDeadline)}
-        </span>
-      </div>
-
-      <div className="flex flex-col gap-[0.2rem]">
-        <h3 className={partnerRecruitmentStyles.cardTitle}>{recruitment.title}</h3>
-        <p className={partnerRecruitmentStyles.cardProgram}>
-          {recruitment.program.title} · {recruitment.program.organization} ·{' '}
-          {programDeadlineLabel(recruitment.program.applicationEndDate)}
-        </p>
-      </div>
-
-      <div className={partnerRecruitmentStyles.authorRow}>
-        <span
-          className={`${partnerRecruitmentStyles.authorAvatar} ${
-            recruitment.isMine
-              ? partnerRecruitmentStyles.authorAvatarMine
-              : partnerRecruitmentStyles.authorAvatarOther
-          }`}
-          aria-hidden="true"
-        >
-          {companyInitial(recruitment.company.companyName)}
-        </span>
-        <span className="min-w-0">
-          <span className={partnerRecruitmentStyles.authorName}>{recruitment.company.companyName}</span>
-          <span className={partnerRecruitmentStyles.authorSummary}>{companySummaryLine(recruitment.company)}</span>
-        </span>
-      </div>
-
-      <div className={partnerRecruitmentStyles.tagRow}>
-        {recruitmentConditionTags(recruitment).map((tag) => (
-          <span className={workspaceTagClassName('muted')} key={tag} title={tag}>
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      <div className={partnerRecruitmentStyles.cardFooter}>
-        {recruitment.isMine ? (
-          <span className={partnerRecruitmentStyles.cardFooterNote}>
-            받은 제안 {recruitment.proposalCount}건
-          </span>
-        ) : (
-          <span className={partnerRecruitmentStyles.cardFooterNote}>
-            제안 {recruitment.proposalCount}건
-          </span>
-        )}
-        <Link
-          className={recruitment.isMine ? workspacePageStyles.secondaryButton : workspacePageStyles.primaryButton}
-          to={`${appPaths.partnerDetail}?${new URLSearchParams({ recruitmentId: String(recruitment.id) })}`}
-        >
-          {recruitment.isMine ? '받은 제안 보기' : '자세히 보기'}
-        </Link>
-      </div>
-    </article>
-  )
-}
 
 /** 파트너 모집 목록입니다. 모집글은 모두 공식 공고 하나에 묶이며 공고가 마감되면 모집도 종료됩니다. */
 export function PartnerRecruitmentListPage() {

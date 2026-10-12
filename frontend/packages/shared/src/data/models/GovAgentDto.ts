@@ -12,7 +12,15 @@ export const govAgentApplicationSchema = z.object({ program: govAgentProgramSche
   preparationId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() })
 export const govAgentReviewSchema = z.object({ program: govAgentProgramSchema.nullable(), message: z.string().min(1).max(1_000),
   reviewId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() })
-export const govAgentPartnersSchema = z.object({ message: z.string().min(1).max(1_000) })
+const partnerRegionNames = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종',
+  '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'] as const
+export const govAgentPartnerConditionsSchema = z.object({
+  seekingRoles: z.array(z.enum(['LEAD', 'PARTICIPANT', 'DEMAND'])).max(3),
+  regions: z.array(z.enum(partnerRegionNames)).max(partnerRegionNames.length),
+  keywords: z.array(z.string().trim().min(1).max(30)).max(3),
+  program: identitySchema.nullable(),
+})
+export const govAgentPartnersSchema = z.object({ message: z.string().min(1).max(1_000), conditions: govAgentPartnerConditionsSchema.optional() })
 export const govAgentEvidenceSchema = z.object({ program: govAgentProgramSchema, answer: supportProgramEvidenceAnswerDtoSchema })
   .refine((value) => value.answer.citations.every((citation) => isOfficialSupportProgramSourceUrl(value.program.sourceCode, citation.sourceUrl)),
     '근거는 선택한 제공처의 공식 원문이어야 합니다.')
@@ -27,6 +35,8 @@ const resultSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('COMBINATION_REVIEW'), program: identitySchema.nullable(), message: z.string().min(1).max(1_000),
     interpretation: z.null().optional(), evidence: z.null().optional() }),
   z.object({ outcome: z.literal('PARTNERS'), message: z.string().min(1).max(1_000),
+    partnerConditions: govAgentPartnerConditionsSchema.nullable().optional()
+      .transform((value) => value ?? { seekingRoles: [], regions: [], keywords: [], program: null }),
     interpretation: z.null().optional(), evidence: z.null().optional(), program: z.null().optional() }),
   z.object({ outcome: z.enum(['NEEDS_PROGRAM', 'UNSUPPORTED']), message: z.string().min(1).max(1_000),
     interpretation: z.null().optional(), evidence: z.null().optional(), program: z.null().optional() }),
@@ -40,6 +50,10 @@ export function parseGovAgentResult(payload: unknown, selectedProgram: SupportPr
   }
   if (result.outcome === 'COMBINATION_REVIEW' && (result.program?.sourceCode !== selectedProgram?.sourceCode
     || result.program?.sourceProgramId !== selectedProgram?.sourceProgramId)) throw new Error('Gov agent program mismatch')
+  // "이 공고"로 좁힌 조건은 사용자가 고른 공고여야 합니다. 서버가 다른 공고를 돌려주면 받지 않습니다.
+  if (result.outcome === 'PARTNERS' && result.partnerConditions.program && (!selectedProgram
+    || result.partnerConditions.program.sourceCode !== selectedProgram.sourceCode
+    || result.partnerConditions.program.sourceProgramId !== selectedProgram.sourceProgramId)) throw new Error('Gov agent program mismatch')
   if (result.outcome === 'EVIDENCE') {
     return { ...result, evidence: parseSupportProgramEvidenceAnswerDto(result.evidence, result.program.sourceCode) }
   }

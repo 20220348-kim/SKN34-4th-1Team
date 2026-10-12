@@ -26,6 +26,7 @@ import {
   ClosePartnerRecruitmentUseCase,
   CreatePartnerRecruitmentUseCase,
   GetPartnerRecruitmentDetailUseCase,
+  RecommendPartnerRecruitmentsUseCase,
   UpdatePartnerRecruitmentUseCase,
 } from '../../domain/usecases/PartnerRecruitmentUseCases'
 import {
@@ -163,6 +164,9 @@ export function registerUseCases(container: AppContainer) {
     ).singleton(),
     browsePartnerRecruitmentsUseCase: asFunction(
       ({ partnerRecruitmentRepository }: Pick<AppCradle, 'partnerRecruitmentRepository'>) => new BrowsePartnerRecruitmentsUseCase(partnerRecruitmentRepository),
+    ).singleton(),
+    recommendPartnerRecruitmentsUseCase: asFunction(
+      ({ partnerRecruitmentRepository }: Pick<AppCradle, 'partnerRecruitmentRepository'>) => new RecommendPartnerRecruitmentsUseCase(partnerRecruitmentRepository),
     ).singleton(),
     createPartnerRecruitmentUseCase: asFunction(
       ({ partnerRecruitmentRepository }: Pick<AppCradle, 'partnerRecruitmentRepository'>) => new CreatePartnerRecruitmentUseCase(partnerRecruitmentRepository),

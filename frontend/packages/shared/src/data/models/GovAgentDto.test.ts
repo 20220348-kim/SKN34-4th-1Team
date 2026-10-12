@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { govAgentApplicationSchema, govAgentEvidenceSchema, govAgentReviewSchema, parseGovAgentResult } from './GovAgentDto'
+import { govAgentApplicationSchema, govAgentEvidenceSchema, govAgentPartnersSchema, govAgentReviewSchema, parseGovAgentResult } from './GovAgentDto'
 
 const program = { sourceCode: 'BIZINFO', sourceProgramId: 'P001' }
 const answer = { answer: '온라인 신청입니다.', answerStatus: 'ANSWERED', citations: [{ excerpt: '온라인 신청',
@@ -49,10 +49,32 @@ describe('Gov agent public contract', () => {
   })
   it('opens all partner recruitments without implying a selected-program filter', () => {
     const payload = { outcome: 'PARTNERS', program: null, message: '모집 조건을 확인하세요.' }
-    expect(parseGovAgentResult(payload, null)).toEqual(payload)
-    expect(parseGovAgentResult(payload, program)).toEqual(payload)
+    // 조건을 싣지 않은 이전 서버 응답은 조건 없이(내 정보만으로) 고르는 것으로 읽습니다.
+    const expected = { ...payload, partnerConditions: { seekingRoles: [], regions: [], keywords: [], program: null } }
+    expect(parseGovAgentResult(payload, null)).toEqual(expected)
+    expect(parseGovAgentResult(payload, program)).toEqual(expected)
     expect(() => parseGovAgentResult({ ...payload, program }, program)).toThrow()
     expect(() => parseGovAgentResult({ ...payload, evidence: answer }, null)).toThrow()
+  })
+  it('reads spoken partner conditions and narrows to a program only when it is the selected one', () => {
+    const partnerConditions = { seekingRoles: ['PARTICIPANT'], regions: ['서울'], keywords: ['AI'], program }
+    const payload = { outcome: 'PARTNERS', message: '말씀하신 조건으로 모집글을 찾아봤어요.', partnerConditions }
+    expect(parseGovAgentResult(payload, program)).toEqual(payload)
+    expect(() => parseGovAgentResult(payload, null)).toThrow()
+    expect(() => parseGovAgentResult(payload, { ...program, sourceProgramId: 'P002' })).toThrow()
+    for (const invalid of [
+      { ...partnerConditions, regions: ['전국'] },
+      { ...partnerConditions, seekingRoles: ['OWNER'] },
+      { ...partnerConditions, keywords: ['가', '나', '다', '라'] },
+      { ...partnerConditions, keywords: ['가'.repeat(31)] },
+    ]) {
+      expect(() => parseGovAgentResult({ ...payload, partnerConditions: invalid }, program)).toThrow()
+    }
+  })
+  it('keeps partner conditions in saved history and still reads older records without them', () => {
+    const conditions = { seekingRoles: ['DEMAND'], regions: ['부산'], keywords: [], program: null }
+    expect(govAgentPartnersSchema.parse({ message: '모집글', conditions })).toEqual({ message: '모집글', conditions })
+    expect(govAgentPartnersSchema.parse({ message: '모집글' })).toEqual({ message: '모집글' })
   })
   it.each([null, '12', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid saved review id %s', (reviewId) => {
     expect(govAgentReviewSchema.safeParse({ program: null, message: '중복 검토', reviewId }).success).toBe(false)

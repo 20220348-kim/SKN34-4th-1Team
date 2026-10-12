@@ -53,6 +53,7 @@ import ai.govbiz.core.combinationreview.service.exception.ReviewRunFailureCode
 import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
 import ai.govbiz.core.partner.service.exception.RecruitmentActionForbiddenException
+import ai.govbiz.core.partner.service.exception.RecruitmentMatchConditionInvalidException
 import ai.govbiz.core.partner.service.exception.RecruitmentRegionFilterInvalidException
 import ai.govbiz.core.partner.service.exception.ProposalActionForbiddenException
 import ai.govbiz.core.partner.service.exception.ProposalAlreadySentException
@@ -318,6 +319,21 @@ class ApiExceptionHandler {
             "K-Startup filters require the KSTARTUP source.",
             "REQUEST_VALIDATION_FAILED",
             listOf(ValidationError("sourceCode", "INVALID_VALUE")),
+            request,
+        )
+
+    @ExceptionHandler(RecruitmentMatchConditionInvalidException::class)
+    fun handleRecruitmentMatchConditionInvalidException(
+        exception: RecruitmentMatchConditionInvalidException,
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> =
+        validationProblem(
+            HttpStatus.BAD_REQUEST,
+            URI.create("urn:govbiz:problem:request-validation-failed"),
+            "Request Validation Failed",
+            "Recommendation conditions are invalid.",
+            "REQUEST_VALIDATION_FAILED",
+            listOf(ValidationError(exception.field, "INVALID_VALUE")),
             request,
         )
 

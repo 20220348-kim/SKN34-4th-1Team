@@ -6,11 +6,18 @@ import { Link } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import type { ReviewAnswer } from '../../../../domain/entities/CombinationReview'
 import { partnerRoleLabels } from '../../../../domain/entities/PartnerRecruitment'
-import { defaultPartnerRecruitmentQuery } from '../../../../domain/entities/PartnerRecruitmentQuery'
-import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
-import { usePartnerRecruitmentBrowse } from '../../../shared/partner-recruitment/usePartnerRecruitmentBrowse'
+import {
+  emptyPartnerRecruitmentConditions,
+  type PartnerMatchCaution,
+  type PartnerMatchReason,
+  type PartnerRecruitmentConditions,
+  type PartnerRecruitmentRecommendations,
+} from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
+import { RecruitmentCard } from '../../../shared/partner-recruitment/RecruitmentCard'
 import { appPaths, combinationReviewRunResultPath } from '../../../shared/routes/appPaths'
 import { ReviewAnswerChips } from '../../combination-review/view/ReviewAnswerResult'
+import { partnerRecruitmentStyles } from '../../partner-recruitment/view/PartnerRecruitment.styles'
+import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 
 /**
  * 대화에는 작업 카드 한 장만 둡니다. 대화 안에서는 신청 문서의 입력칸 분석과 중복 검토의 [검토 실행]까지만 펼쳐서 하고,
@@ -148,37 +155,149 @@ export function GovReviewCard({ review, live, refresh, onOpen }: {
   </WorkCard>
 }
 
+/** 이유·확인할 점 칩 문장입니다. 공고 이름은 칩이 한 줄에 들어가게 줄입니다. */
+function shortTitle(title: string): string {
+  return title.length > 16 ? `${title.slice(0, 16)}…` : title
+}
+
+function reasonText(reason: PartnerMatchReason): string {
+  switch (reason.type) {
+    case 'MY_PROGRAM': return `${reason.programSource === 'PREPARATION' ? '신청 준비 중인 공고' : '관심 공고'} 「${shortTitle(reason.values[0] ?? '')}」`
+    case 'KEYWORD': return `${reason.values.map((value) => `'${value}'`).join('·')} 관련`
+    case 'CAPABILITY': return `필요 역량 ${reason.values.length}개 일치`
+    case 'SAME_REGION': return `같은 지역(${reason.values[0] ?? ''})`
+    case 'ROLE': return '찾는 역할이 우리 역할과 맞아요'
+  }
+}
+
+function cautionText(caution: PartnerMatchCaution, myRegion: string | null): string {
+  return caution.type === 'OTHER_REGION'
+    ? `희망 지역 ${caution.value}${myRegion ? ` · 우리 ${myRegion}` : ''}`
+    : `업력 ${caution.value}년 이상`
+}
+
+const relaxLabels: Record<'ROLE' | 'REGION' | 'PROGRAM', string> = { ROLE: '찾는 역할', REGION: '지역', PROGRAM: '선택한 공고' }
+
+/** 파트너 관리 목록에 같은 조건을 넘깁니다. 목록은 분야 말 하나를 검색어로 받습니다. */
+function partnersPath(conditions: PartnerRecruitmentConditions): string {
+  const params = new URLSearchParams()
+  for (const role of conditions.seekingRoles) params.append('seekingRole', role)
+  for (const region of conditions.regions) params.append('region', region)
+  if (conditions.keywords[0]) params.set('keyword', conditions.keywords[0])
+  const query = params.toString()
+  return query ? `${appPaths.partners}?${query}` : appPaths.partners
+}
+
+type RecommendationLoad =
+  | { phase: 'loading' }
+  | { phase: 'failed' }
+  | { phase: 'ready'; result: PartnerRecruitmentRecommendations }
+
 /**
- * 파트너 조회 카드입니다. 말로 적은 조건 적용·맞춤 연결은 아직 없으므로 모집 중인 글을 마감이 가까운 순으로 세 개만 간단히 보여 주고,
- * 검색어·역할·지역으로 직접 좁혀 보는 일은 파트너 관리 화면으로 넘깁니다. 기존 모집글 목록 API를 그대로 읽습니다(AI 호출 없음).
+ * 파트너 맞춤 추천입니다. 회사 정보·협업 설정(역할·역량)·관심 공고로 모집 중인 글을 골라 세 건까지 보여 줍니다(AI 호출 없음).
+ * 대화의 검색 결과처럼 메시지 폭을 다 쓰고, 모집글은 파트너 관리 목록과 같은 카드에 추천 이유·확인할 점을 덧붙입니다.
+ * 대화에서 읽은 조건은 칩으로 보여 줍니다. 찾는 역할·지역·공고는 거르는 조건(실선), 분야 말은 순서만 올리는 조건(점선)이고
+ * ✕로 빼면 다시 조회합니다. 맞는 글이 없으면 조건 하나를 뺐을 때의 건수를 알려 줍니다. 희망 지역이 달라도 거르지 않습니다.
  */
-export function GovPartnerBrief() {
-  const { phase, page, retry } = usePartnerRecruitmentBrowse(defaultPartnerRecruitmentQuery)
-  const items = page?.recruitments.slice(0, 3) ?? []
-  const badge = phase === 'failed' ? { label: '불러오지 못함', tone: 'warn' as const }
-    : page && phase === 'ready' ? { label: `모집 중 ${page.total.toLocaleString()}건`, tone: 'ok' as const }
-      : { label: '불러오는 중', tone: 'neutral' as const }
-  return <WorkCard kind="파트너 모집글" title="마감이 가까운 순" badge={badge.label} tone={badge.tone}
-    action={<>
-      <Link className={openButton} to={appPaths.partners}>파트너 관리에서 전체 보기</Link>
-      {phase === 'failed' ? <button type="button" className={pageLink} onClick={retry}>다시 시도</button> : null}
-    </>}>
-    {items.length > 0 ? <ul className="grid gap-1">
-      {items.map((recruitment) => <li key={recruitment.id}>
-        <Link className="grid min-w-0 gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-brand-primary"
-          to={`${appPaths.partnerDetail}?${new URLSearchParams({ recruitmentId: String(recruitment.id) })}`}>
-          <span className="flex min-w-0 items-center gap-1.5">
-            <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={recruitment.status === 'CLOSED'} />
-            <span className="min-w-0 truncate text-sm font-semibold text-ink">{recruitment.title}</span>
-          </span>
-          <span className="truncate text-xs text-ink-muted">
-            {partnerRoleLabels[recruitment.seekingRole]} {recruitment.seekingCount}곳 찾음 · {recruitment.region} · {recruitment.company.companyName}
-          </span>
-        </Link>
-      </li>)}
-    </ul> : phase === 'ready' ? <p className="text-sm text-ink-muted">지금 모집 중인 글이 없어요.</p> : null}
-    <p className="text-xs text-ink-muted">대화로 적은 지역·분야 조건은 아직 자동으로 적용하지 않아요. 직접 좁혀 보려면 파트너 관리에서 검색어·역할·지역을 고르세요.</p>
-  </WorkCard>
+export function GovPartnerBrief({ conditions = emptyPartnerRecruitmentConditions }: { conditions?: PartnerRecruitmentConditions }) {
+  const [active, setActive] = useState(conditions)
+  const [attempt, setAttempt] = useState(0)
+  const [load, setLoad] = useState<RecommendationLoad>({ phase: 'loading' })
+  const activeKey = JSON.stringify(active)
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoad({ phase: 'loading' })
+    appContainer.resolve('recommendPartnerRecruitmentsUseCase').execute(JSON.parse(activeKey) as PartnerRecruitmentConditions, 3, controller.signal)
+      .then((result) => { if (!controller.signal.aborted) setLoad({ phase: 'ready', result }) },
+        () => { if (!controller.signal.aborted) setLoad({ phase: 'failed' }) })
+    return () => controller.abort()
+  }, [activeKey, attempt])
+  const result = load.phase === 'ready' ? load.result : null
+  const spoken = active.seekingRoles.length > 0 || active.regions.length > 0 || active.keywords.length > 0 || active.program !== null
+  const drop = (type: 'ROLE' | 'REGION' | 'PROGRAM') => setActive((current) => ({
+    ...current,
+    seekingRoles: type === 'ROLE' ? [] : current.seekingRoles,
+    regions: type === 'REGION' ? [] : current.regions,
+    program: type === 'PROGRAM' ? null : current.program,
+  }))
+  const basis = result?.basis
+  const relax = result?.relax.filter((item) => item.count > 0) ?? []
+  return <section className="mt-3 flex w-[700px] max-w-full min-w-0 flex-col gap-3" aria-label="파트너 모집글 · 우리 회사에 맞는 순">
+    <div className="flex flex-col gap-1.5">
+      <div className={partnerRecruitmentStyles.resultHead}>
+        <h3 className={partnerRecruitmentStyles.resultTitle}>
+          파트너 모집글 {result ? (result.total > 0 ? `맞춤 ${result.total}건` : '0건') : ''}
+        </h3>
+        <span className="text-xs text-ink-muted">우리 회사에 맞는 순</span>
+      </div>
+      {basis?.profileSet ? <p className="m-0 text-xs text-ink-muted">
+        기준: 역할 {basis.roles.map((role) => partnerRoleLabels[role]).join('·')} · 역량 {basis.capabilityCount}개 · 관심 공고 {basis.myProgramCount}건{' '}
+        <Link className="text-brand-primary underline" to={appPaths.profile}>기준 바꾸기</Link>
+      </p> : null}
+      {spoken ? <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="대화에서 읽은 조건">
+        <span className="text-xs text-ink-muted">대화에서 읽은 조건</span>
+        {active.seekingRoles.length > 0 ? <ConditionChip label={active.seekingRoles.map((role) => partnerRoleLabels[role]).join('·')} onRemove={() => drop('ROLE')} /> : null}
+        {active.regions.length > 0 ? <ConditionChip label={`${active.regions.join('·')}·전국`} onRemove={() => drop('REGION')} /> : null}
+        {active.program ? <ConditionChip label="선택한 공고" onRemove={() => drop('PROGRAM')} /> : null}
+        {active.keywords.map((keyword) => <ConditionChip key={keyword} label={`${keyword} (순서만)`} soft
+          onRemove={() => setActive((current) => ({ ...current, keywords: current.keywords.filter((value) => value !== keyword) }))} />)}
+      </div> : null}
+    </div>
+
+    {basis && !basis.profileSet ? <div className={partnerRecruitmentStyles.noticeCard}>
+      <p className="m-0 text-sm text-ink">{basis.hasCompany ? '참여 가능 역할·역량을 채우면 더 맞춰 드려요.' : '기업을 등록하고 역할·역량을 채우면 더 맞춰 드려요.'}</p>
+      <Link className={`${workspacePageStyles.secondaryButton} self-start`} to={appPaths.profile}>{basis.hasCompany ? '협업·파트너 설정' : '기업 등록하기'}</Link>
+    </div> : null}
+
+    {load.phase === 'loading' ? <p className="m-0 text-sm text-ink-muted" role="status">맞는 모집글을 고르고 있어요.</p> : null}
+    {load.phase === 'failed' ? <div className={partnerRecruitmentStyles.noticeCard} role="alert">
+      <p className="m-0 text-sm text-ink">모집글을 불러오지 못했어요.</p>
+      <button type="button" className={`${workspacePageStyles.secondaryButton} self-start`} onClick={() => setAttempt((value) => value + 1)}>다시 시도</button>
+    </div> : null}
+
+    {result && result.items.length > 0 ? <div className="grid gap-3" role="list" aria-label="맞춤 모집글">
+      {result.items.map(({ recruitment, reasons, cautions }) => <div role="listitem" key={recruitment.id} className="flex min-w-0 flex-col [&>article]:flex-1">
+        <RecruitmentCard recruitment={recruitment}>
+          {reasons.length > 0 || cautions.length > 0 ? <div className="flex flex-wrap gap-[0.35rem]" aria-label="추천 이유">
+            {reasons.slice(0, 2).map((reason) => <span key={reason.type} title={reason.values.join(', ')}
+              className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[0.72rem] font-bold text-brand-hover">{reasonText(reason)}</span>)}
+            {cautions.slice(0, 1).map((caution) => <span key={caution.type}
+              className="rounded-full border border-line px-2.5 py-0.5 text-[0.72rem] text-ink-muted">{cautionText(caution, basis?.region ?? null)}</span>)}
+          </div> : null}
+        </RecruitmentCard>
+      </div>)}
+    </div> : null}
+
+    {result && result.items.length === 0 ? <div className={partnerRecruitmentStyles.noticeCard}>
+      <p className="m-0 text-sm text-ink">{spoken ? '조건에 맞는 열린 모집글이 없어요.' : '지금 우리 회사에 맞는 열린 모집글이 없어요.'}</p>
+      {/* 빼도 0건인 조건은 눌러도 소용이 없어 두지 않습니다. */}
+      {relax.length > 0 ? <div className="flex flex-wrap gap-2" role="group" aria-label="조건 빼고 보기">
+        {relax.map((item) => <button key={item.type} type="button" onClick={() => drop(item.type)} className={workspacePageStyles.secondaryButton}>
+          {relaxLabels[item.type]} 빼고 보기 ({item.count}건)
+        </button>)}
+      </div> : null}
+    </div> : null}
+
+    {result?.suggestedProgram ? <div className={partnerRecruitmentStyles.noticeCard}>
+      <p className="m-0 text-sm text-ink">관심 공고 「{shortTitle(result.suggestedProgram.title)}」에는 아직 모집글이 없어요.</p>
+      <Link className={`${workspacePageStyles.secondaryButton} self-start`} to={`${appPaths.partnerNew}?${new URLSearchParams({
+        sourceCode: result.suggestedProgram.sourceCode, sourceProgramId: result.suggestedProgram.sourceProgramId })}`}>이 공고로 모집글 쓰기</Link>
+    </div> : null}
+
+    <Link className={`${workspacePageStyles.primaryButton} self-start`} to={partnersPath(active)}>
+      {spoken ? '같은 조건으로 파트너 관리에서 보기' : '파트너 관리에서 전체 보기'}
+    </Link>
+  </section>
+}
+
+/** 대화에서 읽은 조건 칩입니다. 거르는 조건은 실선, 순서만 올리는 분야 말은 점선이고 ✕로 뺍니다. */
+function ConditionChip({ label, soft = false, onRemove }: { label: string; soft?: boolean; onRemove: () => void }) {
+  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-px text-xs ${soft
+    ? 'border border-dashed border-line text-ink-muted' : 'border border-brand-line bg-white text-brand-hover'}`}>
+    {label}
+    <button type="button" aria-label={`${label} 조건 빼기`} onClick={onRemove}
+      className="cursor-pointer rounded-full px-0.5 hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-brand-primary">✕</button>
+  </span>
 }
 
 /**

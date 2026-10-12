@@ -289,7 +289,7 @@ export function useSupportProgramChat(
           else if (result.outcome === 'COMBINATION_REVIEW') dispatch(govMessageSucceeded({ requestId,
             message: result.message, review: { program: selected, message: result.message } }))
           else if (result.outcome === 'PARTNERS') dispatch(govMessageSucceeded({ requestId,
-            message: result.message, partners: { message: result.message } }))
+            message: result.message, partners: { message: result.message, conditions: result.partnerConditions } }))
           else if (result.outcome === 'NEEDS_PROGRAM' || result.outcome === 'UNSUPPORTED') {
             dispatch(govMessageSucceeded({ requestId, message: result.message }))
           }

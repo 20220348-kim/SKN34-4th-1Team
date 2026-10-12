@@ -121,6 +121,25 @@ class PartnerRecruitmentRepository(
         return PartnerRecruitmentSlice(rows.map { it.toRecruitment() }, total)
     }
 
+    /**
+     * 맞춤 추천 후보입니다. 목록 조회와 같은 SQL로 조건 없이 모집 중인 글을 마감 임박순으로 최대 [limit]건 읽습니다.
+     * 점수 계산은 Domain 규칙이 메모리에서 합니다.
+     */
+    fun findOpenCandidates(limit: Int): List<PartnerRecruitment> {
+        require(limit in 1..MAX_MATCH_CANDIDATES) { "limit must be 1~$MAX_MATCH_CANDIDATES" }
+        return recruitmentMapper.findRecruitments(
+            keywordPattern = null,
+            seekingRoles = null,
+            regions = null,
+            mineAccountId = null,
+            sourceCode = null,
+            today = LocalDate.now(clock),
+            sortByRecent = false,
+            limit = limit,
+            offset = 0,
+        ).map { it.toRecruitment() }
+    }
+
     /** 검색어의 LIKE 특수문자를 '!'로 이스케이프합니다. Mapper XML의 ESCAPE 문자와 같아야 합니다. */
     /** 아직 수동 마감하지 않은 이 계정의 모집글 수입니다. 계정 삭제 확인 화면이 씁니다. */
     fun countOpenByAccountId(accountId: Long): Int =
@@ -190,6 +209,7 @@ class PartnerRecruitmentRepository(
         )
 
     companion object {
+        const val MAX_MATCH_CANDIDATES = 200
         private val STRING_LIST = object : TypeReference<List<String>>() {}
     }
 }

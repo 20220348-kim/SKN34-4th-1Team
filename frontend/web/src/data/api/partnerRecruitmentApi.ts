@@ -1,5 +1,10 @@
 import type { PartnerRecruitmentContentInput, PartnerRecruitmentInput } from '../../domain/entities/PartnerRecruitment'
 import { partnerRecruitmentPageSize, type PartnerRecruitmentQuery } from '../../domain/entities/PartnerRecruitmentQuery'
+import type { PartnerRecruitmentConditions } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
+import {
+  partnerRecruitmentRecommendationsDtoSchema,
+  type PartnerRecruitmentRecommendationsDto,
+} from '@govbiz/shared/data/models/PartnerRecruitmentRecommendationDto'
 import { AccountApiError } from './accountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
 import {
@@ -40,6 +45,31 @@ export async function browsePartnerRecruitmentsApi(
   const list = partnerRecruitmentListDtoSchema.parse(await response.json())
   if (list.page !== query.page) throw new Error('요청한 페이지와 응답이 다릅니다.')
   return list
+}
+
+/** 로그인한 회원의 맞춤 추천입니다. 역할·지역·분야 말은 같은 이름을 여러 번 보내고, 공고는 출처와 ID를 함께 보냅니다. */
+export async function recommendPartnerRecruitmentsApi(
+  conditions: PartnerRecruitmentConditions,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<PartnerRecruitmentRecommendationsDto> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  for (const role of conditions.seekingRoles) params.append('seekingRole', role)
+  for (const region of conditions.regions) params.append('region', region)
+  for (const keyword of conditions.keywords) params.append('keyword', keyword)
+  if (conditions.program) {
+    params.set('sourceCode', conditions.program.sourceCode)
+    params.set('sourceProgramId', conditions.program.sourceProgramId)
+  }
+  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/recommended?${params}`, {
+    headers: { Accept: 'application/json' },
+    credentials: withSessionCookie,
+    cache: 'no-store',
+    signal,
+  })
+  await rejectFailedResponse(response)
+
+  return partnerRecruitmentRecommendationsDtoSchema.parse(await response.json())
 }
 
 export async function getPartnerRecruitmentApi(id: number, signal?: AbortSignal): Promise<PartnerRecruitmentDto> {

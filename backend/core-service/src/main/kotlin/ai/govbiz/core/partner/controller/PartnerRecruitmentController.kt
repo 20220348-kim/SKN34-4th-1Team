@@ -4,13 +4,19 @@ import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.service.exception.AuthenticationRequiredException
 import ai.govbiz.core.partner.controller.dto.CreatePartnerRecruitmentRequest
 import ai.govbiz.core.partner.controller.dto.PartnerRecruitmentListResponse
+import ai.govbiz.core.partner.controller.dto.PartnerRecruitmentRecommendationResponse
 import ai.govbiz.core.partner.controller.dto.PartnerRecruitmentResponse
 import ai.govbiz.core.partner.controller.dto.UpdatePartnerRecruitmentRequest
+import ai.govbiz.core.partner.domain.PartnerMatchConditions
+import ai.govbiz.core.partner.domain.PartnerMatchProgram
 import ai.govbiz.core.partner.domain.PartnerRecruitmentInput
 import ai.govbiz.core.partner.domain.PartnerRecruitmentQuery
 import ai.govbiz.core.partner.domain.PartnerRecruitmentSort
+import ai.govbiz.core.partner.domain.PartnerRegionNames
 import ai.govbiz.core.partner.domain.PartnerRole
+import ai.govbiz.core.partner.service.PartnerRecruitmentRecommendationService
 import ai.govbiz.core.partner.service.PartnerRecruitmentService
+import ai.govbiz.core.partner.service.exception.RecruitmentMatchConditionInvalidException
 import ai.govbiz.core.partner.service.exception.RecruitmentRegionFilterInvalidException
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Max
@@ -33,6 +39,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/partners/recruitments")
 class PartnerRecruitmentController(
     private val recruitmentService: PartnerRecruitmentService,
+    private val recommendationService: PartnerRecruitmentRecommendationService,
 ) {
 
     @PostMapping
@@ -77,6 +84,38 @@ class PartnerRecruitmentController(
             sourceCode = sourceCode?.ifEmpty { null },
         )
         return PartnerRecruitmentListResponse.from(recruitmentService.findPage(query), account?.id)
+    }
+
+    /**
+     * 로그인한 회원에게 맞는 모집글입니다. 찾는 역할·지역(짧은 시·도 이름)·공고(`sourceCode`+`sourceProgramId`)는 거르고,
+     * 분야 말(`keyword`, 최대 3개)은 순서만 올립니다. 조건이 없으면 회사 정보·협업 설정·관심 공고만으로 고릅니다.
+     */
+    @GetMapping("/recommended")
+    fun recommended(
+        account: Account,
+        @RequestParam(required = false) seekingRole: List<PartnerRole>?,
+        @RequestParam(required = false) region: List<String>?,
+        @RequestParam(required = false) keyword: List<String>?,
+        @RequestParam(required = false) @Pattern(regexp = "^$|" + PartnerRecruitmentQuery.SOURCE_CODE_REGEX) sourceCode: String?,
+        @RequestParam(required = false) @Size(max = 120) sourceProgramId: String?,
+        @RequestParam(defaultValue = "3") @Min(1) @Max(20) limit: Int,
+    ): PartnerRecruitmentRecommendationResponse {
+        val regions = region.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        if (regions.any { it !in PartnerRegionNames.SHORT_NAMES }) throw RecruitmentMatchConditionInvalidException("region")
+        val keywords = keyword.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (keywords.size > PartnerMatchConditions.MAX_KEYWORDS || keywords.any { it.length > PartnerMatchConditions.MAX_KEYWORD_LENGTH }) {
+            throw RecruitmentMatchConditionInvalidException("keyword")
+        }
+        val code = sourceCode?.trim()?.ifEmpty { null }
+        val programId = sourceProgramId?.trim()?.ifEmpty { null }
+        if ((code == null) != (programId == null)) throw RecruitmentMatchConditionInvalidException("sourceProgramId")
+        val conditions = PartnerMatchConditions(
+            seekingRoles = seekingRole.orEmpty().toSet(),
+            regions = regions,
+            keywords = keywords,
+            program = if (code != null && programId != null) PartnerMatchProgram(code, programId) else null,
+        )
+        return PartnerRecruitmentRecommendationResponse.from(recommendationService.recommend(account, conditions, limit), account.id)
     }
 
     /** 작성자만 모집 중인 글을 고칩니다. 묶인 공고는 바꿀 수 없어 요청에 공고 식별자가 없습니다. */

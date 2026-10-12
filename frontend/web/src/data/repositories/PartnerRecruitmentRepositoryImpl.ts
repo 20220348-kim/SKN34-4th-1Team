@@ -5,6 +5,8 @@ import type {
   PartnerRecruitmentSummary,
 } from '../../domain/entities/PartnerRecruitment'
 import type { PartnerRecruitmentPage, PartnerRecruitmentQuery } from '../../domain/entities/PartnerRecruitmentQuery'
+import type { PartnerRecruitmentConditions, PartnerRecruitmentRecommendations } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
+import { toPartnerRecruitmentRecommendations } from '@govbiz/shared/data/models/PartnerRecruitmentRecommendationDto'
 import type {
   ClosePartnerRecruitmentResult,
   CreatePartnerRecruitmentResult,
@@ -18,6 +20,7 @@ import {
   createPartnerRecruitmentApi,
   getPartnerRecruitmentApi,
   PartnerRecruitmentApiError,
+  recommendPartnerRecruitmentsApi,
   updatePartnerRecruitmentApi,
 } from '../api/partnerRecruitmentApi'
 import { toPartnerRecruitment, toPartnerRecruitmentPage } from '../models/PartnerRecruitmentDto'
@@ -26,6 +29,10 @@ import { toPartnerRecruitment, toPartnerRecruitmentPage } from '../models/Partne
 export class PartnerRecruitmentRepositoryImpl implements PartnerRecruitmentRepository {
   async browse(query: PartnerRecruitmentQuery, signal?: AbortSignal): Promise<PartnerRecruitmentPage<PartnerRecruitmentSummary>> {
     return toPartnerRecruitmentPage(await browsePartnerRecruitmentsApi(query, signal))
+  }
+
+  async recommend(conditions: PartnerRecruitmentConditions, limit: number, signal?: AbortSignal): Promise<PartnerRecruitmentRecommendations> {
+    return toPartnerRecruitmentRecommendations(await recommendPartnerRecruitmentsApi(conditions, limit, signal))
   }
 
   /** 없는 글(404)은 null입니다. */
