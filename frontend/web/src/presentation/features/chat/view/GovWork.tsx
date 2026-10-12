@@ -13,9 +13,11 @@ import {
   type PartnerRecruitmentConditions,
   type PartnerRecruitmentRecommendations,
 } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
+import { saveBlob } from '../../../shared/download/saveBlob'
 import { RecruitmentCard } from '../../../shared/partner-recruitment/RecruitmentCard'
 import { appPaths, combinationReviewRunResultPath } from '../../../shared/routes/appPaths'
 import { ReviewAnswerChips } from '../../combination-review/view/ReviewAnswerResult'
+import { preparationOf, preparationPath, type ProgramPreparations } from '../hooks/useProgramPreparations'
 import { partnerRecruitmentStyles } from '../../partner-recruitment/view/PartnerRecruitment.styles'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 
@@ -23,6 +25,7 @@ import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.sty
  * 대화에는 작업 카드 한 장만 둡니다. 대화 안에서는 신청 문서의 입력칸 분석과 중복 검토의 [검토 실행]까지만 펼쳐서 하고,
  * 그다음(양식 고르기 · 답변 작성 · 초안, 검토 진행과 결과)은 카드 버튼이 신청 문서 · 중복 검토 화면으로 옮깁니다.
  * 카드는 신청 문서 · 중복 검토 목록 카드와 같은 틀(이름 · 상태 배지 · 한 줄 · 버튼)이고, 상태는 기존 목록 · 실행 API로 다시 읽습니다(AI 호출 없음).
+ * 화면에서 끝낸 일은 지난 카드도 끝난 상태(초안 완료 · 검토 결과)로 보여 줍니다.
  */
 
 type CardTone = 'neutral' | 'info' | 'warn' | 'ok'
@@ -47,7 +50,8 @@ function WorkCard({ kind, title, badge, tone, children, action }: {
   </section>
 }
 
-const openButton = 'cursor-pointer rounded-full bg-brand-primary px-3.5 py-1.5 text-[0.8rem] font-bold text-white hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary'
+const openButton = 'cursor-pointer rounded-full bg-brand-primary px-3.5 py-1.5 text-[0.8rem] font-bold text-white hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-default disabled:opacity-60'
+const secondaryButton = 'rounded-full border border-line px-3.5 py-1.5 text-[0.8rem] font-bold text-ink no-underline hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary'
 const pageLink = 'text-[0.8rem] text-brand-primary underline'
 
 /** 기존 API를 한 번 읽어 카드 상태를 정합니다. 읽지 못하면 기본 상태로 둡니다. refresh가 바뀌면(펼친 작업을 접으면) 다시 읽습니다. */
@@ -84,19 +88,18 @@ function startBadge(start: FormStartStatus | null): { label: string; tone: CardT
 }
 
 /**
- * 신청 문서 작업 카드입니다. 시작 전에는 입력칸 분석 중 · 양식 n개 · 분석 전 · 양식 없음을, 시작한 뒤에는 작성 중(필수 답변 n/m) ·
- * 초안 있음을 보여 줍니다. 입력칸 분석이 남았으면 버튼이 분석을 대화 안에 펼치고, 양식이 있거나 이미 쓰기 시작했으면
- * 신청 문서 화면으로 옮깁니다. 상태는 기존 조회 API로만 읽습니다(AI 호출 없음).
+ * 신청 문서 작업 카드입니다. 공고로 찾은 내 신청 준비가 있으면 지난 카드도 지금 상태를 보여 줍니다. 초안이 있으면 초안 완료와
+ * [초안 받기] · [초안 보기]를, 쓰는 중이면 필수 답변 n/m과 [이어서 쓰기]를 둡니다. 아직 시작하지 않았으면 최근 업무 카드만
+ * 입력칸 분석 중 · 양식 n개 · 분석 전 · 양식 없음을 읽어 분석을 대화 안에 펼치거나 신청 문서 화면으로 옮기고, 지난 카드는 화면 링크만 둡니다.
+ * 상태는 기존 조회 API로만 읽습니다(AI 호출 없음).
  */
-export function GovApplicationCard({ application, live, refresh, onOpen }: {
-  application: GovAgentApplication; live: boolean; refresh: number; onOpen: () => void
+export function GovApplicationCard({ application, live, refresh, preparations, onOpen }: {
+  application: GovAgentApplication; live: boolean; refresh: number; preparations: ProgramPreparations | null; onOpen: () => void
 }) {
   const { preparationId, program } = application
-  const summary = useLoaded(preparationId === undefined ? null : async (signal) => {
-    const page = await appContainer.resolve('applicationPreparationUseCase').list({}, signal)
-    return page?.items?.find((item) => item.id === preparationId) ?? null
-  }, refresh)
-  const start = useLoaded<FormStartStatus>(preparationId !== undefined || !live ? null : async (signal) => {
+  const summary = preparationOf(application, preparations)
+  const known = preparations?.phase === 'ready'
+  const start = useLoaded<FormStartStatus>(!live || !known || summary || preparationId !== undefined ? null : async (signal) => {
     const useCase = appContainer.resolve('applicationPreparationUseCase')
     const [availability, jobs] = await Promise.all([
       useCase.availability(program.sourceCode, program.sourceProgramId, signal),
@@ -106,18 +109,72 @@ export function GovApplicationCard({ application, live, refresh, onOpen }: {
       && (job.status === 'QUEUED' || job.status === 'RUNNING'))
     return { running, status: availability.state.status, forms: availability.forms.items.length }
   }, refresh)
+  const newPath = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId })}`
+  if (summary) {
+    const done = summary.hasCurrentDocument === true
+    const required = summary.requiredTotal ? `필수 답변 ${summary.answeredRequired ?? 0}/${summary.requiredTotal}` : null
+    const path = preparationPath(summary)
+    return <WorkCard kind="신청 문서" title={program.title} tone={done ? 'ok' : 'warn'}
+      badge={done ? '초안 완료' : required ?? '작성 중'}
+      action={done ? <>
+        {live ? <DraftDownload preparationId={summary.id} inputRevision={summary.inputRevision} /> : null}
+        <Link className={live ? secondaryButton : pageLink} to={path}>초안 보기</Link>
+      </> : <Link className={live ? openButton : pageLink} to={path}>이어서 쓰기</Link>}>
+      <p className="m-0 text-xs text-ink-muted">{[summary.formTitle, done ? required : null].filter(Boolean).join(' · ')}</p>
+    </WorkCard>
+  }
+  // 예전 대화에서 붙인 신청 준비가 최근 목록에 없으면 상태를 모르므로 그 건의 화면으로만 보냅니다.
+  if (preparationId !== undefined) {
+    return <WorkCard kind="신청 문서" title={program.title} badge="작성 기록" tone="neutral"
+      action={<Link className={pageLink} to={`${appPaths.applicationPreparations}/${preparationId}`}>신청 문서 화면에서 보기</Link>} />
+  }
+  if (!known) {
+    const failed = preparations?.phase === 'failed'
+    return <WorkCard kind="신청 문서" title={program.title} badge={failed ? '상태를 읽지 못함' : '불러오는 중'} tone={failed ? 'warn' : 'neutral'}
+      action={<Link className={pageLink} to={appPaths.applicationPreparations}>신청 문서 화면에서 확인하기</Link>} />
+  }
+  if (!live) {
+    return <WorkCard kind="신청 문서" title={program.title} badge="시작 전" tone="neutral"
+      action={<Link className={pageLink} to={newPath}>신청 문서 화면에서 시작하기</Link>} />
+  }
   const notStarted = startBadge(start)
-  const badge = preparationId === undefined ? notStarted
-    : summary?.hasCurrentDocument ? { label: '초안 완료', tone: 'ok' as const }
-      : summary?.requiredTotal ? { label: `필수 답변 ${summary.answeredRequired ?? 0}/${summary.requiredTotal}`, tone: 'warn' as const }
-        : { label: '작성 중', tone: 'warn' as const }
-  const pagePath = preparationId !== undefined ? `${appPaths.applicationPreparations}/${preparationId}`
-    : `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId })}`
-  return <WorkCard kind="신청 문서" title={program.title} badge={badge.label} tone={badge.tone}
-    action={!live ? <Link className={pageLink} to={pagePath}>신청 준비 화면에서 이어서 보기</Link>
-      : preparationId !== undefined ? <Link className={openButton} to={pagePath}>{summary?.hasCurrentDocument ? '초안 보기' : '이어서 쓰기'}</Link>
-        : notStarted.route ? <Link className={openButton} to={pagePath}>{notStarted.action}</Link>
-          : <button type="button" className={openButton} onClick={onOpen}>{notStarted.action}</button>} />
+  return <WorkCard kind="신청 문서" title={program.title} badge={notStarted.label} tone={notStarted.tone}
+    action={notStarted.route ? <Link className={openButton} to={newPath}>{notStarted.action}</Link>
+      : <button type="button" className={openButton} onClick={onOpen}>{notStarted.action}</button>} />
+}
+
+/** 지금 답변 버전으로 만든 초안 파일을 받습니다. 파일 목록은 누를 때 읽고, 그 버전 파일이 없으면 가장 최근 파일을 받습니다. */
+function DraftDownload({ preparationId, inputRevision }: { preparationId: number; inputRevision: number }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle')
+  const running = useRef<AbortController | null>(null)
+  useEffect(() => () => running.current?.abort(), [])
+  async function download() {
+    if (running.current) return
+    const controller = new AbortController()
+    running.current = controller
+    setState('busy')
+    try {
+      const useCase = appContainer.resolve('applicationPreparationUseCase')
+      const files = await useCase.documents(preparationId, controller.signal)
+      const file = files.find((item) => item.inputRevision === inputRevision)
+        ?? files.reduce<(typeof files)[number] | null>((latest, item) => !latest || item.inputRevision > latest.inputRevision ? item : latest, null)
+      if (!file) throw new Error('받을 초안이 없어요.')
+      const blob = await useCase.downloadDocument(preparationId, file.id, controller.signal)
+      if (controller.signal.aborted) return
+      saveBlob(blob, file.fileName)
+      setState('idle')
+    } catch {
+      if (!controller.signal.aborted) setState('failed')
+    } finally {
+      if (running.current === controller) running.current = null
+    }
+  }
+  return <>
+    <button type="button" className={openButton} disabled={state === 'busy'} onClick={() => { void download() }}>
+      {state === 'busy' ? '받는 중…' : '초안 받기'}
+    </button>
+    {state === 'failed' ? <span className="text-xs text-warning" role="alert">초안을 받지 못했어요. 다시 눌러 주세요.</span> : null}
+  </>
 }
 
 type ReviewStatus = { badge: string; tone: CardTone; answers: ReviewAnswer[] | null; runId: number | null; action: string }
@@ -145,7 +202,9 @@ export function GovReviewCard({ review, live, refresh, onOpen }: {
   const pagePath = reviewId !== undefined ? `${appPaths.combinationReviews}/${reviewId}`
     : `${appPaths.combinationReviewNew}${program ? `?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId })}` : ''}`
   return <WorkCard kind="중복 검토" title={program?.title ?? '공고 두 개 고르기'} badge={badge.badge} tone={badge.tone}
-    action={!live ? <Link className={pageLink} to={pagePath}>중복 검토 화면에서 이어서 보기</Link>
+    action={!live ? (reviewId !== undefined && status?.runId
+      ? <Link className={pageLink} to={combinationReviewRunResultPath(reviewId, status.runId)}>{status.action}</Link>
+      : <Link className={pageLink} to={pagePath}>중복 검토 화면에서 이어서 보기</Link>)
       : reviewId !== undefined && status?.runId ? <Link className={openButton} to={combinationReviewRunResultPath(reviewId, status.runId)}>{status.action}</Link>
         : <button type="button" className={openButton} onClick={onOpen}>{reviewId === undefined ? '검토 시작하기' : '이어서 하기'}</button>}>
     {status?.answers && headline && <div className="grid gap-1">

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import type { GovAgentProgram } from '@govbiz/shared/domain/entities/GovAgent'
 import { GovAgentApiError } from '@govbiz/shared/data/api/govAgentApi'
 import { supportProgramClient } from '../../../../data/api/supportProgramClient'
@@ -24,6 +24,7 @@ import {
   draftChanged,
   govProgramSelected,
   govToolStarted,
+  returnToGovChatChanged,
   type GovAgentTool,
   govMessageSucceeded,
   govApplicationPrepared,
@@ -80,6 +81,7 @@ export function useSupportProgramChat(
   const isGovAgent = useAppSelector((state) => state.auth.status === 'authenticated' && state.auth.account?.role === 'ADMIN')
   const accountEmail = useAppSelector((state) => state.auth.account?.email)
   const govProgram = useAppSelector((state) => state.chat.govProgram)
+  const govPendingQuestion = useAppSelector((state) => state.chat.govPendingQuestion)
   const conversationCount = useAppSelector(selectConversationCount)
   const draft = useAppSelector(selectChatDraft)
   const isReadyToSubmit = useAppSelector(selectIsReadyToSubmit)
@@ -291,7 +293,7 @@ export function useSupportProgramChat(
           else if (result.outcome === 'PARTNERS') dispatch(govMessageSucceeded({ requestId,
             message: result.message, partners: { message: result.message, conditions: result.partnerConditions } }))
           else if (result.outcome === 'NEEDS_PROGRAM' || result.outcome === 'UNSUPPORTED') {
-            dispatch(govMessageSucceeded({ requestId, message: result.message }))
+            dispatch(govMessageSucceeded({ requestId, message: result.message, needsProgram: result.outcome === 'NEEDS_PROGRAM' }))
           }
         } else {
           const result = await interpretConversationUseCase.execute(effectiveRequest, controller.signal)
@@ -361,6 +363,11 @@ export function useSupportProgramChat(
     })
   }
 
+  /** Gov 대화 화면을 열거나 떠날 때 [대화로 돌아가기] 표시를 바꿉니다. 화면 effect가 쓰므로 같은 함수를 유지합니다. */
+  const setReturnToGovChat = useCallback((value: boolean) => {
+    if (isGovAgent) dispatchToStore(returnToGovChatChanged(value))
+  }, [isGovAgent, dispatchToStore])
+
   function retrySearch() {
     return dispatchToStore((_dispatch: AppDispatch, getState: () => RootState): Promise<void> => {
       const state = getState().chat
@@ -372,6 +379,8 @@ export function useSupportProgramChat(
   return {
     isGovAgent,
     govProgram,
+    govPendingQuestion,
+    setReturnToGovChat,
     selectGovProgram: (program: GovAgentProgram | null) => { if (isGovAgent) dispatchToStore(govProgramSelected(program)) },
     /** 선택 공고로 신청 문서·중복 검토를 바로 시작합니다(경로 선택 OpenAI 호출 없음). */
     startGovTool: (tool: GovAgentTool) => { if (isGovAgent) dispatchToStore(govToolStarted(tool)) },

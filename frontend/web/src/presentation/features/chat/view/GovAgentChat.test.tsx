@@ -54,6 +54,8 @@ function recommendations(): PartnerRecruitmentRecommendations {
 }
 
 function setup(role: 'ADMIN' | 'USER') {
+  // 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾습니다. 이 파일의 대화에는 신청 준비가 없습니다.
+  vi.spyOn(appContainer.resolve('applicationPreparationUseCase'), 'list').mockResolvedValue({ items: [], nextBeforeId: null })
   const store = createAppStore()
   store.dispatch(signedIn({ email: 'test@govbiz.local', role, tier: role === 'ADMIN' ? 'ADMIN' : 'MEMBER',
     emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }))
@@ -169,7 +171,7 @@ it('관리자는 선택 공고 막대의 작업 칩으로 신청 문서·중복 
   expect(screen.queryByRole('group', { name: '이 공고로 작업하기' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
   const tools = screen.getByRole('group', { name: '이 공고로 작업하기' })
-  expect(Array.from(tools.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청서 쓰기', '중복 검토'])
+  expect(Array.from(tools.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청서 쓰기', '중복 검토', '파트너 찾기'])
   // 입력칸에 글을 쓰는 동안에는 두지 않습니다.
   fireEvent.change(input, { target: { value: '메모' } })
   expect(screen.queryByRole('group', { name: '이 공고로 작업하기' })).toBeNull()
@@ -311,4 +313,51 @@ it('관리자의 중복 검토 카드는 끝난 실행의 질문별 판정과 �
   expect(screen.queryByRole('region', { name: '대화 중복 검토' })).toBeNull()
   expect(within(card).queryByRole('button', { name: '결과 보기' })).toBeNull()
   expect(within(card).getByRole('link', { name: '결과 보기' }).getAttribute('href')).toBe(`/app/combination-reviews/12/runs/${answerRunFixture.id}`)
+})
+
+it('공고를 고르지 않아 답하지 못한 질문은 공고를 고르면 [방금 질문을 이 공고로 묻기]로 한 번에 다시 묻는다', async () => {
+  const gov = vi.spyOn(supportProgramClient, 'sendGovAgentMessage')
+    .mockResolvedValueOnce({ outcome: 'NEEDS_PROGRAM', message: '먼저 검색 결과에서 공고를 선택해 주세요.' })
+    .mockResolvedValue({ outcome: 'SEARCH', interpretation: readyConversationProposal({ ...emptyConversationContext, query: 'AI 창업' }) })
+  vi.spyOn(appContainer.resolve('searchSupportProgramsUseCase'), 'execute')
+    .mockResolvedValue(completeSearchResult({ query: 'AI 창업', programs: [supportPrograms[0]] }))
+  setup('ADMIN')
+  const input = screen.getByRole('textbox', { name: '지원사업 검색어' })
+  fireEvent.change(input, { target: { value: '이 공고 신청 자격 알려줘' } })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
+  expect(screen.getByText('먼저 검색 결과에서 공고를 선택해 주세요.')).toBeTruthy()
+  fireEvent.change(input, { target: { value: 'AI 창업지원 찾아줘' } })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
+  // 공고를 고르기 전에는 다시 묻기 칩을 두지 않습니다.
+  expect(screen.queryByRole('button', { name: /방금 질문을 이 공고로 묻기/ })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  const resume = screen.getByRole('button', { name: '방금 질문을 이 공고로 묻기: 이 공고 신청 자격 알려줘' })
+  expect(resume.textContent).toBe('‘이 공고 신청 자격 알려줘’ 이 공고로 묻기')
+  gov.mockResolvedValueOnce({ outcome: 'UNSUPPORTED', message: '아직 도와드릴 수 없는 요청이에요.' })
+  await act(async () => fireEvent.click(resume))
+  const [request] = gov.mock.calls.at(-1)!
+  expect(request.conversation.message).toBe('이 공고 신청 자격 알려줘')
+  expect(request.selectedProgram).toEqual({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id })
+  expect(screen.queryByRole('button', { name: /방금 질문을 이 공고로 묻기/ })).toBeNull()
+})
+
+it('관리자는 선택 공고 막대의 [파트너 찾기]로 경로 선택 없이 이 공고의 모집글을 찾는다', async () => {
+  const gov = vi.spyOn(supportProgramClient, 'sendGovAgentMessage').mockResolvedValue({ outcome: 'SEARCH',
+    interpretation: readyConversationProposal({ ...emptyConversationContext, query: 'AI 창업' }) })
+  vi.spyOn(appContainer.resolve('searchSupportProgramsUseCase'), 'execute')
+    .mockResolvedValue(completeSearchResult({ query: 'AI 창업', programs: [supportPrograms[0]] }))
+  const recommend = vi.spyOn(appContainer.resolve('recommendPartnerRecruitmentsUseCase'), 'execute').mockResolvedValue(recommendations())
+  setup('ADMIN')
+  fireEvent.change(screen.getByRole('textbox', { name: '지원사업 검색어' }), { target: { value: 'AI 창업지원 찾아줘' } })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  const calls = gov.mock.calls.length
+  await act(async () => fireEvent.click(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('button', { name: '파트너 찾기' })))
+  expect(gov.mock.calls.length).toBe(calls)
+  expect(screen.getByText('이 공고 파트너 찾기')).toBeTruthy()
+  expect(recommend).toHaveBeenCalledWith({ seekingRoles: [], regions: [], keywords: [],
+    program: { sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id } }, 3, expect.any(AbortSignal))
+  expect(within(screen.getByRole('group', { name: '대화에서 읽은 조건' })).getByRole('button', { name: '선택한 공고 조건 빼기' })).toBeTruthy()
 })

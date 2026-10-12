@@ -17,17 +17,19 @@ export type SupportProgramChatMessage = ChatMessage
 type ChatSearchStatus = 'idle' | 'pending' | 'failed'
 
 /** 선택 공고 막대의 작업 칩으로 바로 시작하는 Gov 작업입니다. */
-export type GovAgentTool = 'APPLICATION' | 'COMBINATION_REVIEW'
+export type GovAgentTool = 'APPLICATION' | 'COMBINATION_REVIEW' | 'PARTNERS'
 
 /**
  * 작업 칩이 만드는 사용자 말풍선과 안내 문구입니다. 중복 검토 안내는 같은 요청을 말로 했을 때 Core가 돌려주는 문구와 같고,
  * 신청서 쓰기는 칩을 누르면 저장된 양식이 없을 때 입력칸 분석을 바로 시작하므로 그 사실을 알립니다(말로 요청하면 버튼으로 시작).
+ * 파트너 찾기는 고른 공고를 조건으로 맞춤 모집글을 조회합니다(AI 호출 없음).
  */
 export const govToolTexts: Record<GovAgentTool, { label: string; request: string; message: string }> = {
   APPLICATION: { label: '신청서 쓰기', request: '이 공고 신청서 쓰기',
     message: '저장된 신청 양식을 확인하고, 없으면 입력칸 분석을 바로 시작할게요. 분석은 보통 1~2분 걸려요.' },
   COMBINATION_REVIEW: { label: '중복 검토', request: '이 공고 중복 검토',
     message: '함께 지원할 두 공고를 선택하고 참여 상태와 사업 관계를 확인한 뒤 중복 검토를 실행해 주세요.' },
+  PARTNERS: { label: '파트너 찾기', request: '이 공고 파트너 찾기', message: '이 공고로 모집 중인 파트너 모집글을 찾아봤어요.' },
 }
 
 /** 화면이 보지 않은 사이에 도착한 결과입니다. 채팅 화면이 열리면 `outcomeSeen`으로 지웁니다. */
@@ -46,6 +48,10 @@ type ChatInterpretation = {
 
 type ChatState = {
   govProgram: GovAgentProgram | null
+  /** 공고를 고르지 않아 답하지 못한 마지막 요청입니다. 공고를 고르면 [방금 질문을 이 공고로 묻기]로 다시 보냅니다(대화 기록에 저장하지 않음). */
+  govPendingQuestion: string | null
+  /** 대화가 있는 채로 Gov 대화 화면을 떠났는지입니다. 신청 문서·중복 검토·파트너 화면이 [대화로 돌아가기]를 보입니다. */
+  returnToGovChat: boolean
   companyDefaultsInitialized: boolean
   accountEmail: string | null
   isRestoredHistory: boolean
@@ -150,8 +156,10 @@ const chatSlice = createSlice({
       if (state.interpretation.status === 'failed') state.interpretation = { status: 'idle' }
     },
     govMessageSucceeded(state, action: PayloadAction<{ requestId: string; message: string; evidence?: GovAgentEvidence; application?: GovAgentApplication;
-      review?: GovAgentReview; partners?: GovAgentPartners }>) {
+      review?: GovAgentReview; partners?: GovAgentPartners; needsProgram?: boolean }>) {
       if (state.interpretation.status !== 'pending' || state.interpretation.requestId !== action.payload.requestId) return
+      // 공고를 골라야 답할 수 있다는 안내였으면 그 요청을 남겨 두고, 다른 답이 오면 지웁니다.
+      state.govPendingQuestion = action.payload.needsProgram ? state.interpretation.request?.message ?? null : null
       state.messages.push({ id: `${action.payload.requestId}-answer`, role: 'assistant', text: action.payload.message,
         ...(action.payload.evidence ? { govEvidence: action.payload.evidence } : {}),
         ...(action.payload.application ? { govApplication: action.payload.application } : {}),
@@ -161,8 +169,9 @@ const chatSlice = createSlice({
       state.unseenOutcome = 'interpretation-answered'
     },
     /**
-     * 선택 공고 막대의 작업 칩으로 신청 문서·중복 검토를 시작합니다. 두 작업은 Core가 고정 문구만 돌려주는 경로라
-     * 경로 선택(OpenAI)을 부르지 않고 사용자 말풍선과 작업 메시지를 바로 만듭니다. 처리 중이거나 고른 공고가 없으면 하지 않습니다.
+     * 선택 공고 막대의 작업 칩으로 신청 문서·중복 검토·파트너 찾기를 시작합니다. 신청 문서·중복 검토는 Core가 고정 문구만 돌려주는 경로이고,
+     * 파트너 찾기는 고른 공고가 곧 조건이라 경로 선택(OpenAI)을 부르지 않고 사용자 말풍선과 작업 메시지를 바로 만듭니다.
+     * 처리 중이거나 고른 공고가 없으면 하지 않습니다.
      */
     govToolStarted: {
       reducer(state, action: PayloadAction<{ id: string; tool: GovAgentTool }>) {
@@ -171,11 +180,18 @@ const chatSlice = createSlice({
         const program = state.govProgram
         state.messages.push({ id, role: 'user', text: govToolTexts[tool].request })
         const message = govToolTexts[tool].message
+        const { sourceCode, sourceProgramId } = program
         state.messages.push({ id: `${id}-answer`, role: 'assistant', text: message,
-          ...(tool === 'APPLICATION' ? { govApplication: { program, message } } : { govReview: { program, message } }) })
+          ...(tool === 'APPLICATION' ? { govApplication: { program, message } }
+            : tool === 'COMBINATION_REVIEW' ? { govReview: { program, message } }
+              : { govPartners: { message, conditions: { seekingRoles: [], regions: [], keywords: [], program: { sourceCode, sourceProgramId } } } }) })
         state.unseenOutcome = null
       },
       prepare(tool: GovAgentTool) { return { payload: { id: nanoid(), tool } } },
+    },
+    /** Gov 대화 화면을 열면 false, 대화가 있는 채로 떠나면 true로 둡니다. */
+    returnToGovChatChanged(state, action: PayloadAction<boolean>) {
+      state.returnToGovChat = action.payload
     },
     govApplicationPrepared(state, action: PayloadAction<{ accountEmail: string; messageId: string; preparationId: number }>) {
       const { accountEmail, messageId, preparationId } = action.payload
@@ -205,6 +221,8 @@ const chatSlice = createSlice({
         if (!state.messages.some((message) => message.id === action.payload.messageId)) {
           state.messages.push({ id: action.payload.messageId, role: 'user', text: action.payload.request.message })
         }
+        // 공고를 고른 뒤 보낸 메시지는 남겨 둔 요청을 다시 묻거나 대신하므로 지웁니다.
+        if (state.govProgram) state.govPendingQuestion = null
       },
       prepare(request: SupportProgramInterpretRequest, messageId = nanoid()) {
         return { payload: { requestId: nanoid(), messageId, request } }
@@ -398,6 +416,7 @@ export const {
   searchResultRestoreFailed,
   draftChanged,
   govProgramSelected,
+  returnToGovChatChanged,
   govToolStarted,
   govMessageSucceeded,
   govApplicationPrepared,
@@ -476,6 +495,8 @@ export function createChatConversationSnapshot(state: ChatState): ChatConversati
 function createInitialState(welcomeMessage = createWelcomeMessage()): ChatState {
   return {
     govProgram: null,
+    govPendingQuestion: null,
+    returnToGovChat: false,
     companyDefaultsInitialized: false,
     accountEmail: null,
     isRestoredHistory: false,

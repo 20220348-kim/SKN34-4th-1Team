@@ -13,6 +13,7 @@ import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { planUsageView } from '../../../shared/plan-usage/planUsageView'
 import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { appPaths } from '../../../shared/routes/appPaths'
+import { saveBlob } from '../../../shared/download/saveBlob'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
@@ -299,14 +300,6 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
       if (migrationController.current === controller) migrationController.current = null
       if (!controller.signal.aborted) setMigrationBusy(false)
     }
-  }
-
-  function saveBlob(blob: Blob, fileName: string) {
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url; link.download = fileName
-    document.body.appendChild(link); link.click(); link.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   async function download(file: ApplicationDocument) {
