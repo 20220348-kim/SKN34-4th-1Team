@@ -27,7 +27,7 @@ for (const source of manifest) {
   icons.set(source.name, `data:${isSvg ? 'image/svg+xml' : 'image/png'};base64,${bytes.toString('base64')}`);
 }
 
-const W = 2800, H = 3380;
+const W = 2800, H = 3860;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
 const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', external:'#67548E'};
@@ -52,8 +52,8 @@ function label(x, y, value, max=360, fill=muted) {
 }
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
-<title id="title">GovBiz 로컬 아키텍처 — LLMOps Kubernetes 통합</title>
-<desc id="desc">2026-10-11 LLMOps까지 Kubernetes로 전환한 로컬 구성. React/Vite 웹과 React Native/Expo 모바일 앱은 같은 Core API와 shared 계약을 사용하며 관리자 Ops는 웹에서 접근한다. 모바일은 기기에서 접근 가능한 API origin과 Bearer 인증으로 연결한다. 같은 kind 클러스터 안에서 govbiz-msa는 Core·Catalog·AI·Django Ops와 업무 저장소를, govbiz-evaluation은 Prefect·평가 실행기·결과 서버와 PVC를, govbiz-observability는 Langfuse web/worker와 PostgreSQL·ClickHouse·Redis·MinIO 전용 PVC를 소유한다. 서비스는 ClusterIP와 내부 DNS로 연결하고 도구 UI는 loopback port-forward로 접근한다. 전환 후 배치 구조이며 실시간 가동 상태나 유료 평가 완료를 뜻하지 않는다.</desc>
+<title id="title">GovBiz 로컬 아키텍처 — LLMOps·Argo CD Kubernetes 통합</title>
+<desc id="desc">2026-10-13 저장소의 로컬 Kubernetes·GitOps 전환 구성. React/Vite 웹과 React Native/Expo 모바일 앱은 같은 Core API와 shared 계약을 사용하며 관리자 Ops는 웹에서 접근한다. 모바일은 기기에서 접근 가능한 API origin과 Bearer 인증으로 연결한다. 같은 kind 클러스터 안에서 govbiz-msa는 Core·Catalog·AI·Django Ops와 업무 저장소를, govbiz-evaluation은 Prefect·평가 실행기·결과 서버와 PVC를, govbiz-observability는 Langfuse web/worker와 PostgreSQL·ClickHouse·Redis·MinIO 전용 PVC를 소유한다. GitOps 전환 시 argocd Namespace에 Argo CD Core의 Pod 4개를 설치하고 같은 단일 kind 노드에서 실행한다. 설치·인계·활성화 후 Git의 검증 태그를 읽어 로컬 Kubernetes API로 웹·업무·평가 앱을 동기화한다. 기본 개발 모드의 dev.py와 같은 Deployment를 동시에 관리하지 않는다. 서비스는 ClusterIP와 내부 DNS로 연결하고 도구 UI는 loopback port-forward로 접근한다. 전환 후 배치 구조이며 실시간 가동 상태나 유료 평가 완료를 뜻하지 않는다.</desc>
 <defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
@@ -63,7 +63,7 @@ text(300,91,'로컬 시스템 아키텍처',{size:38,weight:600});
 text(70,140,'웹·모바일 → 같은 Core API · 업무·평가·관측은 Kubernetes · 사람 검토는 React Ops',{size:25,fill:muted,max:1900});
 card(2170,51,560,62,'#EDF8F1','#BDDAC8',16);
 text(2450,91,'KUBERNETES + LLMOPS',{size:26,weight:700,anchor:'middle',fill:'#256B49',max:520});
-text(2730,140,'2026.10.12 · 자동 동기화 구성',{size:21,fill:muted,anchor:'end',max:650});
+text(2730,140,'2026.10.13 · GitOps 전환 구성',{size:21,fill:muted,anchor:'end',max:650});
 
 // Render Helm with tested image digests, publish immutable tags, then let Argo reconcile.
 card(60,188,2680,282,'#F8FAFD','#D2DFEB',26);
@@ -73,7 +73,7 @@ const delivery = [
   [585,460,'githubactions','2. 필수 CI 5개',['GovBiz · Catalog · Ops','LLMOps · Infra','같은 소스 SHA의 필수 작업 통과']],
   [1085,455,'github','3. GHCR · 이미지 발행',['웹 · 백엔드 · 평가 실행기','이미지 빌드 · 검증 · 발행','같은 소스 SHA · 불변 digest']],
   [1580,540,'helm','4. Helm · 배포 YAML 생성',['Chart 템플릿 + 로컬 values','검증된 이미지 digest 반영','Kubernetes YAML 렌더링','렌더링 결과 → 불변 배포 태그']],
-  [2160,545,'argocd','5. Argo CD · 자동 동기화',['배포 태그 → kind 자동 반영','접수 중지 → migration → 앱 갱신','정상 상태 · 평가 연결 확인 후 재개','Secret · PVC 보존 · 최초 인계 필요']],
+  [2160,545,'argocd','5. Argo CD · 자동 동기화',['배포 태그 → kind 자동 반영','접수 중지 → migration → 앱 갱신','정상 상태 · 평가 연결 확인 후 재개','아래 argocd Pod · 최초 인계 필요']],
 ];
 for(const [x,w,brand,title,lines] of delivery){
   card(x,255,w,184);
@@ -126,10 +126,10 @@ text(1980,870,'Core 포워딩 :18080 · 실기기 접근 경로 별도 설정',{
 
 parts.push('<g transform="translate(0 180)">');
 // All runtime services live inside one cluster; namespaces retain data ownership.
-card(60,790,2680,1380,'#F6FAFE','#BCD1E5',30);
+card(60,790,2680,1860,'#F6FAFE','#BCD1E5',30);
 icon('kubernetes',94,819,57);
 text(173,860,'Kubernetes · kind',{size:37,weight:700,max:1100});
-text(100,904,'하나의 클러스터 · 업무 / 평가 / 관측 namespace 분리 · ClusterIP + Service DNS로 통신',{size:25,fill:muted,max:2560});
+text(100,904,'kind 단일 노드 · 업무 / 평가 / 관측 / 배포 관리 Namespace 분리 · ClusterIP + Service DNS로 통신',{size:25,fill:muted,max:2560});
 
 card(85,950,1505,1160,'#FFFFFF','#C6D9EB',24);
 text(112,994,'govbiz-msa · 업무 서비스',{size:30,weight:700,max:1430});
@@ -250,6 +250,35 @@ edge('M1925 1635H1950V1100H2010');
 edge('M1925 1730H1965V1565H2010');
 text(100,2146,'평가 PVC: Prefect / 결과 분리 · 실행기와 결과 서버는 같은 노드에서 RWO PVC 공유 · 외부 도구 UI는 loopback 포워딩',{size:23,fill:muted,max:2600});
 
+// GitOps bootstrap is optional; Argo shares the local kind node, not an EKS node pool.
+card(85,2190,1570,420,'#FDF8F0','#E1CBA9',24);
+icon('argocd',110,2210,42);
+text(170,2236,'argocd · Argo CD Core · 배포 관리',{size:30,weight:700,max:1450});
+text(110,2272,'GitOps 전환 시 설치 · 별도 Namespace · Pod 4개',{size:24,fill:muted,max:1515});
+for (const [x,y,w,title,detail] of [
+  [110,2310,675,'application-controller','StatefulSet · Git 설정과 실제 상태 비교'],
+  [850,2310,780,'repo-server','Deployment · 검증된 Git 배포 YAML 조회'],
+  [110,2435,675,'ApplicationSet controller','Deployment · Application 생성·관리'],
+  [850,2435,780,'Redis · Argo 내부 캐시','Deployment · 업무·Langfuse Redis와 별도'],
+]) {
+  card(x,y,w,105,'#FFFFFF','#E1D3BC',18);
+  text(x+24,y+39,title,{size:26,weight:600,max:w-48});
+  text(x+24,y+79,detail,{size:22,fill:muted,max:w-48});
+}
+edge('M850 2360H785','deploy');
+edge('M785 2330H820V2290H1715V2330H1780','deploy');
+text(110,2585,'같은 kind 단일 노드에서 실행 · Argo용 PVC 없음 · 별도 웹 서버 없음',{size:23,fill:muted,max:1515});
+card(1780,2290,925,135,'#FFFFFF','#BCD1E5',20);
+text(1805,2332,'Kubernetes API · 로컬 kind 제어면',{size:28,weight:700,max:875});
+text(1805,2372,'같은 kind 노드의 API server에 배포 요청',{size:24,max:875});
+text(1805,2404,'로컬 Node에서 실행 · 사용자 API 경로와 분리',{size:22,fill:muted,max:875});
+edge('M2242 2425V2470','deploy');
+card(1780,2470,925,115,'#FFFFFF','#D3DEE5',20);
+text(1805,2510,'govbiz-local Application → 앱 7개',{size:27,weight:700,max:875});
+text(1805,2548,'web · Core · Catalog · AI · Ops · 실행기 · 결과 서버',{size:23,max:875});
+text(1780,2620,'최초 설치·인계·자동 동기화 활성화 후 사용',{size:23,fill:muted,max:925});
+
+parts.push('<g transform="translate(0 480)">');
 // Repeat the two callers as a route detail, outside the cluster boundary.
 card(60,2210,2680,350,'#F8F6FC','#CEC4E2',26);
 text(90,2254,'03   외부 API 연결 · 위 서비스의 호출 경로',{size:26,weight:700,fill:colors.external,max:1600});
@@ -295,14 +324,14 @@ text(90,2128,'Kubernetes 내부에서 실행·보고서·점수·검토 연결  
 card(60,2200,2680,137,'#FAFBFD','#D2DFEB',23);
 text(90,2241,'개발 모드 반영',{size:26,weight:700,max:360});
 text(450,2241,'코드 저장 → dev.py → 변경 서비스 Docker 빌드 → kind load → rollout',{size:27,weight:600,max:2230});
-text(90,2298,'웹 Vite HMR · 앱 Expo Fast Refresh · 웹·업무·평가 앱은 검증 태그로 자동 sync · 기반 도구·저장소 유지 · prune 비활성 · Secret / PVC 보존',{size:23,fill:muted,max:2600});
+text(90,2298,'웹 Vite HMR · 앱 Expo Fast Refresh · GitOps 전환 시 watcher 종료·최초 인계 · 같은 Deployment를 dev.py와 Argo가 동시에 관리하지 않음',{size:23,fill:muted,max:2600});
 
 parts.push('<path d="M70 2380H2730" stroke="#E4EBF0" stroke-width="2"/>');
-for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[560,'deploy','검증 · 이미지 공급'],[1090,'config','설정된 내부 연동'],[1610,'external','외부 API 호출'],[2070,'dev','평가 · 사람 검토']]){
+for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[560,'deploy','검증 · 배포 제어'],[1090,'config','설정된 내부 연동'],[1610,'external','외부 API 호출'],[2070,'dev','평가 · 사람 검토']]){
   edge(`M${x} 2420H${x+55}`,kind); text(x+76,2428,name,{size:22,max:570});
 }
-text(75,2477,'2026.10.12 · 자동 배포 활성화·실시간 가동 상태·유료 모델 품질의 검증 결과는 별도 · 실행 완료 ≠ 품질 합격',{size:21,fill:muted,max:2650});
-parts.push('</g></g></svg>');
+text(75,2477,'2026.10.13 · 자동 배포 활성화·실시간 가동 상태·유료 모델 품질의 검증 결과는 별도 · 실행 완료 ≠ 품질 합격',{size:21,fill:muted,max:2650});
+parts.push('</g></g></g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
 console.log(`Created ${basename}.svg`);

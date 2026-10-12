@@ -11,11 +11,11 @@
 
 메인 README 5.2.4의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과
 고정된 행 배치로 바꾸고, 관리·요청·저장소 관계를 분리했습니다.
-현재 EKS 설정의 HPA·Cluster Autoscaler·노드 배치를 반영하며 로컬 web은 별도로 표시합니다.
+현재 EKS 설정의 HPA·Cluster Autoscaler·노드 배치와 Argo CD Core 설치 구성을 반영하며 로컬 web은 별도로 표시합니다.
 
 | 그림 | 파일 | 읽는 순서 |
 |---|---|---|
-| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png) · [SVG](govbiz-kubernetes-resources-overview.svg) | 업무 → 평가 → 관측. EKS의 실행 개수와 물리 노드 배치를 함께 표시하며 Namespace와 Node를 구분합니다. |
+| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png) · [SVG](govbiz-kubernetes-resources-overview.svg) | 업무 → 평가 → 관측 → Argo CD. EKS의 실행 개수와 물리 노드 배치를 함께 표시하며 Namespace와 Node를 구분합니다. |
 | Ops의 리소스 관계 | [PNG](govbiz-kubernetes-resources-flow.png) · [SVG](govbiz-kubernetes-resources-flow.svg) | 생성·관리 → 실제 요청 → 데이터 보존. 행마다 반복한 Ops·MySQL Pod는 같은 예시입니다. |
 | 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png) · [SVG](govbiz-kubernetes-resources-platform.svg) | Argo·Control Plane·Node → EKS 진입 → Metrics Server·HPA → 대기 Pod·Cluster Autoscaler·EC2 → 기반 기능 → 설정·접근 제어. |
 
@@ -24,6 +24,10 @@
   Cluster Autoscaler는 배치 대기 Pod에 맞춰 application 최소 1대·최대 2대, observability 고정 1대로 전체 최소 2대·최대 3대를 유지합니다.
   Core·AI의 필수 노드 분산과 PDB에 따른 퇴거 제한·축소 조건을 함께 표시합니다.
 - 평가·관측은 observability에 배치하고 Catalog·Ops는 각각 업무 DB와 같은 application 노드에 배치합니다.
+- `argocd`는 별도 Namespace이며 Argo CD Core의 4개 Pod는 observability Node에서 실행합니다.
+  application-controller는 StatefulSet, repo-server·ApplicationSet controller·Redis는 각각 Deployment입니다.
+  현재 Core 설치의 Argo 구성 요소는 PVC를 사용하지 않으며 별도 웹 서버 Pod가 없습니다.
+  플랫폼 그림의 Argo는 이 4개 Pod를 요약한 것이며 Kubernetes API로 다른 Namespace에 배포합니다.
 - Headless Service는 중계 서버로 그리지 않습니다. CoreDNS가 알려준 Pod IP로 직접 접속합니다.
 - Chart·배포 코드의 구조이며, 실제 Argo 인계·자동 배포 완료나 현재 Pod 개수를 증명하지 않습니다.
 - 기본 Chart의 migration Job과 자동 배포 시 이를 교체하는 prepare·resume Job을 구분합니다.
@@ -50,7 +54,9 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 현재 EKS 설정 근거: [HPA 실행 범위](../../../infrastructure/eks/gitops-values.yaml) ·
 [분산 배치·Argo 관리 범위](../../../infrastructure/eks/gitops.py) ·
 [Gateway HPA](../../../infrastructure/eks/api-gateway/hpa.yaml) ·
-[Cluster Autoscaler·PDB·축소 조건](../../../infrastructure/eks/autoscaling/README.md).
+[Cluster Autoscaler·PDB·축소 조건](../../../infrastructure/eks/autoscaling/README.md) ·
+[Argo 설치·노드 배치](../../../infrastructure/eks/argo-cd.md#현재-argo-자원-배치) ·
+[고정 Argo CD Core 3.5.3 리소스](https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/core-install.yaml).
 
 공식 구조 근거: [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/),
 [Service·Headless](https://kubernetes.io/docs/concepts/services-networking/service/#headless-services),
@@ -99,17 +105,20 @@ HPA의 Pod 조절 → 배치 대기 → Cluster Autoscaler의 application EC2 �
 루트 기본 통합 Ops와 별도 LLMOps Ops의 차이, named volume과 선택 artifact overlay를 구분합니다.
 Kubernetes의 namespace·PVC·port-forward와 다른 실행 경로이며 두 그림을 별도로 유지합니다.
 
-## Kubernetes 로컬 전체 구성 — 2026-10-12
+## Kubernetes 로컬 전체 구성 — 2026-10-13
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=55e144236d84)
+![GovBiz 업무·평가·관측과 Argo CD를 포함한 로컬 Kubernetes 구성](govbiz-local-architecture.png?v=c4108a043e43)
 
-- [전환 후 구성 PNG](govbiz-local-architecture.png?v=55e144236d84) · [SVG 원본](govbiz-local-architecture.svg?v=5f904839e3ab)
+- [전환 후 구성 PNG](govbiz-local-architecture.png?v=c4108a043e43) · [SVG 원본](govbiz-local-architecture.svg?v=06115cccb76a)
 - [namespace·데이터·내부 통신·접근 방식](README-local.md)
 - [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ·MyBatis 로고 출처·해시](logo-sources.json)
 
 LLMOps까지 Kubernetes로 전환한 구조입니다. 하나의 kind 클러스터 안에서 업무(`govbiz-msa`),
 평가(`govbiz-evaluation`), 관측(`govbiz-observability`) namespace를 구분합니다.
 로컬 배포는 필수 CI·GHCR 검증 → 불변 배포 태그 → Argo 자동 동기화로 연결합니다. 기존 환경의 최초 인계·활성화는 별도입니다.
+GitOps 전환 시 같은 kind 단일 노드에서 실행하는 `argocd` Namespace·Pod 4개와
+로컬 Kubernetes API를 통한 앱 7개 배포 제어를 표시합니다. EKS의 observability EC2 배치는 적용하지 않습니다.
+기본 개발 모드에서는 Argo가 업무 서비스를 소유하지 않으며 `dev.py`와 같은 Deployment를 동시에 관리하지 않습니다.
 React/Vite 웹과 React Native·Expo 모바일 앱은 같은 Core API·공통 계약을 사용하고, 관리자 Ops는 웹에서 접근합니다.
 Prefect·실행기·결과 서버·Langfuse와 저장소를 내부 Service·PVC로 연결하고, 도구 UI는 port-forward로 접근합니다.
 외부 API 영역에는 Catalog → 공고 제공처 API, AI Service → OpenAI와 개발 PC를 통한 인터넷 출구를 표시합니다.

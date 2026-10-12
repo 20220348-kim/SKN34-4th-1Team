@@ -2,26 +2,28 @@
 
 [Docker Compose 로컬 구성](README-compose.md) · [아키텍처 이미지 목록](README.md)
 
-**2026-10-12 기준, LLMOps Kubernetes 통합과 검증 태그 기반 자동 배포 구성**입니다.
-업무 서비스·평가 실행·관측 저장소를 같은 kind 클러스터 안에 배치하고 namespace로 구분했습니다.
+**2026-10-13 기준, LLMOps Kubernetes 통합과 GitOps 전환 후의 자동 배포 구성**입니다.
+업무 서비스·평가 실행·관측 저장소와 Argo CD를 같은 kind 클러스터 안에 배치하고 Namespace로 구분했습니다.
+Argo 영역은 설치·최초 인계·활성화 후의 구조이며, 기본 개발 모드에서 자동으로 앱을 관리한다는 뜻은 아닙니다.
 기존 그림의 Compose 평가 영역과 외부 HTTP 브리지를 Kubernetes Service·PVC로 교체했습니다.
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=55e144236d84)
+![GovBiz 업무·평가·관측과 Argo CD를 포함한 로컬 Kubernetes 구성](govbiz-local-architecture.png?v=c4108a043e43)
 
 ## 파일
 
-- [PNG](govbiz-local-architecture.png?v=55e144236d84): 5,600 × 6,760, GitHub·발표 첨부용.
-- [SVG](govbiz-local-architecture.svg?v=5f904839e3ab): 2,800 × 3,380, 로고가 내장된 편집 가능한 원본.
+- [PNG](govbiz-local-architecture.png?v=c4108a043e43): 5,600 × 7,720, GitHub·발표 첨부용.
+- [SVG](govbiz-local-architecture.svg?v=06115cccb76a): 2,800 × 3,860, 로고가 내장된 편집 가능한 원본.
 - [생성 스크립트](build-local.mjs): 기존 로컬 로고를 사용하며 클러스터·GHCR에 접근하지 않습니다.
 - 로고 출처·해시는 [Kubernetes 로고 목록](kubernetes-logo-sources.json), [RabbitMQ·MyBatis·OpenAI 로고 목록](logo-sources.json), [로고별 라이선스 안내](README.md#로고-출처)를 따릅니다.
 
-## 1. 세 namespace와 데이터 소유권
+## 1. Namespace와 실행·데이터 소유권
 
 | namespace | 실행 서비스 | 보존 데이터 |
 |---|---|---|
 | `govbiz-msa` | Core·Catalog·AI·Ops API와 같은 Pod의 `ops-sync` | Core·Catalog·Ops MySQL, 업무용 Redis·Elasticsearch·Qdrant·RabbitMQ의 PVC |
 | `govbiz-evaluation` | Prefect·`evaluation-runner`·`ops-artifacts` | Prefect SQLite 전용 PVC, 보고서·캡처·요약을 담는 결과 PVC |
 | `govbiz-observability` | Langfuse web·worker | PostgreSQL·ClickHouse·Redis·MinIO의 전용 StatefulSet·PVC 4개 |
+| `argocd` (GitOps 전환 시) | Argo CD Core의 application-controller·repo-server·ApplicationSet controller·Redis, 각각 Pod 1개 | 현재 Core 설치는 Argo용 PVC를 사용하지 않습니다. Git의 배포 설정과 Kubernetes의 Application·AppProject 리소스로 관리합니다. |
 
 - Core는 Catalog의 인증된 snapshot을 조회해 자기 DB의 공고 복제본을 갱신합니다.
 - Core·Catalog는 MyBatis Mapper·XML을 통해 각자의 MySQL에 접근합니다.
@@ -34,6 +36,28 @@
 근거: [서비스 Chart](../../../infrastructure/gitops/charts/),
 [평가 Chart](../../../infrastructure/gitops/charts/govbiz-evaluation/),
 [관측 Chart·PVC 계약](../../../infrastructure/gitops/charts/govbiz-observability/README.md).
+
+### Argo CD도 kind 안에서 실행
+
+로컬은 [단일 control-plane 노드의 kind 설정](../../../infrastructure/gitops/kind/local.yaml)을 사용합니다.
+Argo CD의 4개 Pod도 같은 노드에서 실행하며 EKS의 application·observability EC2 구분은 적용하지 않습니다.
+`argocd`는 `govbiz-observability`와 별도 Namespace입니다. 상단 배포 5단계의 Argo와
+클러스터 내부 `argocd` 상자는 같은 구성 요소를 표현합니다.
+
+고정 설치 버전은 **Argo CD Core 3.5.3**입니다. `application-controller`는 StatefulSet,
+`repo-server`·`applicationset-controller`·Redis는 각각 Deployment입니다.
+현재 Core 설치에는 Argo용 PVC와 상시 `argocd-server` 웹 서버 Pod가 없습니다.
+
+`Git 배포 태그 → Argo → 로컬 Kubernetes API → 앱 Deployment 7개`가 배포 제어 경로입니다.
+자동 Application은 `govbiz-local` 하나이며 웹·Core·Catalog·AI·Ops·평가 실행기·결과 서버를 관리합니다.
+기반 저장소·Prefect·Langfuse와 Argo 자체 설치는 이 자동 Application의 관리 범위 밖입니다.
+기본 개발 모드에서는 Argo가 업무 서비스를 소유하지 않으며, GitOps 전환 시 watcher 종료와
+최초 인계가 필요합니다. 과거 서비스별 Application 4개를 만드는 경로와 새 자동 경로를 혼용하지 않습니다.
+
+근거: [Argo 고정 설치 버전](../../../infrastructure/gitops/scripts/gitops_msa.py) ·
+[Core 3.5.3 설치 리소스](https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/core-install.yaml) ·
+[개발·GitOps 경계](../../../infrastructure/gitops/argocd/README.md) ·
+[자동 동기화 대상과 최초 인계](../../../infrastructure/gitops/docs/local-auto-sync.md).
 
 ## 2. 내부 실행 경로
 
