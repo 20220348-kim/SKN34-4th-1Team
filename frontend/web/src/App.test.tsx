@@ -45,6 +45,12 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/** 작업 화면의 상세는 대화 위 시트라 [닫기]로, 비로그인 상세는 "‹ 공고 상세"(검색 결과로 돌아가기)로 검색에 돌아갑니다. */
+function returnToSearch() {
+  const sheet = screen.queryByRole('dialog', { name: '공고 상세' })
+  fireEvent.click(sheet ? within(sheet).getByRole('button', { name: '닫기' }) : screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
+}
+
 describe('App navigation', () => {
   it('초안을 수정해도 기존 검색 결과 카드의 상세 URL을 다시 만들지 않고 새 검색 결과는 표시한다', async () => {
     const searchPrograms = supportPrograms.slice(0, 5)
@@ -93,7 +99,9 @@ describe('App navigation', () => {
     const messages = store.getState().chat.messages
     fireEvent.click(screen.getAllByRole('link', { name: '상세 조건 보기' })[0])
     await screen.findByRole('note')
-    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
+    // 작업 화면은 상세를 검색 위 시트로 띄우고, 비로그인 상세는 검색 결과로 돌아가는 링크를 둡니다.
+    if (returnPath === '/') expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
+    else expect(screen.getByRole('dialog', { name: '공고 상세' })).toBeTruthy()
     if (returnPath === '/') {
       // 원문 질문은 회원 기능이라 비로그인은 로그인 링크만 봅니다.
       expect(screen.getByRole('link', { name: '로그인하고 원문에 질문하기' }).getAttribute('href')).toMatch(/^\/login\?next=/)
@@ -103,9 +111,9 @@ describe('App navigation', () => {
       expect(screen.getByRole('textbox', { name: '공고 원문에 질문하기' })).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: '질문 패널 닫기' }))
       await screen.findByRole('note')
-      expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
+      expect(screen.getByRole('dialog', { name: '공고 상세' })).toBeTruthy()
     }
-    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
+    returnToSearch()
     const cards = screen.getByRole('region', { name: '지원사업 검색 결과' }).querySelectorAll('article')
     expect(Array.from(cards).map(card => card.querySelector('h2')?.textContent)).toEqual(programs.map(p => p.title))
     expect(Boolean(screen.queryByRole('complementary', { name: '작업 사이드바' }))).toBe(returnPath === '/app/chat')
@@ -1061,7 +1069,7 @@ describe('App navigation', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(completeSearchResult({ query: '창업', programs: [] })))
     vi.stubGlobal('fetch', fetchMock)
     const store = createAppStore()
-    const view = renderApp(store, path)
+    renderApp(store, path)
 
     const notice = document.getElementById('support-program-search-readiness')!
     const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
@@ -1077,13 +1085,9 @@ describe('App navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: '상태 다시 확인' }))
     expect(refetch).toHaveBeenCalledOnce()
     readinessHookMock.useSupportProgramSearchReadiness.mockReturnValue(createReadinessHook())
-    view.rerender(
-      <Provider store={store}>
-        <MemoryRouter initialEntries={[path]}>
-          <App />
-        </MemoryRouter>
-      </Provider>,
-    )
+    // 실제로는 재조회 결과가 화면을 다시 그립니다. 화면 경로는 위치가 바뀔 때만 위에서 다시 그리므로, 여기서는 입력으로 대화를 다시 그립니다.
+    fireEvent.change(searchInput, { target: { value: ' ' } })
+    fireEvent.change(searchInput, { target: { value: '' } })
 
     expect(document.getElementById('support-program-search-readiness')).toBeNull()
     expect(searchInput.getAttribute('aria-describedby')).toBeNull()

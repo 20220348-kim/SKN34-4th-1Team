@@ -4,6 +4,7 @@ import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { selectCurrentAccount, selectIsAuthenticated } from '../../../shared/auth/state/authSlice'
+import { useChatSheetClosedCount } from '../../../shared/chat-sheet/useChatSheet'
 
 export function searchResultInterestKey(identity: SupportProgramIdentity): string {
   return JSON.stringify([identity.sourceCode, identity.sourceProgramId])
@@ -36,6 +37,8 @@ export function useSearchResultInterests(hasResults: boolean) {
   const remove = appContainer.resolve('removeSavedSupportProgramUseCase')
   const [state, setState] = useState<InterestState>(() => emptyState(null))
   const [version, setVersion] = useState(0)
+  // 검색 결과 위 시트(공고 상세)에서 관심을 바꿨을 수 있으므로 시트를 닫으면 다시 읽습니다. 대화는 뒤에 그대로 있어 다시 그려지지 않습니다.
+  const sheetClosed = useChatSheetClosedCount()
   const requestRef = useRef<{ controller: AbortController; pending: Set<string> } | null>(null)
 
   useEffect(() => {
@@ -57,7 +60,7 @@ export function useSearchResultInterests(hasResults: boolean) {
       controller.abort()
       requestRef.current = null
     }
-  }, [accountEmail, isAuthenticated, hasResults, browse, version])
+  }, [accountEmail, isAuthenticated, hasResults, browse, version, sheetClosed])
 
   const toggle = useCallback(async (identity: SupportProgramIdentity) => {
     const request = requestRef.current

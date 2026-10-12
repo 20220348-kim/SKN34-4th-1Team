@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { memo, useRef } from 'react'
 import { OpsApp } from './presentation/features/ops/OpsApp'
 
 import { useChatRequestLifecycle } from './presentation/features/chat/hooks/useChatRequestLifecycle'
@@ -11,7 +11,7 @@ import { ApplicationDocumentPage } from './presentation/features/application-pre
 import { DailyReportPage } from './presentation/features/daily-report/view/DailyReportPage'
 import { DailyReportEmailPage } from './presentation/features/daily-report/view/DailyReportEmailPage'
 import { useReviewSessionIsolation } from './presentation/features/combination-review/viewmodel/useReviewSessionIsolation'
-import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router'
+import { type Location, Navigate, Outlet, Route, Routes, useLocation } from 'react-router'
 
 import { AdminAccountDetailPage } from './presentation/features/admin/view/AdminAccountDetailPage'
 import { AdminAccountsPage } from './presentation/features/admin/view/AdminAccountsPage'
@@ -51,6 +51,8 @@ import { GuestOnly, PublicOnly, RequireAuth } from './presentation/shared/auth/R
 import { APP_PREFIX, appPaths, publicPaths } from './presentation/shared/routes/appPaths'
 import { RouteDocumentTitle } from './presentation/shared/routes/RouteDocumentTitle'
 import { useResetScrollOnNavigate } from './presentation/shared/routes/useResetScrollOnNavigate'
+import { ChatSheet } from './presentation/shared/chat-sheet/ChatSheet'
+import { ChatSheetClosedContext, useChatSheetRouting } from './presentation/shared/chat-sheet/useChatSheet'
 
 /**
  * 비로그인 검색 흐름은 헤더·검색 탭이 위에 붙는 자체 레이아웃을 쓰고, 나머지 공개 화면은 공용 헤더를 사용합니다.
@@ -85,6 +87,8 @@ function CoreApp() {
   useRestoreSupportProgramSearch()
   useChatRequestLifecycle()
   useReviewSessionIsolation()
+  // 대화에서 연 상세 · 신청 문서 · 중복 검토 · 파트너 모집글은 대화를 뒤에 그대로 둔 채 시트로 띄웁니다.
+  const sheet = useChatSheetRouting()
   // 비로그인 대화는 로그인 뒤 대화와 같이 메뉴 이동으로 비우지 않습니다. 탭이 살아 있는 동안 메모리에 남고,
   // 새 AI 대화 검색·로고(문서 새로고침)·로그인·계정 전환에서만 초기화합니다.
 
@@ -93,7 +97,41 @@ function CoreApp() {
     {/* 브라우저 제목은 화면마다 "화면 이름 · GovBiz"입니다. 이름은 routes/screenTitles 한 곳에서 정합니다. */}
     <RouteDocumentTitle />
     <ChatActivityToast />
-    <Routes>
+    <ChatSheetClosedContext.Provider value={sheet.closedCount}>
+    {/* 시트가 열려 있는 동안 뒤의 대화는 보이기만 하고 포커스 · 보조기기에서 빠집니다. 상자를 만들지 않아 배치는 그대로입니다. */}
+    <div className="contents" inert={sheet.background ? true : undefined} aria-hidden={sheet.background ? true : undefined}>
+    <AppRoutes location={sheet.routesLocation} />
+    </div>
+    {sheet.background && sheet.kind ? (
+      <ChatSheet kind={sheet.kind} onClose={sheet.close} onExpand={sheet.expand}>
+        {/* 시트 안은 작업 사이드바 · 검색 탭 줄 없이 화면만 그립니다. 목록 같은 다른 화면으로 가면 시트를 닫고 그 화면을 엽니다. */}
+        <Routes>
+          <Route path={appPaths.supportProgramDetail} element={<SupportProgramDetailPage />} />
+          <Route path={appPaths.supportProgramQuestion} element={<SupportProgramEvidenceQuestionPage />} />
+          <Route path={appPaths.applicationPreparationNew} element={<ApplicationPreparationNewPage />} />
+          <Route path={appPaths.applicationPreparationDetail} element={<ApplicationPreparationEditorPage />} />
+          <Route path={appPaths.applicationPreparationDocuments} element={<ApplicationDocumentPage />} />
+          <Route path={appPaths.combinationReviewNew} element={<CombinationReviewEditorPage create />} />
+          <Route path={appPaths.combinationReviewRunResult} element={<CombinationReviewRunResultPage />} />
+          <Route path={appPaths.combinationReviewDetail} element={<CombinationReviewEditorPage />} />
+          <Route path={appPaths.partnerDetail} element={<PartnerRecruitmentDetailPage />} />
+        </Routes>
+      </ChatSheet>
+    ) : null}
+    </ChatSheetClosedContext.Provider>
+    {/* 도우미는 화면 오른쪽 아래에 떠 있고 로그인·회원가입 같은 단독 화면에서는 스스로 숨습니다. */}
+    <AssistantWidget />
+    </>
+  )
+}
+
+/**
+ * 화면 경로입니다. 대화 위 시트가 열리면 [location]은 뒤에 남는 대화이고, 아니면 지금 주소입니다.
+ * 위치가 바뀔 때만 다시 그려 앱 상태가 바뀔 때마다 모든 화면이 위치 변경으로 다시 그려지지 않게 합니다.
+ */
+const AppRoutes = memo(function AppRoutes({ location }: { location: Location }) {
+  return (
+    <Routes location={location}>
       <Route element={<PublicLayout />}>
         <Route element={<PublicOnly />}>
           <Route path={publicPaths.landing} element={<SupportProgramSearchPage />} />
@@ -167,11 +205,8 @@ function CoreApp() {
       <Route path={APP_PREFIX} element={<Navigate replace to={appPaths.chat} />} />
       <Route path="*" element={<Navigate replace to={publicPaths.landing} />} />
     </Routes>
-    {/* 도우미는 화면 오른쪽 아래에 떠 있고 로그인·회원가입 같은 단독 화면에서는 스스로 숨습니다. */}
-    <AssistantWidget />
-    </>
   )
-}
+})
 
 // Ops는 Django가 Core 관리자 세션을 확인한다. 대화 복원과 AI 위젯은 업무 화면에서만 실행한다.
 function App() {

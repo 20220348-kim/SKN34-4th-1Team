@@ -45,6 +45,12 @@ function start(path = '/?mode=filter', authenticated = path.startsWith('/app/'))
   return store
 }
 
+/** 작업 화면의 상세는 대화 위 시트라 [닫기]로, 비로그인 상세는 "‹ 공고 상세"(검색 결과로 돌아가기)로 검색에 돌아갑니다. */
+function returnToSearch() {
+  const sheet = screen.queryByRole('dialog', { name: '공고 상세' })
+  fireEvent.click(sheet ? within(sheet).getByRole('button', { name: '닫기' }) : screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
+}
+
 describe('지원사업 직접 필터 검색', () => {
   it.each(undatedPrograms)('$sourceName의 기간 안내는 접수 상태를 자동 변경하지 않고 UNKNOWN 검색·상세 복귀를 보존한다', async (undated) => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
@@ -294,7 +300,7 @@ describe('지원사업 직접 필터 검색', () => {
     if (path === '/') expect(screen.getByRole('link', { name: '로그인하고 원문에 질문하기' })).toBeTruthy()
     else expect(screen.getByRole('button', { name: '원문에 질문하기' })).toBeTruthy()
     expect(screen.queryByText(/이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다/)).toBeNull()
-    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
+    returnToSearch()
     await screen.findByRole('link', { name: startupProgram.title })
     expect(selectedValue(screen.getByRole('combobox', { name: '출처' }))).toBe('KSTARTUP')
     expect(selectedValue(screen.getByRole('combobox', { name: '창업 업력' }))).toBe(startupParams.startupStage)
@@ -519,9 +525,9 @@ describe('지원사업 직접 필터 검색', () => {
     // 좁은 화면에서 아래에 붙는 할 일 바는 도우미 런처를 그 위로 올립니다(data-assistant-lift).
     expect(screen.getByRole('complementary', { name: '이 공고로 할 일' }).getAttribute('data-assistant-lift')).toBe('narrow')
     if (path.startsWith('/app')) {
-      // 작업 화면의 상세도 검색 탭 줄을 이어받고 들어온 필터 검색이 선택된 채입니다. 사이드바는 새검색이 켜져 있습니다.
-      expect(within(screen.getByRole('tablist', { name: '지원사업 검색 방식' })).getByRole('tab', { name: '필터 검색' }).getAttribute('aria-selected')).toBe('true')
-      expect(within(screen.getByRole('complementary', { name: '작업 사이드바' })).getByRole('button', { name: '지원사업 새검색' }).getAttribute('aria-current')).toBe('page')
+      // 작업 화면은 검색을 뒤에 그대로 둔 채 상세를 대화 위 시트로 띄웁니다. 시트 안에서 원문 질문으로 옮겨도 시트를 유지합니다.
+      expect(screen.getByRole('dialog', { name: '공고 상세' })).toBeTruthy()
+      expect(screen.queryByRole('tablist', { name: '지원사업 검색 방식' })).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: '원문에 질문하기' }))
       expect(screen.getByTestId('location').textContent).toContain('ask=1')
       expect(screen.getByRole('textbox', { name: '공고 원문에 질문하기' })).toBeTruthy()
@@ -534,13 +540,47 @@ describe('지원사업 직접 필터 검색', () => {
       // 원문 질문은 회원 기능이라 비로그인은 로그인 링크만 봅니다.
       expect(screen.getByRole('link', { name: '로그인하고 원문에 질문하기' })).toBeTruthy()
     }
-    const back = screen.getByRole('link', { name: '검색 결과로 돌아가기' })
-    expect(back.getAttribute('href')).toContain(`${path}?mode=filter`)
-    fireEvent.click(back)
+    if (path === '/') expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toContain(`${path}?mode=filter`)
+    returnToSearch()
     await screen.findByRole('link', { name: program.title })
     expect(screen.getByRole('tab', { name: '필터 검색' }).getAttribute('aria-selected')).toBe('true')
     expect((screen.getByRole('checkbox', { name: '서울' }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('checkbox', { name: '수출' }) as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('작업 화면의 상세는 검색 위 시트로 열고, 닫아도 뒤의 검색 결과를 다시 그리지 않는다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => Response.json(url.includes('/catalog?') ? catalog : toSupportProgramDetailFixture(program))))
+    start('/app/chat?mode=filter&region=%EC%84%9C%EC%9A%B8')
+    const result = await screen.findByRole('link', { name: program.title })
+    fireEvent.click(result)
+    const sheet = screen.getByRole('dialog', { name: '공고 상세' })
+    await within(sheet).findByRole('heading', { level: 1, name: program.title })
+    expect(screen.getByTestId('location').textContent).toContain('/app/support-programs/detail?')
+    // 뒤의 검색 결과는 내려가지 않고 그대로 있으며, 시트가 열려 있는 동안 보조기기 · 포커스에서 빠집니다.
+    expect(result.isConnected).toBe(true)
+    expect(result.closest('[inert]')).not.toBeNull()
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }))
+    expect(screen.queryByRole('dialog', { name: '공고 상세' })).toBeNull()
+    expect(screen.getByRole('link', { name: program.title })).toBe(result)
+    expect(screen.getByTestId('location').textContent).toBe('/app/chat?mode=filter&region=%EC%84%9C%EC%9A%B8')
+
+    // Esc로도 닫고, [전체 화면으로 열기]는 시트를 접고 지금 상세를 작업 화면으로 엽니다(검색 탭 줄을 이어받음).
+    fireEvent.click(result)
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '공고 상세' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '공고 상세' })).toBeNull()
+    fireEvent.click(result)
+    fireEvent.click(within(screen.getByRole('dialog', { name: '공고 상세' })).getByRole('button', { name: '전체 화면으로 열기' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(await screen.findByRole('heading', { level: 1, name: program.title })).toBeTruthy()
+    expect(screen.getByRole('tablist', { name: '지원사업 검색 방식' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: program.title })).toBeNull()
+  })
+
+  it('주소로 바로 연 작업 화면 상세는 시트가 아니라 전체 화면이다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => Response.json(toSupportProgramDetailFixture(program))))
+    start(`/app/support-programs/detail?sourceCode=${program.sourceCode}&sourceProgramId=${program.id}`)
+    expect(await screen.findByRole('heading', { level: 1, name: program.title })).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('로그인한 사용자의 공개 필터 URL을 조건과 함께 작업 화면으로 옮긴다', async () => {

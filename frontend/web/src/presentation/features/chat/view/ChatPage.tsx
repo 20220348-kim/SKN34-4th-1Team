@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { Link } from 'react-router'
 
 import { useAppSelector } from '../../../../app/hooks'
+import { useChatSheetClosedCount } from '../../../shared/chat-sheet/useChatSheet'
 import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
 import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { appPaths } from '../../../shared/routes/appPaths'
@@ -94,9 +95,11 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const openWork = messages.find((message) => message.id === openWorkId && (message.govApplication || message.govReview))
   const liveOpenWork = openWork && isLiveWork(openWork) ? openWork : null
   const closeWork = useCallback(() => { setOpenWorkId(null); setWorkRefresh((value) => value + 1) }, [])
+  // 카드 버튼으로 연 시트를 닫으면 대화는 그대로이므로, 카드가 상태를 다시 읽게 합니다.
+  const cardRefresh = workRefresh + useChatSheetClosedCount()
   // 신청 문서는 신청 문서 화면에서 만들어지므로, 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾아 지금 상태를 보여 줍니다.
   const preparations = useProgramPreparations(isGovAgent && layout === 'workspace'
-    && (govProgram !== null || messages.some((message) => message.govApplication)), workRefresh)
+    && (govProgram !== null || messages.some((message) => message.govApplication)), cardRefresh)
   const selectedPreparation = govProgram && preparations?.phase === 'ready' ? preparations.byProgram.get(programKey(govProgram)) ?? null : null
   // Gov 대화를 떠나면 신청 문서 · 중복 검토 · 파트너 화면이 [대화로 돌아가기]를 보입니다. 환영 인사뿐인 대화면 두지 않습니다.
   const hasConversation = useRef(false)
@@ -328,7 +331,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                   <ApplicationPreparationInline key={`${accountEmail}:${message.id}`} program={message.govApplication.program}
                     autoAnalyze={message.id === autoAnalyzeId} onAutoAnalyzeHandled={clearAutoAnalyze} />
                 </GovWorkInline>
-                : <GovApplicationCard application={message.govApplication} refresh={workRefresh} preparations={preparations}
+                : <GovApplicationCard application={message.govApplication} refresh={cardRefresh} preparations={preparations}
                   live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
               {message.govReview ? (liveOpenWork?.id === message.id
                 ? <GovWorkInline kind="중복 검토" title={message.govReview.program?.title ?? '공고 두 개 고르기'} onClose={closeWork}>
@@ -337,7 +340,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                       onCreated={(id) => attachGovReview(message.id, id)} />
                   </div>
                 </GovWorkInline>
-                : <GovReviewCard review={message.govReview} refresh={workRefresh}
+                : <GovReviewCard review={message.govReview} refresh={cardRefresh}
                   live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
               {message.govPartners ? (isGovAgent && layout === 'workspace' && message.id === latestToolMessageId
                 ? <GovPartnerBrief key={`${accountEmail}:${message.id}`} conditions={message.govPartners.conditions} />

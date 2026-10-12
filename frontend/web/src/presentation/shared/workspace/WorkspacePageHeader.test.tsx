@@ -3,6 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, it } from 'vitest'
 
+import { InChatSheetContext } from '../chat-sheet/useChatSheet'
 import { WorkspacePageHeader } from './WorkspacePageHeader'
 
 afterEach(cleanup)
@@ -44,4 +45,13 @@ it('publishes its height to the scroll container so other sticky elements can si
   expect(container.style.getPropertyValue('--workspace-header-h')).toMatch(/^\d+px$/)
   unmount()
   expect(container.style.getPropertyValue('--workspace-header-h')).toBe('')
+})
+
+it('hides the parent path and back link inside the chat sheet, whose close button returns to the chat', () => {
+  render(<MemoryRouter><InChatSheetContext.Provider value>
+    <WorkspacePageHeader parent={{ to: '/app/docs', label: '신청 문서 작성' }} title="답변 입력" />
+  </InChatSheetContext.Provider></MemoryRouter>)
+  expect(screen.queryByRole('navigation', { name: '상위 화면' })).toBeNull()
+  expect(screen.queryByRole('link')).toBeNull()
+  expect(screen.getByRole('heading', { level: 1, name: '답변 입력' })).toBeTruthy()
 })
