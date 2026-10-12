@@ -3,25 +3,27 @@
 [문서 안내](../../README.md) · [아키텍처 이미지 목록](README.md) · [로컬 Kubernetes 구성](README-local.md)
 
 로컬 `govbiz-local-architecture`의 업무·평가·관측 연결에 **Vercel과 AWS EKS 인프라·자동 배포**를 반영한 별도 그림입니다.
-**자동 배포 흐름과 노드 배치 변경 목표**를 표현하며, 개인 main의 필수 CI 통과부터 EKS·Vercel 갱신까지 연결합니다.
-평가 서비스의 observability 이전과 Core·AI의 기본 두 노드 분산은 실제 전환 완료 기록과 구분합니다.
+**로드밸런싱·Pod/EC2 자동확장·노드 배치·자동 배포**를 표현하며, 개인 main의 필수 CI 통과부터 EKS·Vercel 갱신까지 연결합니다.
+현재 저장소의 운영 설정을 표시하고 실제 배포·자동 축소 관찰 결과는 아래 기록과 구분합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=1118356eb704)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=b44cfd2d5888)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=1118356eb704) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=05e47b097793) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=b44cfd2d5888) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=399f0a8505c0) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
-**2026-10-12 저장소의 인프라 구성과 자동 배포 워크플로**를 기준으로 작성했습니다.
-그림에는 기본 EC2 2대·최대 3대의 배치 목표를 표시하고, 실제 전환·실행 여부는 아래 검증 기록에 남깁니다.
+**2026-10-13 확인한 저장소의 인프라 구성과 자동 배포 워크플로**를 기준으로 작성했습니다.
+그림에는 기본 EC2 2대·최대 3대의 운영 설정을 표시하고, 실제 전환·실행 여부는 아래 검증 기록에 남깁니다.
 그림 수정은 배포 설정·운영 데이터·실행 중인 서비스를 변경하지 않습니다.
 
 | 구분 | 반영 내용 | 근거 |
 |---|---|---|
 | 웹·API 진입 | Vercel React 웹 → 서버 미들웨어 → CloudFront VPC origin → 내부 ALB → EKS Nginx | [실배포 기록](../../../infrastructure/eks/sydney-demo.md), [API 진입점](../../../infrastructure/eks/api-entrypoint.md), [Vercel 미들웨어](../../../frontend/web/middleware.ts) |
 | 컴퓨팅·네트워크 | 시드니 EKS, private EC2 기본 2대·최대 3대, NAT 1개, EKS API의 사설 접근·관리 IP 제한 | [클러스터 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml), [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
-| 노드 배치 목표 | 업무 DB·Catalog·Ops는 application, Prefect·평가 실행기·결과 저장소·Langfuse·Argo CD는 observability. Core·AI는 기본 두 노드에 각각 1개씩 배치 | [EKS 서비스 설정](../../../infrastructure/eks/gitops-values.yaml), [배포 YAML 생성](../../../infrastructure/eks/gitops.py) |
+| 노드 배치 | 업무 DB·Catalog·Ops는 application, Prefect·평가 실행기·결과 저장소·Langfuse·Argo CD는 observability. 기본 두 노드에서는 Core·AI를 각각 1개씩 배치 | [EKS 서비스 설정](../../../infrastructure/eks/gitops-values.yaml), [배포 YAML 생성](../../../infrastructure/eks/gitops.py) |
+| 로드밸런싱 | 내부 ALB → 정상 Gateway Pod IP → Core·Ops Service. Core → AI Service로 연결하며 Core·AI Service는 준비된 Pod로 분산 | [API 진입점](../../../infrastructure/eks/api-entrypoint.md) |
+| Pod·EC2 자동확장 | HPA: CPU requests 대비 평균 사용률 60%, Core·AI 각각 2~3개·Gateway 1~3개. 배치 대기 Pod가 생기면 Cluster Autoscaler가 application EC2를 최대 1대 추가 | [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
 | 데이터 | 기존 DB·색인·큐·평가·관측 데이터를 EBS gp3 PVC에 복원, S3에는 암호화한 이전 백업 보관 | [이전 기록](../../../infrastructure/eks/sydney-demo.md), [StorageClass](../../../infrastructure/eks/storage-class.yaml) |
 | 변경 배포 | 같은 최신 main의 필수 CI → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel | [자동 배포 구성·검증 상태](../../../infrastructure/eks/continuous-deployment.md), [워크플로](../../../.github/workflows/eks-release.yml) |
 | Helm·Argo CD | Helm으로 만든 배포 YAML을 Git에 보관하고 Argo CD가 EKS 앱에 반영합니다. Helm은 AWS Load Balancer Controller 설치에도 사용합니다. | [Argo 최초 인계](../../../infrastructure/eks/argo-cd.md), [Controller 설치 절차](../../../infrastructure/eks/api-entrypoint.md#실제-적용-전-준비) |
@@ -30,15 +32,19 @@
 ## 요청·데이터 흐름
 
 상단은 요청 순서이고, 가운데는 AWS·VPC·EKS 경계입니다.
-EKS 상단의 **EC2 표가 노드 배치 목표**이며, 그 아래 Namespace 상자는 서비스의 **논리 구분**입니다.
+EKS 상단의 **EC2 표는 기본 두 노드의 역할**, 그 아래는 **로드밸런싱·자동확장 흐름**입니다.
+로드밸런싱 영역은 상단 API 경로의 확대도이며 별도의 ALB·Gateway를 추가한다는 뜻이 아닙니다.
+Namespace 상자는 서비스의 **논리 구분**입니다.
 Namespace 상자가 오른쪽이나 왼쪽에 있다는 이유로 해당 노드에서 실행된다는 뜻은 아닙니다.
-평가 서비스를 observability 노드로 옮겨도 Namespace는 `govbiz-evaluation`을 유지합니다.
+평가 서비스는 observability 노드에서 실행하며 Namespace는 `govbiz-evaluation`을 유지합니다.
 번호 ①·②는 API 목적지, ③·④는 EBS 저장소와 ECR 이미지 공급을 연결합니다.
 
 | 경로 | 역할 |
 |---|---|
 | 웹 → API | Vercel이 서버에서 프록시 비밀값을 추가하고, Nginx가 검증합니다. CloudFront는 API만 중계하며 캐시를 사용하지 않습니다. |
+| ALB → Gateway Pod | `target-type: ip`로 정상 상태의 Gateway Pod IP에 분산합니다. ALB가 Gateway의 ClusterIP를 경유하는 구조가 아닙니다. |
 | Nginx → Core·Ops | `/api/v1/ops`와 그 하위 경로는 Ops, 나머지 `/api/*`는 Core로 보냅니다. Ops는 Core의 관리자 세션을 확인합니다. |
+| Core·AI Service → Pod | Service는 준비된 Pod로 연결을 분산합니다. Core에서 AI를 호출할 때도 AI Service를 사용합니다. Ops는 단일 Pod입니다. |
 | 모바일 → Core | 같은 Core API·계정 데이터를 사용합니다. 운영 HTTPS origin을 지정하며, 앱 기기와 운영 프록시를 함께 거치는 검증은 별도입니다. 프록시 비밀값은 앱에 넣지 않습니다. |
 | Core·Catalog → 저장소 | 두 서비스는 MyBatis로 각자의 MySQL을 사용합니다. Core는 Redis와 Elasticsearch를 조회하며, Catalog는 공고·색인을 준비합니다. Core의 Outbox 발행기·소비자가 RabbitMQ를 사용합니다. |
 | AI → 검색·관측 | Qdrant에서 벡터·원문 근거를 조회하고 OpenAI를 호출합니다. Langfuse SDK를 활성화한 경로의 trace를 내부 Langfuse에 보냅니다. |
@@ -81,7 +87,7 @@ Core의 Google·Kakao OAuth, Bizno 사업자 조회, SMTP 메일, 기업마당 �
 | 구성 | 범위 |
 |---|---|
 | EKS 워커 | 기본은 `application`과 `observability`의 `m7i-flex.large` 각 1대입니다. `application`은 최대 2대, `observability`는 1대를 유지해 전체 EC2는 2~3대입니다. Namespace와 노드 풀은 서로 다른 구분입니다. |
-| 기본 두 노드의 배치 목표 | application은 업무 DB·검색·큐·Catalog·Ops, observability는 Langfuse·관측 저장소·Argo CD·Prefect·평가 실행기·결과 저장소를 실행합니다. Core·AI는 각각 두 노드에 1개씩 배치합니다. 기존 PVC를 보존하며 평가 실행기와 결과 API는 같은 노드에서 결과 PVC를 공유합니다. |
+| 기본 두 노드의 배치 | application은 업무 DB·검색·큐·Catalog·Ops, observability는 Langfuse·관측 저장소·Argo CD·Prefect·평가 실행기·결과 저장소를 실행합니다. 기본 두 노드에서는 Core·AI를 각각 1개씩 배치합니다. 기존 PVC를 보존하며 평가 실행기와 결과 API는 같은 노드에서 결과 PVC를 공유합니다. |
 | Pod·노드 자동 확장 | Core·AI HPA는 각각 2~3개이며 같은 서비스의 Pod는 필수 anti-affinity로 노드당 1개만 배치합니다. 세 번째 Pod가 대기하면 Cluster Autoscaler가 application EC2 1대를 추가합니다. Gateway는 HPA 1~3개입니다. 부하 감소 후 Pod가 줄고 남은 Pod를 안전하게 옮길 수 있어야 추가 노드를 제거합니다. |
 | Core·AI 교체 | `RollingUpdate`에서 `maxSurge: 0`, `maxUnavailable: 1`로 최대 1개씩 교체합니다. 최대 3대 상태에서 네 번째 노드를 요구하지 않도록 설정합니다. |
 | 가용 영역 | 제어면 서브넷은 2개 AZ를 사용하지만 두 워커는 `ap-southeast-2a`에 있습니다. 다중 AZ 고가용성 구성으로 표시하지 않습니다. |
@@ -89,6 +95,20 @@ Core의 Google·Kakao OAuth, Bizno 사업자 조회, SMTP 메일, 기업마당 �
 | ECR | 수동 이전 당시 실행 이미지 17개를 private ECR에 보존했습니다. 자동 배포 경로는 애플리케이션용 이미지 5개를 빌드하고 digest로 배포합니다. 두 범위를 구분합니다. |
 | S3 | 암호화한 이전 백업·메타데이터 84개를 비공개·버전 관리 버킷에 보관한 기록입니다. 상시 DB 백업이나 로컬↔AWS 자동 데이터 동기화 기능을 뜻하지 않습니다. |
 | 외부 호출 | private workload가 public subnet의 NAT Gateway와 Internet Gateway를 거쳐 OpenAI·공고 제공처 등 VPC 외부 API에 연결합니다. |
+
+### 로드밸런싱과 자동확장의 역할
+
+회색 요청선은 **이미 실행 중인 정상 Pod로의 분산**, 녹색 제어선은 **Pod·EC2 개수 조절**입니다.
+ALB가 Pod나 EC2를 늘리는 것은 아닙니다. HPA는 컨테이너 CPU requests 대비 평균 사용률 60%를 기준으로
+Pod 수를 조절하며, EC2 전체 CPU 사용률이나 요청 수를 직접 기준으로 삼지 않습니다.
+늘어난 Pod를 기존 노드에 배치할 수 없을 때 Cluster Autoscaler가 application 노드를 추가합니다.
+Core·AI는 같은 서비스당 노드에 하나만 실행하도록 설정했으므로 세 번째 Pod에는 세 번째 EC2가 필요합니다.
+Catalog·Ops·DB·평가 서비스는 이 HPA의 확장 대상이 아닙니다.
+
+축소 시 HPA는 5분의 안정화 구간을 적용하고, Cluster Autoscaler는 추가 노드가 10분간 불필요하며
+남은 Pod를 안전하게 옮길 수 있을 때 노드를 제거합니다. 각 대기 시간이 지나도 무조건 두 노드로 복귀하지는 않습니다.
+그림의 Core·AI 두 기본 Pod는 정상 운영 시 HPA 최소 개수이며, 순차 교체 중에는 준비된 Pod가 하나일 수 있습니다.
+EC2가 세 대일 때 필수 분산은 서로 다른 노드를 보장하지만 원래 두 노드에 영구 고정하지는 않습니다.
 
 ## 자동 배포 흐름
 
@@ -158,7 +178,7 @@ node docs/assets/architecture/build-aws-eks.mjs --render
 Playwright 설치 디렉터리를 별도로 지정할 때는 `GOVBIZ_DIAGRAM_NODE_MODULES`,
 Chrome 실행 파일을 지정할 때는 `GOVBIZ_DIAGRAM_CHROME`을 사용합니다.
 렌더링은 외부 네트워크 요청을 차단하고 로고 로드·텍스트 폭·이미지 경계를 확인합니다.
-SVG는 3,000 × 4,070, PNG는 6,000 × 8,140입니다.
+SVG는 3,000 × 4,670, PNG는 6,000 × 9,340입니다.
 
 로고는 [AWS·공통 로고 출처](aws-logo-sources.json)와
 [Kubernetes·서비스 로고 출처](kubernetes-logo-sources.json)의 로컬 파일을 SHA-256으로 확인해 사용합니다.

@@ -219,6 +219,8 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 로컬은 **Docker Compose** 또는 **Kubernetes(kind)**에서 개발·검증하고, 운영은 **Vercel·AWS EKS**에서 서비스를 제공합니다.
 각 구성의 실행 경계·데이터 저장·화면 접근 방식을 아래에 구분했습니다.
 
+두 방식의 복구·확장·배치·무중단 배포 차이와 현재 선택 이유는 [Compose와 Kubernetes 비교 README](docs/README-kubernetes-vs-compose.md)에 정리했습니다.
+
 <a id="521-docker-compose-로컬-전체-구성도"></a>
 
 <img src="docs/assets/readme/architecture-compose-caption.svg" alt="5.2.1 Docker Compose 로컬 전체 구성도 — 호스트의 React/Vite 웹에 업무 Compose와 별도 LLMOps Compose를 연결한 전체 평가 실행 경로입니다." width="820">
@@ -258,40 +260,44 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 <img src="docs/assets/readme/architecture-production-caption.svg" alt="5.2.3 운영 전체 구성도 — 웹은 Vercel, 백엔드·LLMOps는 AWS EKS에 배치합니다. 아래는 main의 CI 통과 후 자동 배포가 적용되는 구조입니다." width="820">
 
-![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=1118356eb704)
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=b44cfd2d5888)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=1118356eb704) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=05e47b097793)
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=b44cfd2d5888) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=399f0a8505c0)
 
 | 구분 | 운영 구성 |
 |---|---|
 | **웹·API 접근** | Vercel 웹의 API 요청은 CloudFront VPC origin → 내부 ALB → EKS Nginx를 거쳐 Core·Ops로 분기합니다. 모바일은 운영 HTTPS 주소로 같은 Core API를 호출합니다. |
-| **서비스 실행·배치 목표** | 기본 EC2는 application·observability 각 1대입니다. application에 업무 DB·Catalog·Ops, observability에 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치하도록 전환합니다. Core·AI는 기본 두 EC2에 각각 1개씩 배치합니다. 단일 AZ 구성입니다. |
-| **자동 확장 설정** | Core·AI는 각각 HPA로 2~3개를 유지하며 같은 서비스의 Pod를 서로 다른 EC2에 배치합니다. 세 번째 Pod가 필요하면 Cluster Autoscaler가 application EC2를 1대 추가해 전체 2~3대로 조절합니다. Gateway HPA는 1~3개입니다. 실제 전환 완료 여부는 아래 적용 기록에서 구분합니다. |
+| **서비스 실행·배치** | application에는 업무 DB·Catalog·Ops, observability에는 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치합니다. Core·AI는 같은 서비스의 Pod를 서로 다른 EC2에 배치하며, 기본 EC2 2대 상태에서는 각 노드에 Core·AI가 하나씩 실행됩니다. 단일 AZ 구성입니다. |
+| **로드밸런싱** | 내부 ALB가 정상 상태의 Nginx Gateway Pod로 HTTP 요청을 분산합니다. Gateway는 Core·Ops Service로 전달하고 Core는 필요할 때 AI Service를 호출합니다. Core·AI의 Service는 준비된 Pod로 연결을 분산하며, Ops는 단일 Pod로 전달합니다. |
+| **Pod 오토스케일링 — HPA** | 컨테이너 CPU 요청량 대비 평균 사용률 60%를 기준으로 Core·AI는 각각 2~3개, Gateway는 1~3개로 조절합니다. Catalog·Ops·DB·평가 서비스는 단일 실행을 유지합니다. 부하 감소 시에는 5분 안정화 구간을 거쳐 Pod를 줄입니다. |
+| **EC2 오토스케일링 — Cluster Autoscaler** | application은 1~2대, observability는 1대로 전체 EC2를 기본 2대·최대 3대로 설정합니다. 기존 노드의 자원·분산 조건을 만족하지 못해 Pod가 대기하면 application 노드를 추가합니다. 세 번째 Core 또는 AI Pod는 분산 규칙상 세 번째 EC2가 필요합니다. 추가 노드가 불필요해진 상태로 10분이 지나고 남은 Pod를 안전하게 옮길 수 있으면 축소합니다. |
 | **외부 API 연결** | Catalog → 공고 제공처 API, AI Service → OpenAI의 요청은 사설 Pod에서 NAT Gateway → Internet Gateway를 거쳐 나갑니다. 외부 API는 VPC 밖에 있으며, 사용자 요청이 들어오는 ALB 경로와 구분합니다. |
 | **데이터 보존** | MySQL·검색·큐·평가·관측 데이터는 EBS gp3 PVC에 보존합니다. S3는 암호화한 이전 백업을 보관합니다. |
 | **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → Helm 배포 YAML·불변 Git 태그 발행 → Argo CD의 EKS 동기화 → Vercel 웹 전환 순서입니다. |
-| **배포 도구** | Helm은 Chart·EKS 설정·이미지 digest로 YAML을 만듭니다. Argo CD가 평가 접수 보호·migration·앱 교체·연결 검증을 수행하고, CodeBuild는 결과를 조회합니다. 최초 운영 인계·활성화 상태는 아래 검증 기록에서 구분합니다. |
+| **배포 도구** | Helm은 Chart·EKS 설정·이미지 digest로 YAML을 만듭니다. Argo CD가 평가 접수 보호·migration·앱 교체·연결 검증을 수행하고, CodeBuild는 결과를 조회합니다. |
 | **관리·관측** | 관리자 Ops는 같은 React 웹에서 이용합니다. Prefect·Langfuse UI는 EKS 권한을 가진 사용자가 port-forward로 접근합니다. |
 
-[운영 구성·적용 및 검증 기록](docs/assets/architecture/README-aws-eks.md) · [자동 배포 상세](infrastructure/eks/continuous-deployment.md) · [서비스 호출 상세](docs/architecture.md)
+[운영 구성·적용 및 검증 기록](docs/assets/architecture/README-aws-eks.md) · [로드밸런싱·API 진입 경로](infrastructure/eks/api-entrypoint.md) · [오토스케일링 설정](infrastructure/eks/autoscaling/README.md) · [자동 배포 상세](infrastructure/eks/continuous-deployment.md) · [서비스 호출 상세](docs/architecture.md)
 
-그림 상단의 **EC2 표가 실제 노드 배치 목표**입니다. 아래 `govbiz-msa`·`govbiz-evaluation`·`govbiz-observability` 상자는 **Namespace별 논리 구분**이며, 상자의 좌우 위치가 노드를 뜻하지 않습니다. 평가 서비스의 Namespace는 `govbiz-evaluation`을 유지하면서 실행 노드를 `observability`로 옮깁니다.
+그림 상단의 **EC2 표는 노드별 역할과 기본 2대·최대 3대의 운영 설정**을 나타냅니다. 아래 `govbiz-msa`·`govbiz-evaluation`·`govbiz-observability` 상자는 **Namespace별 논리 구분**이며, 상자의 좌우 위치가 노드를 뜻하지 않습니다. 평가 서비스는 `govbiz-evaluation` Namespace를 유지하면서 `observability` 노드에서 실행합니다.
 
 #### 5.2.4 Kubernetes 내부 리소스 구조
 
 아래 그림은 **① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성** 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다.
 
-그림은 저장소에 작성된 배포 설정(Helm Chart·EKS 설정·자동 배포 코드)을 설명합니다. 실제로 배포가 끝났는지는 위 환경별 기록을, EKS Argo CD 자동 배포의 준비 상태는 [최초 인계·활성화 문서](infrastructure/eks/argo-cd.md)를 확인합니다.
+그림은 **2026-10-13 확인한 저장소의 운영 설정**(Helm Chart·EKS 설정·자동 배포 코드)을 설명합니다. 로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
 
 **전체 Namespace와 워크로드 배치**
 
-![Kubernetes Namespace별 전체 리소스 배치 — 공식 아이콘으로 구분한 업무·평가·관측 구성](docs/assets/architecture/govbiz-kubernetes-resources-overview.png?v=5c5bb33da1d5)
+![Kubernetes Namespace별 전체 리소스 배치 — 공식 아이콘으로 구분한 업무·평가·관측 구성](docs/assets/architecture/govbiz-kubernetes-resources-overview.png?v=d374149b111b)
 
-[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-overview.png?v=5c5bb33da1d5) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-overview.svg?v=35dd055058e8)
+[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-overview.png?v=d374149b111b) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-overview.svg?v=6e4685150cac)
 
 **Namespace는 관련 프로그램과 설정을 이름으로 묶는 공간**입니다. 이 프로젝트는 업무 서비스(`govbiz-msa`), 평가 도구(`govbiz-evaluation`), 실행 기록을 수집·조회하는 관측 도구(`govbiz-observability`)를 나누어 관리합니다. 실제 프로그램이 실행되는 서버는 **Node**, 그 서버에서 컨테이너를 실행하는 단위는 **Pod**입니다. Namespace 하나가 서버 한 대를 뜻하지는 않습니다.
 
 그림에서 한 상자에 묶인 서비스도 각각 별도 Pod로 실행됩니다. Ops는 API인 `ops-service`와 동기화 작업인 `ops-sync` 두 컨테이너를 같은 Pod에서 실행합니다. 서비스끼리 주고받는 요청은 [5.1 서비스 연결](#51-서비스-연결)에서 확인할 수 있습니다.
+
+EKS에서는 Core·AI를 두 노드 풀에 배치할 수 있으며, 같은 서비스끼리는 서로 다른 Node를 사용합니다. Catalog·Ops는 각각 업무 DB와 같은 application 노드에 배치됩니다. 평가·관측 서비스는 observability에 배치되며, 서로 다른 Namespace를 유지합니다. Core·AI 각각 2~3개와 Gateway 1~3개는 HPA의 정상 운영 범위이고, 다른 업무·평가·저장소는 단일 실행입니다.
 
 **Ops API와 MySQL의 상세 관계**
 
@@ -312,10 +318,11 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 
 | 관리 공간 / 프로그램 | 실행을 관리하는 구성 | 접속 방법·데이터 보관 |
 |---|---|---|
-| `govbiz-msa` / Core·Catalog·AI·Ops | 서비스별 `Deployment → ReplicaSet → Pod` | 각 Service의 내부 접속 주소(ClusterIP)로 호출합니다. Ops Pod 안에서는 API와 `ops-sync`가 함께 실행됩니다. |
-| `govbiz-msa` / 로컬 `web` · EKS `api-gateway` | 각각 `Deployment → ReplicaSet → Pod` | Nginx가 Core·Ops의 Service로 API 요청을 전달합니다. EKS에서는 ALB가 gateway Pod로 요청을 보내며, 운영 웹 화면은 Vercel에서 제공합니다. |
-| `govbiz-msa` / Core·Catalog·Ops MySQL, Redis·Qdrant·Elasticsearch·RabbitMQ | 저장소별 `StatefulSet → Pod` | `govbiz-local-data` Chart로 배포합니다. Headless Service로 각 Pod의 접속 주소를 찾고, PVC로 연결한 볼륨에 데이터를 보관합니다. RabbitMQ는 활성화한 환경에만 배치합니다. |
-| `govbiz-evaluation` / `prefect`·`evaluation-runner`·`ops-artifacts` | 각각 `Deployment → ReplicaSet → Pod` | 평가 작업을 관리하는 Prefect(`4200`)와 결과 조회 API(`8010`)에 Service가 있습니다. 실행기는 별도 Service 없이 Prefect 작업을 가져와 처리합니다. Prefect DB는 전용 PVC를 사용합니다. 실행기와 결과 API는 같은 Node에서 결과 PVC를 공유하며, 실행기는 쓰고 결과 API는 읽기만 합니다. |
+| `govbiz-msa` / Core·AI | 서비스별 `HPA → Deployment → ReplicaSet → Pod` | EKS에서 각각 2~3개이며 같은 서비스끼리 Node를 분리합니다. 각 ClusterIP Service가 준비된 Pod로 연결을 분산합니다. |
+| `govbiz-msa` / Catalog·Ops | 서비스별 `Deployment → ReplicaSet → Pod`, 각각 1개 | ClusterIP로 호출합니다. Ops Pod 안에서는 API와 `ops-sync`가 함께 실행됩니다. 각각 `catalog-mysql`·`ops-mysql`과 같은 Node에 배치합니다. |
+| `govbiz-msa` / 로컬 `web` · EKS `api-gateway` | 각각 `Deployment → ReplicaSet → Pod`, EKS Gateway는 HPA 1~3개 | Nginx가 Core·Ops의 Service로 API 요청을 전달합니다. EKS에서는 ALB가 정상 gateway Pod IP로 요청을 분산하며, 운영 웹 화면은 Vercel에서 제공합니다. |
+| `govbiz-msa` / Core·Catalog·Ops MySQL, Redis·Qdrant·Elasticsearch·RabbitMQ | 저장소별 `StatefulSet → Pod`, 각각 1개 | `govbiz-local-data` Chart로 배포합니다. Headless Service로 각 Pod의 접속 주소를 찾고, PVC로 연결한 볼륨에 데이터를 보관합니다. EKS에서는 RabbitMQ를 포함한 업무 저장소 7개가 application에 배치됩니다. |
+| `govbiz-evaluation` / `prefect`·`evaluation-runner`·`ops-artifacts` | 각각 `Deployment → ReplicaSet → Pod`, observability 배치 | 평가 작업을 관리하는 Prefect(`4200`)와 결과 조회 API(`8010`)에 Service가 있습니다. 실행기는 별도 Service 없이 Prefect 작업을 가져와 처리합니다. Prefect DB는 전용 PVC를 사용합니다. 실행기와 결과 API는 같은 Node에서 결과 PVC를 공유하며, 실행기는 쓰고 결과 API는 읽기만 합니다. |
 | `govbiz-observability` / `langfuse-web`·`langfuse-worker` | 각각 `Deployment → ReplicaSet → Pod` | 화면과 백그라운드 처리 프로그램에 각각 ClusterIP Service가 있고, 아래 관측용 저장소에 연결합니다. |
 | `govbiz-observability` / PostgreSQL·ClickHouse·Redis·MinIO | 저장소별 `StatefulSet → Pod` | 일반 ClusterIP Service로 접속합니다. 데이터를 복원해 둔 기존 PVC를 연결해 사용합니다. |
 | `govbiz-msa` / 배포 준비·마무리 작업 | `Job → 작업용 Pod` | Job은 특정 작업을 끝낸 뒤 종료하는 Pod를 실행합니다. 기본 Chart의 `ops-service-migrate`는 배포 전 DB 구조를 갱신합니다. 최신 자동 배포 구성은 아래의 준비·마무리 Job 두 개로 이를 교체합니다. |
@@ -335,28 +342,32 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 
 **클러스터 관리·네트워크·실행 기반**
 
-![Kubernetes 플랫폼 구성 — 배포·Node·Ingress·네트워크·설정·접근 제어](docs/assets/architecture/govbiz-kubernetes-resources-platform.png?v=067fe6a49ab3)
+![Kubernetes 플랫폼 구성 — 배포·Node·Ingress·네트워크·설정·접근 제어](docs/assets/architecture/govbiz-kubernetes-resources-platform.png?v=9139e5df6234)
 
-[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-platform.png?v=067fe6a49ab3) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-platform.svg?v=5279c3e05046)
+[크게 보기](docs/assets/architecture/govbiz-kubernetes-resources-platform.png?v=9139e5df6234) · [SVG 원본](docs/assets/architecture/govbiz-kubernetes-resources-platform.svg?v=4b2ecd36b55a)
 
-이 그림도 **파란색은 배포·실행 관리**, **초록색은 HTTP 요청**입니다. Argo CD는 Git에 있는 배포 설정을 Kubernetes에 반영합니다. Ingress는 “들어온 요청을 어디로 보낼지” 정하는 규칙이고, AWS Load Balancer Controller는 그 규칙에 맞춰 ALB를 설정합니다. 실제 요청을 받아 gateway Pod로 전달하는 것은 **ALB**입니다.
+이 그림도 **파란색은 배포·실행 관리와 자동확장 제어**, **초록색은 HTTP 요청**입니다. Argo CD는 Git에 있는 배포 설정을 Kubernetes에 반영합니다. Ingress는 “들어온 요청을 어디로 보낼지” 정하는 규칙이고, AWS Load Balancer Controller는 그 규칙에 맞춰 ALB를 설정합니다. 실제 요청을 받아 gateway Pod로 전달하는 것은 **ALB**입니다.
+
+**Metrics Server → HPA → Deployment**는 CPU 사용량에 따른 Pod 개수 조절입니다. 늘어난 Pod가 자원·분산 조건 때문에 배치되지 못하면 **Cluster Autoscaler → application EC2 추가 → Scheduler가 Pod 배치**로 이어집니다. HPA·Cluster Autoscaler는 API 요청을 중계하지 않습니다.
 
 <details>
 <summary>플랫폼 구성·권한·적용 범위 상세 펼치기</summary>
 
 | 구성 요소 | 하는 일과 이 프로젝트의 설정 |
 |---|---|
-| **Argo CD·Application·AppProject** | Git의 배포 설정을 반영하는 도구입니다. Application은 배포할 대상을, AppProject는 허용할 저장소·배포 위치 등을 정합니다. 로컬 `govbiz-local`은 웹을 포함한 앱 Deployment 7개, EKS `govbiz-eks`는 Core·Catalog·AI·Ops·평가 실행기·결과 서버 6개를 관리하도록 설정했습니다. DB·PVC·Secret·Prefect·Langfuse·API Gateway는 이 두 Application의 관리 범위 밖입니다. |
+| **Argo CD·Application·AppProject** | Git의 배포 설정을 반영하는 도구입니다. Application은 배포할 대상을, AppProject는 허용할 저장소·배포 위치 등을 정합니다. 로컬 `govbiz-local`은 웹을 포함한 앱 Deployment 7개, EKS `govbiz-eks`는 Core·Catalog·AI·Ops·평가 실행기·결과 서버 6개와 관련 Service·NetworkPolicy·Core/AI HPA·배포 hook Job을 관리합니다. Core·AI의 `/spec/replicas`는 HPA가 조절하도록 Argo가 덮어쓰지 않습니다. DB·PVC·Secret·Prefect·Langfuse·API Gateway·PDB·Cluster Autoscaler는 별도 관리합니다. |
 | **Ingress·AWS Load Balancer Controller** | EKS의 `api-gateway` Ingress에 연결 대상 Service를 적으면 Controller가 내부 ALB를 구성합니다. `target-type: ip` 설정에 따라 ALB가 gateway Pod IP로 직접 요청을 보냅니다. 로컬에서는 `port-forward`로 PC의 포트를 웹 Service에 연결해 접속합니다. |
 | **CoreDNS·EndpointSlice·kube-proxy·CNI** | CoreDNS는 서비스 이름을 IP 주소로 바꿔 알려줍니다. EndpointSlice는 연결 대상 Pod의 주소·준비 상태 목록입니다. kube-proxy는 일반 Service로 들어온 요청을 Pod로 전달할 네트워크 규칙을 관리하고, CNI는 Pod 사이의 네트워크 연결을 구성합니다. EKS 설정은 VPC CNI와 통신 제한 기능(NetworkPolicy)을 켜도록 작성돼 있습니다. |
 | **NetworkPolicy** | “어떤 Pod와 통신할 수 있는지” 정합니다. 평가 도구는 들어오고 나가는 통신을 제한하고, 관측 도구는 기본 차단 후 필요한 통신을 허용합니다. Gateway는 ALB에서 들어오는 요청과 Core·Ops·DNS로 나가는 연결을 허용합니다. 정책이 없는 업무 Pod까지 자동으로 보호되지는 않으며, 실제 차단은 이를 지원하는 CNI가 수행해야 합니다. |
-| **ServiceAccount·RBAC·AWS Pod Identity** | ServiceAccount는 Pod가 사용하는 Kubernetes 계정이고, Role·RoleBinding 등 RBAC 설정은 그 계정이 할 수 있는 일을 정합니다. 업무 Pod에는 Kubernetes API 토큰을 자동으로 넣지 않습니다. EBS CSI·ALB Controller가 AWS 자원을 다룰 권한은 별도로 IAM·Pod Identity로 연결합니다. `release-rbac.yaml`은 CodeBuild에 지정 Deployment·Application을 조회하는 권한만 줍니다. |
+| **ServiceAccount·RBAC·AWS Pod Identity** | ServiceAccount는 Pod가 사용하는 Kubernetes 계정이고, Role·RoleBinding 등 RBAC 설정은 그 계정이 할 수 있는 일을 정합니다. 업무 Pod에는 Kubernetes API 토큰을 자동으로 넣지 않습니다. EBS CSI·ALB Controller·Cluster Autoscaler가 AWS 자원을 다룰 권한은 별도로 IAM·Pod Identity로 연결합니다. `release-rbac.yaml`은 CodeBuild에 지정 Deployment·Application을 조회하는 권한만 줍니다. |
 | **StorageClass·CSI·PV·PVC** | StorageClass는 새 볼륨의 생성 규칙이며, CSI 드라이버는 실제 볼륨 생성·연결을 처리합니다. EKS의 `govbiz-ebs-gp3`는 EBS CSI로 암호화된 `gp3` 볼륨을 만듭니다. Pod가 배치될 위치를 고려해 볼륨을 준비하고(`WaitForFirstConsumer`), PVC를 삭제해도 볼륨은 남깁니다(`Retain`). 남은 볼륨을 다시 사용하는 데는 별도 복구 절차가 필요합니다. 기존 볼륨을 복원해 연결하는 경우와 새 볼륨을 만드는 경우를 구분합니다. |
-| **Node·DaemonSet·Pod 배치** | Node는 Pod가 실행되는 서버입니다. DaemonSet은 필요한 Node마다 네트워크·스토리지 연결용 프로그램 등을 실행합니다. 업무 앱은 Deployment·StatefulSet이 관리합니다. EKS Core·AI는 필수 Pod anti-affinity로 같은 서비스끼리 노드를 분리합니다. 평가 실행기·결과 API·Prefect의 배치 목표는 observability이며 Namespace는 유지합니다. 결과 PVC를 공유하는 실행기와 결과 API는 같은 Node에 배치합니다. |
-| **HPA·Cluster Autoscaler** | HPA는 CPU 사용률에 따라 Core·AI 각각 2~3개, Gateway 1~3개로 Pod 수를 조절합니다. Cluster Autoscaler는 자원·배치 조건 때문에 대기하는 Pod가 있으면 application 노드를 1→2대로 늘립니다. observability 1대를 합해 EC2는 기본 2대·최대 3대입니다. 부하가 내려가 Pod가 줄고 남은 Pod를 안전하게 옮길 수 있어야 추가 노드를 제거합니다. |
+| **Node·DaemonSet·Pod 배치** | Node는 Pod가 실행되는 서버입니다. DaemonSet은 필요한 Node마다 네트워크·스토리지 연결용 프로그램 등을 실행합니다. 업무 앱은 Deployment·StatefulSet이 관리합니다. EKS Core·AI는 필수 Pod anti-affinity로 같은 서비스끼리 노드를 분리하므로 세 번째 Pod에는 세 번째 EC2가 필요합니다. Gateway도 노드 간 분산 제약을 적용합니다. Catalog·Ops는 각각 업무 DB와 같은 Node, 평가 실행기·결과 API·Prefect는 observability에 배치하며 Namespace는 유지합니다. 결과 PVC를 공유하는 실행기와 결과 API는 같은 Node에 배치합니다. |
+| **Metrics Server·HPA** | Metrics Server가 제공하는 리소스 지표를 HPA가 사용합니다. **컨테이너 CPU requests 대비 평균 사용률 60%**를 기준으로 Core·AI 각각 2~3개, Gateway 1~3개로 Pod 수를 조절합니다. EC2 전체 CPU나 요청 수를 직접 기준으로 삼지 않습니다. HPA는 Deployment의 실행 개수를 바꾸며 축소 시 5분 안정화 구간을 둡니다. |
+| **Cluster Autoscaler** | `kube-system`의 Deployment이며 observability에서 실행합니다. 자원·배치 조건 때문에 대기하는 Pod가 있으면 application 노드를 1→2대로 늘립니다. observability 1대를 합해 EC2는 기본 2대·최대 3대입니다. 추가 노드가 10분간 불필요하고, 남은 Pod를 안전하게 옮길 수 있어야 제거합니다. |
+| **PodDisruptionBudget(PDB)** | Core·AI는 각각 `minAvailable: 1`로 자발적 퇴거 중 마지막 실행본을 보호합니다. Catalog·Ops·업무 저장소·평가 서비스의 단일 실행 Pod에도 최소 1개 보호가 있어 노드 축소를 제한할 수 있습니다. Deployment의 순차 교체나 갑작스러운 노드 장애를 막는 기능은 아니며 DB 고가용성을 제공하지 않습니다. |
 | **ConfigMap·Secret·probe·자원 설정** | ConfigMap·Secret으로 설정과 자격 정보를 전달합니다. 상태 검사(probe)는 시작이 끝났는지(`startup`), 요청을 받아도 되는지(`readiness`), 재시작이 필요한지(`liveness`) 확인합니다. `requests`·`limits`는 필요한 CPU·메모리와 사용 한도를 정합니다. 보안 설정은 실행 권한 등을 제한합니다. `emptyDir`은 Pod가 삭제되면 함께 사라지는 임시 저장 공간입니다. |
 
-**그림과 설정의 범위:** 위 내부 리소스 그림은 기본 리소스 관계를 보여주며 EKS HPA·Cluster Autoscaler의 세부 흐름은 5.2.3과 [자동 확장 설정](infrastructure/eks/autoscaling/README.md)을 따릅니다. 모든 Node에 업무 앱을 실행하는 업무용 DaemonSet과 Kubernetes CronJob 기반 평가 스케줄은 사용하지 않습니다. 이미지 저장소 로그인 정보(`imagePullSecrets`)는 비공개 이미지 등을 사용할 때 선택해 설정합니다. 복원·진단 중에만 쓰는 임시 Pod는 상시 실행 목록에서 제외했습니다.
+**그림과 설정의 범위:** 위 내부 리소스 그림은 현재 EKS의 기본 리소스 관계와 HPA·Cluster Autoscaler·분산 배치를 함께 보여줍니다. AWS 전체 경로는 5.2.3, 세부 수치와 적용 절차는 [자동 확장 설정](infrastructure/eks/autoscaling/README.md)을 따릅니다. 모든 Node에 업무 앱을 실행하는 업무용 DaemonSet과 Kubernetes CronJob 기반 평가 스케줄은 사용하지 않습니다. 이미지 저장소 로그인 정보(`imagePullSecrets`)는 비공개 이미지 등을 사용할 때 선택해 설정합니다. 복원·진단 중에만 쓰는 임시 Pod는 상시 실행 목록에서 제외했습니다.
 
 </details>
 
@@ -366,6 +377,8 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 [업무 Deployment·Service·migration Job](infrastructure/gitops/charts/govbiz-service/templates) · [업무 데이터 StatefulSet](infrastructure/gitops/charts/govbiz-local-data/templates) · [평가 실행 리소스](infrastructure/gitops/charts/govbiz-evaluation/templates/workload.yaml) · [관측 리소스](infrastructure/gitops/charts/govbiz-observability/templates) · [EKS API gateway·Ingress](infrastructure/eks/api-gateway)
 
 [EKS 노드·addon 설정](infrastructure/eks/cluster.sydney-demo.yaml) · [EBS StorageClass](infrastructure/eks/storage-class.yaml) · [배포 조회 RBAC](infrastructure/eks/release-rbac.yaml) · [자동 배포 Job 생성](infrastructure/gitops/scripts/local_release.py) · [로컬 자동 배포 범위](infrastructure/gitops/docs/local-auto-sync.md) · [EKS 자동 배포 범위](infrastructure/eks/argo-cd.md)
+
+[Core·AI HPA 값](infrastructure/eks/gitops-values.yaml) · [EKS 배치·Argo 관리 범위 생성](infrastructure/eks/gitops.py) · [Gateway HPA](infrastructure/eks/api-gateway/hpa.yaml) · [Cluster Autoscaler](infrastructure/eks/autoscaling/cluster-autoscaler.yaml) · [PDB](infrastructure/eks/autoscaling/pdb.yaml)
 
 **공식 문서:** [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Service·Headless](https://kubernetes.io/docs/concepts/services-networking/service/#headless-services) · [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [PV·PVC](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [클러스터 구성 요소](https://kubernetes.io/docs/concepts/overview/components/)
 

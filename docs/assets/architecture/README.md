@@ -7,21 +7,27 @@
 **AWS EKS 확장 구성(2026-10-12)**을 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
-## Kubernetes 내부 리소스 구조 — 2026-10-12
+## Kubernetes 내부 리소스 구조 — 2026-10-13
 
 메인 README 5.2.4의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과
 고정된 행 배치로 바꾸고, 관리·요청·저장소 관계를 분리했습니다.
+현재 EKS 설정의 HPA·Cluster Autoscaler·노드 배치를 반영하며 로컬 web은 별도로 표시합니다.
 
 | 그림 | 파일 | 읽는 순서 |
 |---|---|---|
-| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png) · [SVG](govbiz-kubernetes-resources-overview.svg) | 업무 → 평가 → 관측. 각 서비스는 독립된 리소스이며 같은 Ops Pod의 API·sync만 두 컨테이너로 묶습니다. |
+| Namespace별 전체 배치 | [PNG](govbiz-kubernetes-resources-overview.png) · [SVG](govbiz-kubernetes-resources-overview.svg) | 업무 → 평가 → 관측. EKS의 실행 개수와 물리 노드 배치를 함께 표시하며 Namespace와 Node를 구분합니다. |
 | Ops의 리소스 관계 | [PNG](govbiz-kubernetes-resources-flow.png) · [SVG](govbiz-kubernetes-resources-flow.svg) | 생성·관리 → 실제 요청 → 데이터 보존. 행마다 반복한 Ops·MySQL Pod는 같은 예시입니다. |
-| 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png) · [SVG](govbiz-kubernetes-resources-platform.svg) | Argo·Control Plane·Node → EKS 진입 → 기반 기능 → 설정·접근 제어. |
+| 플랫폼 기반 구성 | [PNG](govbiz-kubernetes-resources-platform.png) · [SVG](govbiz-kubernetes-resources-platform.svg) | Argo·Control Plane·Node → EKS 진입 → Metrics Server·HPA → 대기 Pod·Cluster Autoscaler·EC2 → 기반 기능 → 설정·접근 제어. |
 
-- **파란 실선**: 생성·배포·실행 관리. **초록 실선**: 실제 요청. **황색 점선**: 마운트·바인딩.
+- **파란 실선**: 생성·배포·실행 관리와 자동확장 제어. **초록 실선**: 실제 요청. **황색 점선**: 마운트·바인딩.
+- EKS Core·AI는 HPA 각각 2~3개, Gateway는 1~3개이며 CPU requests 대비 평균 사용률 목표는 60%입니다.
+  Cluster Autoscaler는 배치 대기 Pod에 맞춰 application 1~2대, observability 고정 1대로 전체 2~3대를 유지합니다.
+  Core·AI의 필수 노드 분산과 PDB에 따른 퇴거 제한·축소 조건을 함께 표시합니다.
+- 평가·관측은 observability에 배치하고 Catalog·Ops는 각각 업무 DB와 같은 application 노드에 배치합니다.
 - Headless Service는 중계 서버로 그리지 않습니다. CoreDNS가 알려준 Pod IP로 직접 접속합니다.
 - Chart·배포 코드의 구조이며, 실제 Argo 인계·자동 배포 완료나 현재 Pod 개수를 증명하지 않습니다.
 - 기본 Chart의 migration Job과 자동 배포 시 이를 교체하는 prepare·resume Job을 구분합니다.
+- Ops 생성·요청·저장소 관계는 최신 설정과 일치하므로 구조를 유지합니다.
 - SVG는 폭 1,440px, PNG는 2배 해상도입니다. 외부 이미지 요청 없이 볼 수 있도록 SVG에 아이콘을 내장합니다.
 - 아이콘은 [Kubernetes Contributors의 공식 세트](https://github.com/kubernetes/community/tree/main/icons)를
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)로 사용했습니다. 아이콘 원본은 수정하지 않고
@@ -41,6 +47,11 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 렌더링은 네트워크를 차단하고 아이콘 해시·로딩·글자 너비와 캔버스 경계를 확인합니다.
 그림 수정 후 PNG·SVG를 함께 갱신하고 메인 README의 `?v=`를 각 파일 SHA-256 앞 12자리로 갱신합니다.
 
+현재 EKS 설정 근거: [HPA 실행 범위](../../../infrastructure/eks/gitops-values.yaml) ·
+[분산 배치·Argo 관리 범위](../../../infrastructure/eks/gitops.py) ·
+[Gateway HPA](../../../infrastructure/eks/api-gateway/hpa.yaml) ·
+[Cluster Autoscaler·PDB·축소 조건](../../../infrastructure/eks/autoscaling/README.md).
+
 공식 구조 근거: [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/),
 [Service·Headless](https://kubernetes.io/docs/concepts/services-networking/service/#headless-services),
 [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/),
@@ -57,11 +68,11 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 - Mermaid 원본을 수정하면 PNG·SVG도 함께 갱신하고 웹·앱의 높이, 연결선과 글자 겹침을 확인합니다.
   이 그림은 서비스 요청 관계이며 클라우드 배포 현황이나 DB 연결 전체를 표현하지 않습니다.
 
-## Vercel + AWS EKS 전체 구성 — 2026-10-12
+## Vercel + AWS EKS 전체 구성 — 2026-10-13
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=1118356eb704)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=b44cfd2d5888)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=1118356eb704) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=05e47b097793)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=b44cfd2d5888) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=399f0a8505c0)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
@@ -70,8 +81,10 @@ MySQL은 EKS 내부에 유지하며, 모바일·MyBatis·업무·평가·관측 
 Catalog → 공고 제공처 API, AI Service → OpenAI의 외부 호출은 별도 보라색 영역에서 표시합니다.
 사설 Pod의 NAT Gateway → Internet Gateway 출구와 VPC 밖 API를 구분합니다.
 개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 자동 배포 흐름을 표시합니다.
-노드 배치 목표는 기본 EC2 2대·최대 3대, Core·AI 각각 2~3개 분산, 평가 서비스의 observability 배치입니다.
-상단 EC2 표와 아래 Namespace 논리 구분을 분리하며, 실제 전환·실행 검증 상태는 구성도 설명 문서에 별도로 기록합니다.
+운영 설정은 기본 EC2 2대·최대 3대, Core·AI 각각 2~3개 분산, 평가 서비스의 observability 배치입니다.
+로드밸런싱 확대도에 ALB → Gateway Pod → Core·AI Service와 준비된 Pod의 관계를 표시합니다.
+HPA의 Pod 조절 → 배치 대기 → Cluster Autoscaler의 application EC2 추가는 녹색 제어선으로 구분합니다.
+상단 EC2 역할 표와 아래 Namespace 논리 구분을 분리하며, 실제 배포·자동 축소 관찰 결과는 구성도 설명 문서에 별도로 기록합니다.
 
 ## Docker Compose 로컬 전체 구성 — 2026-10-12
 

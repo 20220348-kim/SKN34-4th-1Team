@@ -27,10 +27,10 @@ for (const source of manifest) {
   icons.set(source.name, `data:${isSvg ? 'image/svg+xml' : 'image/png'};base64,${bytes.toString('base64')}`);
 }
 
-const W = 3000, H = 4070;
+const W = 3000, H = 4670;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
-const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E', external:'#67548E'};
+const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E', external:'#67548E', scaling:'#247B64'};
 const parts = [];
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;'}[c]));
 function text(x, y, value, {size=23, weight=400, fill=ink, anchor='start', max=2600}={}) {
@@ -54,7 +54,7 @@ function label(x, y, value, max=360, fill=muted) {
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
 <title id="title">GovBiz AWS EKS 아키텍처 — Vercel 웹 · 모바일 · 업무 · LLMOps</title>
-<desc id="desc">2026-10-12 저장소 구성과 워크플로에 근거한 노드 배치 변경 목표. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. 모바일은 같은 Core API 계약을 사용하며 운영 기기 연결은 별도 검증한다. 시드니 EKS는 한 가용 영역의 기본 EC2 두 대를 유지한다. application에는 업무 저장소·Catalog·Ops, observability에는 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치한다. Core와 AI는 기본 두 노드에 각각 한 개씩 배치하며 서비스별 두 개에서 세 개로 확장한다. 같은 서비스의 Pod는 노드당 최대 한 개이므로 세 번째 Pod에 추가 application EC2 한 대가 필요하다. 아래 namespace 상자는 논리 구분이며 노드 경계가 아니다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 배치 전환·검증 상태는 설명 문서에 기록한다.</desc>
+<desc id="desc">2026-10-13 저장소 설정에 근거한 운영 구성. 웹은 Vercel, API는 CloudFront VPC origin과 내부 ALB를 거쳐 EKS Nginx에서 Core와 Ops로 분기한다. ALB는 정상 Gateway Pod IP로, Core와 AI Service는 준비된 Pod로 연결을 분산한다. HPA는 컨테이너 CPU requests 대비 평균 사용률 60%를 기준으로 Gateway 1~3개, Core와 AI 각각 2~3개를 조절한다. 자원 또는 분산 조건 때문에 Pod가 대기하면 Cluster Autoscaler가 application EC2를 추가한다. application 1~2대와 observability 1대로 전체 기본 2대·최대 3대이며 한 가용 영역을 사용한다. application에는 업무 저장소·Catalog·Ops, observability에는 Langfuse·Argo CD·Prefect·평가 실행기·결과 저장소를 배치한다. 기본 두 노드에서는 Core와 AI를 각각 한 개씩 배치한다. 같은 서비스의 Pod는 노드당 최대 한 개이므로 세 번째 Pod에는 세 번째 EC2가 필요하다. 아래 namespace 상자는 논리 구분이며 노드 경계가 아니다. MySQL 세 개와 검색·큐·평가·Langfuse 저장소는 EBS gp3 PVC에 보존한다. 개인 main의 같은 최신 SHA가 필수 CI를 모두 통과하면 CodeBuild가 ECR 이미지와 Helm 배포 YAML을 Git 태그에 발행한다. Argo CD가 EKS를 동기화하고 그 결과를 확인한 뒤 Vercel 웹을 전환한다. 실제 배치 전환·검증 상태는 설명 문서에 기록한다.</desc>
 <defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
@@ -64,7 +64,7 @@ text(305,91,'AWS EKS 시스템 아키텍처',{size:38,weight:600});
 text(70,142,'Vercel 웹 · React Native 모바일 · EKS 업무·평가·관측 · AWS 네트워크·저장소',{size:25,fill:muted,max:2050});
 card(2390,51,540,62,'#FFF5E6','#E8C68E',16);
 text(2660,91,'VERCEL + AWS EKS',{size:27,weight:700,anchor:'middle',fill:'#98631F',max:500});
-text(2930,142,'2026.10.12 · 노드 배치 변경 목표',{size:21,fill:muted,anchor:'end',max:700});
+text(2930,142,'2026.10.13 · 저장소 운영 설정 기준',{size:21,fill:muted,anchor:'end',max:700});
 
 // The top band shows the request sequence, not physical subnet placement.
 card(60,190,2880,400,'#F8FBFD','#D2DFEB',26);
@@ -73,8 +73,8 @@ const entry = [
   [95,370,'chrome','브라우저',['사용자 화면 · 관리자 Ops']],
   [535,600,'vercel','Vercel · React / Vite',['govbiz.vercel.app · /api 서버 미들웨어']],
   [1215,460,'cloudfront','CloudFront',['HTTPS · API 전용 · 캐시 끔']],
-  [1755,440,null,'내부 ALB',['VPC origin → private ALB']],
-  [2275,630,'nginx','Nginx API Gateway',['EKS 내부 · 프록시 비밀값 검증']],
+  [1755,440,null,'내부 ALB',['정상 Gateway Pod IP로 분산']],
+  [2275,630,'nginx','Nginx API Gateway',['Pod 1~3개 · 프록시 비밀값 검증']],
 ];
 for (const [x,w,brand,title,lines] of entry) {
   card(x,260,w,108);
@@ -104,15 +104,15 @@ text(2298,530,'Ops 경로 우선 분기 · Core 관리자 세션 확인',{size:2
 edge('M2590 368V411');
 
 // Cloud services, VPC and EKS are distinct boundaries.
-card(60,640,2880,2350,'#FFFCF7','#D7BB8B',30);
+card(60,640,2880,2950,'#FFFCF7','#D7BB8B',30);
 icon('aws',90,667,68,49);
 text(182,707,'AWS · Sydney / ap-southeast-2',{size:35,weight:700,max:1470});
 text(2900,707,'CI → ECR · Helm → Git → Argo CD · EKS → Vercel',{size:24,fill:'#98631F',anchor:'end',max:1210});
-card(85,745,2830,1830,'#F5F9FD','#B9CFE2',26);
+card(85,745,2830,2430,'#F5F9FD','#B9CFE2',26);
 icon('vpc',112,765,47);
 text(178,801,'Amazon VPC · 사설 서브넷의 백엔드',{size:29,weight:700,max:1500});
-text(2875,801,'내부 ALB → EKS Gateway · ClusterIP / Service DNS',{size:23,fill:muted,anchor:'end',max:1170});
-card(110,835,2780,1600,'#FFFFFF','#BCD1E5',24);
+text(2875,801,'ALB → Gateway Pod IP · Gateway → Core·Ops Service',{size:23,fill:muted,anchor:'end',max:1170});
+card(110,835,2780,2200,'#FFFFFF','#BCD1E5',24);
 icon('kubernetes',140,860,50);
 text(207,902,'Amazon EKS · govbiz-eks',{size:33,weight:700,max:1240});
 text(2850,882,'관리형 제어면 · EKS API: private + 관리 IP 제한 public',{size:22,fill:muted,anchor:'end',max:1390});
@@ -127,9 +127,65 @@ for (const [x,w,name,detail,scaling] of [
   text(x+22,1033,detail,{size:23,fill:muted,max:w-44});
   text(x+22,1064,scaling,{size:22,fill:muted,max:w-44});
 }
-text(150,1108,'배치 목표: EC2 기본 2대 → 최대 3대 · Core·AI 각각 HPA 2~3개 · 같은 서비스는 EC2당 최대 1개',{size:23,fill:muted,max:2690});
-text(150,1138,'아래 namespace 상자는 서비스의 논리 구분 · 오른쪽/왼쪽 상자 위치가 실행 노드를 뜻하지 않음',{size:21,fill:muted,max:2690});
-parts.push('<g transform="translate(100 200)">');
+// Detail of the existing request path and scaling controllers, not extra services.
+card(140,1100,2720,590,'#F6FBF9','#BBDACD',20);
+text(165,1138,'로드밸런싱 · 정상 상태의 Pod로 요청 분산',{size:27,weight:700,max:1650});
+text(2835,1138,'위 API 진입 경로 확대 · 아래 상자는 논리 연결',{size:22,fill:muted,anchor:'end',max:1030});
+card(165,1160,310,130);
+text(190,1204,'내부 ALB',{size:28,weight:700,max:260});
+text(190,1241,'target-type: ip',{size:23,max:260});
+text(190,1274,'정상 Pod IP 선택',{size:22,fill:muted,max:260});
+card(540,1160,510,130);
+icon('nginx',562,1181,40);
+text(620,1204,'Gateway Pod 1~3개',{size:28,weight:700,max:404});
+text(565,1241,'Nginx가 URL별 Service로 전달',{size:24,max:460});
+text(565,1274,'/api/* → Core · Ops 경로는 아래로',{size:22,fill:muted,max:460});
+for (const [x,w,name,detail] of [
+  [1120,745,'Core','Gateway → Core Service → Ready Pod'],
+  [1935,900,'AI','Core → AI Service → Ready Pod'],
+]) {
+  card(x,1160,w,130);
+  text(x+25,1204,`${name} Service · 준비된 Pod로 연결 분산`,{size:27,weight:700,max:w-50});
+  const chipWidth=(w-70)/3;
+  for (let i=0;i<3;i++) {
+    const chipX=x+25+i*(chipWidth+10);
+    card(chipX,1227,chipWidth,42,i===2?'#EAF6F0':'#F1F6FB',i===2?'#A6CDBB':'#C6D9E7',10);
+    text(chipX+chipWidth/2,1256,i===2?`${name} 3 · 확장 시`:`${name} Pod ${i+1}`,{size:22,weight:600,anchor:'middle',max:chipWidth-12});
+  }
+  text(x+25,1339,detail,{size:23,fill:muted,max:w-50});
+}
+for (const [a,b] of [[475,540],[1050,1120],[1865,1935]]) edge(`M${a} 1225H${b}`);
+edge('M795 1290V1320');
+card(585,1320,420,55);
+text(795,1356,'Ops Service → 단일 Pod',{size:24,weight:600,anchor:'middle',max:382});
+text(165,1418,'Pod·EC2 오토스케일링 · 사용량과 배치 조건에 따라 실행 개수 조절',{size:27,weight:700,fill:colors.scaling,max:2630});
+for (const [x,w,title,lines] of [
+  [165,790,'HPA · Pod 개수 조절',[
+    '컨테이너 CPU requests 대비 평균 사용률 60%',
+    'Core·AI 각각 2~3개 · Gateway 1~3개',
+  ]],
+  [1020,475,'배치 대기 Pod',[
+    '기존 노드의 자원·분산 조건으로',
+    '새 Pod를 배치할 수 없을 때',
+  ]],
+  [1560,600,'Cluster Autoscaler',[
+    '대기 Pod를 배치할 노드 용량 확보',
+    'application EC2 1대 추가',
+  ]],
+  [2230,605,'EC2 기본 2대 → 최대 3대',[
+    'application 1~2대 · 관측 노드 1대',
+    '새 노드가 준비되면 대기 Pod 실행',
+  ]],
+]) {
+  card(x,1440,w,150,'#FFFFFF','#BBDACD',18);
+  text(x+25,1482,title,{size:27,weight:700,fill:colors.scaling,max:w-50});
+  lines.forEach((line,i)=>text(x+25,1527+i*35,line,{size:23,fill:i?muted:ink,max:w-50}));
+}
+for (const [a,b] of [[955,1020],[1495,1560],[2160,2230]]) edge(`M${a} 1515H${b}`,'scaling');
+text(165,1630,'Core·AI는 같은 서비스끼리 EC2당 최대 1개 · 세 번째 Core 또는 AI Pod에는 세 번째 EC2가 필요',{size:24,max:2670});
+text(165,1670,'축소: HPA 5분 안정화 · 추가 노드가 10분간 불필요하고 남은 Pod를 안전하게 옮길 수 있어야 EC2 제거',{size:23,fill:muted,max:2670});
+text(150,1738,'아래 namespace 상자는 서비스의 논리 구분 · 오른쪽/왼쪽 상자 위치가 실행 노드를 뜻하지 않음',{size:21,fill:muted,max:2690});
+parts.push('<g transform="translate(100 800)">');
 card(85,950,1505,1160,'#FFFFFF','#C6D9EB',24);
 text(112,994,'govbiz-msa · 업무 서비스',{size:30,weight:700,max:1430});
 edge('M315 1100V1058H1335V1100');
@@ -252,6 +308,7 @@ text(100,2146,'저장소 → ③ EBS gp3 · Prefect / 결과 PVC 분리 · 실�
 
 
 parts.push('</g>');
+parts.push('<g transform="translate(0 600)">');
 // Egress is a route annotation; the named external APIs are not hosted in this VPC.
 card(115,2466,2770,78,'#FFFFFF','#CFDCE7',16);
 icon('nat',137,2483,38); icon('igw',976,2483,38);
@@ -295,7 +352,7 @@ icon('helm',112,2913,42);
 text(173,2929,'Helm → AWS Load Balancer Controller 설치',{size:25,weight:600,max:1000});
 text(173,2960,'Controller가 Ingress 설정을 읽어 내부 ALB 구성',{size:21,fill:muted,max:1000});
 text(1230,2929,'인프라: eksctl · CloudFormation · IAM / Pod Identity · EBS CSI',{size:23,max:1670});
-text(1230,2966,'워커 2대는 한 AZ · 평가 실행은 승인·예산 정책으로 제어',{size:22,fill:muted,max:1670});
+text(1230,2966,'워커 기본 2대·최대 3대는 동일 AZ · 평가 실행은 승인·예산 정책으로 제어',{size:22,fill:muted,max:1670});
 
 // Route detail outside the AWS boundary; callers and NAT/IGW remain in the VPC above.
 card(60,3040,2880,350,'#F8F6FC','#CEC4E2',26);
@@ -345,12 +402,12 @@ text(90,3438,'자동 교체 범위: 애플리케이션·평가 실행기·결과
 text(90,3479,'권한 분리: CodeBuild는 빌드·ECR·Git 발행과 EKS 상태 조회 · Argo CD가 Git 설정으로 운영 앱 갱신',{size:23,fill:muted,max:2800});
 
 parts.push('<path d="M70 3520H2930" stroke="#E4EBF0" stroke-width="2"/>');
-for(const [x,kind,name] of [[80,'runtime','요청 · 데이터 관계'],[700,'config','조건부 연결 · 별도 검증'],[1480,'external','외부 API 호출'],[2100,'deploy','CI 통과 후 자동 배포']]) {
+for(const [x,kind,name] of [[80,'runtime','요청 · 데이터'],[620,'scaling','자동확장 제어'],[1190,'config','조건부 연결'],[1760,'external','외부 API 호출'],[2330,'deploy','CI 후 자동 배포']]) {
   edge(`M${x} 3564H${x+62}`,kind);
   text(x+82,3572,name,{size:24,max:740});
 }
-text(80,3624,'노드 배치 변경 목표 · 실제 전환·검증 기록은 구성도 설명 문서 참고 · 실행 완료 ≠ 품질 합격',{size:22,fill:muted,max:2850});
-parts.push('</g></svg>');
+text(80,3624,'현재 운영 설정 · 실제 배포·축소 관찰 기록은 구성도 설명 문서 참고 · 실행 완료 ≠ 품질 합격',{size:22,fill:muted,max:2850});
+parts.push('</g></g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
 console.log(`Created ${basename}.svg`);
