@@ -11,11 +11,56 @@ CodeBuild는 이미지 빌드·ECR 발행·검증된 Git 배포 태그 발행을
 - `gitops.py`: 검증된 소스의 Helm 렌더링, 불변 `govbiz-eks/v1.RUN.ATTEMPT` 태그 발행,
   기존 환경을 보존하는 Application 생성, 읽기 전용 동기화 검증을 제공합니다.
 - `release-rbac.yaml`: CodeBuild의 patch·scale·exec·Job 생성 권한을 제거하고 지정 리소스의 get만 허용합니다.
-- 2026-10-12 읽기 전용 점검에서 대상 앱 6개는 Ready 1/1이었고 Application CRD는 없었습니다.
-  기존 설정을 비공개 로컬 파일로 수집하고 인계 YAML을 생성했습니다. 이 기록은 Argo 설치·권한 변경·실배포 완료를 뜻하지 않습니다.
-- 전환 코드의 main 반영·필수 CI 통과, 아래 최초 인계, 실제 자동 실행 검증이 필요합니다.
-- 기존 방식의 첫 자동 배포와 충돌하지 않도록 이번 작업에서는 운영 RBAC·Argo 관리권·main을 변경하지 않았습니다.
-  해당 실행이 끝난 뒤 최신 Deployment 설정을 다시 수집해 인계합니다. 앞서 수집한 파일을 그대로 적용하지 않습니다.
+- 2026-10-12 최초 점검에서는 앱 6개가 Ready 1/1이었지만 Application CRD가 없었습니다.
+  자동 배포 workflow가 이미 활성화돼 있어 Argo 소유권 사전 검사에서 실패했습니다.
+- 같은 날 시드니 `govbiz-eks`에 체크섬을 확인한 Argo CD Core 3.5.3을 설치하고
+  컨트롤러·ApplicationSet 컨트롤러·repo-server·Redis 4개 Pod의 Ready를 확인했습니다.
+  기존 환경을 다시 수집해 `govbiz-eks` AppProject·Application을 등록했습니다.
+- CodeBuild의 기존 두 Role을 읽기 전용으로 축소하고 Application 조회 Role을 추가했습니다.
+  배포 그룹의 Deployment 조회 허용·수정 거절, 추가 EKS access policy 부재를 확인했습니다.
+  첫 자동 실행에서 실제 CodeBuild 역할의 Argo 소유권·읽기 전용 사전 검사도 통과했습니다.
+- 인계 중 `EKS_RELEASE_ENABLED=false`로 실행을 보류한 뒤 `true`로 복구했습니다.
+  등록 직후에는 `govbiz-eks/*` 태그가 없어 비교 오류로 대기했지만, 첫 검증 태그가 발행되자
+  Argo가 주기적 조회로 감지해 자동 동기화했습니다. 수동 sync는 실행하지 않았습니다.
+- 개인 main `0a523e5e555e5daec8425312977a9abd0342a18c`의 필수 CI 5개가 모두 성공했고,
+  CI 완료 이벤트(`workflow_run`)로 시작된
+  [첫 자동 배포 38193929451](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38193929451)의
+  `gate`·`backend`·`web` 작업이 모두 성공했습니다.
+  ECR 이미지 5개, Git 태그 `govbiz-eks/v1.38193929451.1`, GitOps revision
+  `74a37973deec0f4e45fd34450aefd02d57179dfc`가 배포 근거입니다.
+- Argo `Synced / Healthy`, operation `Succeeded`, PreSync·PostSync 성공을 확인했습니다.
+  앱 6개 모두 위 source SHA와 Ready 1/1이며 관측 generation이 실제 generation과 일치했습니다.
+  성공한 hook Job은 정리 정책에 따라 삭제되므로 결과는 Application의 operation 기록으로 확인합니다.
+- 같은 SHA의 Vercel 운영 전환도 완료했습니다. 운영 웹(`/`)과 Core health·AI health·Ops session은
+  배포 후 모두 HTTP 200이었습니다. 모델 호출이나 사용자 데이터 변경을 추가로 실행하지 않았습니다.
+  복구 작업용으로 추가한 이 PC의 임시 EKS `/32` 허용은 제거했고, 기존 허용 목록과
+  public/private endpoint 설정을 유지했습니다. main 병합 보류도 해제할 수 있습니다.
+
+### 현재 Argo 자원 배치
+
+Argo 4개 구성 요소는 기존 `govbiz.io/workload-pool=observability` 노드에 배치했습니다.
+새 노드나 외부 LoadBalancer는 만들지 않았습니다. 설치 manifest의 기본값에는 자원 제한이 없어
+아래 값을 적용했습니다. 재설치할 때도 같은 배치·자원 설정을 유지합니다.
+
+| 구성 요소 | CPU 요청 / 제한 | 메모리 요청 / 제한 |
+|---|---|---|
+| application-controller | 100m / 1 | 256Mi / 768Mi |
+| repo-server | 100m / 1 | 256Mi / 768Mi |
+| ApplicationSet controller | 25m / 200m | 64Mi / 128Mi |
+| Redis | 25m / 200m | 64Mi / 128Mi |
+
+초기화 컨테이너는 25m/64Mi 요청, 200m/128Mi 제한을 사용합니다.
+업무 노드의 CPU 미예약분은 인계 시점에 65m로, 배포 전후 Job의 요청량 100m보다 작았습니다.
+PVC를 사용하지 않는 `ops-service-release-prepare`·`ops-service-release-resume` Job만
+Application의 기존 Kustomize patch에 `/spec/template/spec/nodeSelector`를 추가해
+`govbiz.io/workload-pool=observability`로 배치했습니다. 두 Job은 순서대로 실행하며,
+업무 Deployment의 배치와 Git에서 정한 이미지·명령·자원 요청은 유지합니다.
+Application을 다시 생성할 때 이 Job 배치도 반영해야 합니다. `gitops.py application`의
+기본 출력에는 이 클러스터의 자원 여유를 반영한 Job 배치가 포함되지 않습니다.
+기존 앱 6개의 환경변수·자원·명령·PVC·노드 배치와 Service 5개의 selector·포트를 대조했습니다.
+배포되는 NetworkPolicy 2개도 기존 허용 통신과 같음을 확인했습니다.
+`ops-artifacts`의 근거 자료 초기화 이미지도 이번 인계에서 같은 배포의 평가 실행기 이미지로 갱신했습니다.
+운영 환경이 포함된 Application·수집 JSON은 비공개로 보관하고 Git에 추가하지 않습니다.
 
 ## 최초 인계 순서
 
@@ -89,7 +134,8 @@ Ops CI는 MySQL 8.4에서 local·EKS 태그의 접수 보호·migration 실패·
 | Ruff·actionlint·문서·구성도 | 정적 검사, 변경 링크, 이미지 로고 26개·텍스트 경계, `git diff --check` 확인 |
 
 Ops 검사는 기존 Python 3.12 가상환경에서 수행했습니다. `uv run --locked`의 의존성 동기화는
-PyPI 연결 실패로 완료하지 못했으며, 잠금 환경·MySQL 8.4·컨테이너 전체 검증은 새 커밋의 CI에서 확인해야 합니다.
+PyPI 연결 실패로 당시 로컬에서 완료하지 못했습니다. 이후 위 배포 SHA의 필수 CI 5개가 모두 성공해
+잠금 환경·MySQL 8.4·컨테이너 전체 검증을 확인했습니다.
 추가로 실행된 기존 EKS 백업 테스트 1건은 macOS `tar`가 `--sparse`를 지원하지 않아 실패했습니다.
 해당 코드와 테스트는 변경하지 않았고 Linux Infra CI의 검증을 유지합니다.
 
