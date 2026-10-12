@@ -66,6 +66,9 @@ async def test_actual_compose_stub_through_sdk_and_service(request_data, monkeyp
         await client.close()
     assert result.status == status
     assert [update.field for update in result.updates] == fields
+    assert result.clarification_kind == {
+        "전체 초기화": "QUERY", "설립 2년": "ESTABLISHMENT", "부산이나 대구로": "REGION",
+    }.get(message)
     if message == "지원금 위주":
         assert {update.field: update.value for update in result.updates} == {
             "QUERY": "사업화 지원금", "SUPPORT_PURPOSE": "지원금",

@@ -38,12 +38,17 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin, searchR
     {interests?.errors[JSON.stringify([program.sourceCode, program.id])] && <Notice error>{interests.errors[JSON.stringify([program.sourceCode, program.id])]}</Notice>}
     {onOpen && <Text style={local.description}>{[program.organization, ...program.regions].filter(Boolean).join(' · ')}</Text>}
     {onOpen && <Text style={local.description}>{program.applicationPeriod}</Text>}
-    {onOpen && otherRegion && <Notice>다른 지역 조건 확인 필요{'\n'}검색 지역({requestedRegion})과 공고 분류 지역({program.regions.join(' · ')})이 달라요. 분류만으로 신청 가능 여부를 판단하지 말고 원문의 지역 조건을 확인해 주세요.</Notice>}
+    {/* 서버가 지역 사전으로 판정해 뒤로 보낸 공고와, 그 표시가 없는 이전 결과의 화면 판정을 같은 안내 하나로 보여 줍니다. */}
+    {onOpen && (program.regionTagMismatch || otherRegion) && <Notice>다른 지역 조건 확인 필요{'\n'}{requestedRegion ? `검색 지역(${requestedRegion})과` : '회사 소재지와'} 공고 분류 지역({program.regions.join(' · ')})이 달라요. {program.regionTagMismatch ? '그래서 결과 뒤쪽에 두었어요. ' : ''}분류만으로 신청 가능 여부를 판단하지 말고 원문의 지역 조건을 확인해 주세요.</Notice>}
     {onOpen && review?.region.status === 'UNKNOWN' && <Text style={local.evidence}>지역 조건 확인 · {review.region.explanation}</Text>}
     <View style={[local.quote, !onOpen && { padding: 8, gap: 6 }]}>
-      <Text style={[local.badge, review && review.status !== 'MATCH' ? { backgroundColor: colors.warningSoft, color: colors.warning }
-        : !review && { backgroundColor: colors.divider, color: colors.secondaryText }]}>
-        {review?.status === 'MATCH' ? onOpen ? '조건 확인 · API 본문 기준' : '조건 확인' : review ? '확인 필요' : '자격 미평가'}</Text>
+      <View style={local.badges}>
+        <Text style={[local.badge, review && review.status !== 'MATCH' ? { backgroundColor: colors.warningSoft, color: colors.warning }
+          : !review && { backgroundColor: colors.divider, color: colors.secondaryText }]}>
+          {review?.status === 'MATCH' ? onOpen ? '조건 확인 · API 본문 기준' : '조건 확인' : review ? '확인 필요' : '자격 미평가'}</Text>
+        {program.regionTagMismatch && <Text style={[local.badge, { backgroundColor: colors.warningSoft, color: colors.warning }]}>
+          다른 지역 한정일 수 있음</Text>}
+      </View>
       {quotes.length > 0 ? (onOpen ? quotes : quotes.slice(0, 1)).map(quote => <Text selectable key={quote} style={[local.evidence, !onOpen && { fontSize: 12, lineHeight: 19 }]}>{quote}</Text>)
         : <Text style={local.evidence}>확인 가능한 본문 인용이 제공되지 않았습니다.</Text>}
     </View>
@@ -74,6 +79,7 @@ const local = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   description: { color: colors.secondaryText, fontSize: 13, lineHeight: 20 },
   quote: { backgroundColor: colors.background, borderRadius: 12, padding: 12, gap: 8 },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   badge: { alignSelf: 'flex-start', overflow: 'hidden', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
     color: colors.primaryText, backgroundColor: colors.soft, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   evidence: { color: colors.secondaryText, fontSize: 13, lineHeight: 21 },

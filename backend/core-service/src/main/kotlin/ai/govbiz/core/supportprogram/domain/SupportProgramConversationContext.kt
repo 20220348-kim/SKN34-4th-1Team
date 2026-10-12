@@ -20,6 +20,11 @@ data class SupportProgramConversationLastSearch(
 
 enum class SupportProgramConversationStatus { READY, CLARIFICATION_REQUIRED, ANSWERED }
 
+/** 보완 질문의 종류입니다. 화면은 이 코드로 질문에 맞는 선택지를 보이며 질문 문구는 AI Service가 정합니다. */
+enum class SupportProgramConversationClarificationKind {
+    QUERY, REGION, INDUSTRY, ESTABLISHMENT, SUPPORT_PURPOSE, ACCEPTING_ONLY, CHANGE_TARGET,
+}
+
 enum class SupportProgramConversationField {
     QUERY, REGION, INDUSTRY, ESTABLISHED_ON, FOUNDED_YEAR, SUPPORT_PURPOSE, ACCEPTING_ONLY,
 }

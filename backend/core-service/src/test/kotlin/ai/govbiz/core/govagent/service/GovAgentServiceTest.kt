@@ -219,6 +219,18 @@ class GovAgentServiceTest {
     }
 
     @Test
+    fun regionEvidenceIsReadWithTheSharedRegionDictionary() {
+        val message = "광산구나 부울경 쪽 회사 찾아줘"
+        val payload = AiGovAgentPayload("PARTNERS", AiGovPartnerConditionsPayload(
+            emptyList(), listOf(condition("광주", "광산구"), condition("부산", "부울경")), emptyList(), null,
+        ))
+        doReturn(payload).`when`(client).decide(AiGovAgentRequest(message, false, null, null))
+        val result = service.answer(admin, "127.0.0.1", GovAgentQuestion(message, context, null, null, null, null))
+
+        assertEquals(PartnerMatchConditions(emptySet(), setOf("광주", "부산"), emptyList()), result.partnerConditions)
+    }
+
+    @Test
     fun rolesWithoutTheRoleWordInTheirEvidenceAreNotApplied() {
         // 모델이 "모집글"만 보고 참여기관을 붙여도, 사용자가 역할을 말하지 않았으므로 역할로 거르지 않습니다.
         decidePartners(partnerPayload(roles = listOf(condition("PARTICIPANT", "모집글"), condition("LEAD", "참여기관 구하는"))))

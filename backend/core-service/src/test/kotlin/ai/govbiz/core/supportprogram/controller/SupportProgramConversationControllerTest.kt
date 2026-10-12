@@ -9,6 +9,7 @@ import ai.govbiz.core.account.service.AccountSessionService
 import ai.govbiz.core.account.web.AuthenticatedAccountArgumentResolver
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramConversationRequest
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
+import ai.govbiz.core.supportprogram.domain.SupportProgramConversationClarificationKind
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationContext
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationStatus
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
@@ -91,7 +92,8 @@ class SupportProgramConversationControllerTest {
 
     private fun stubClarification() {
         Mockito.`when`(service.interpret("부산으로 변경", emptyContext, null)).thenReturn(
-            SupportProgramConversationResult(SupportProgramConversationStatus.CLARIFICATION_REQUIRED, emptyContext, "어떤 지원을 원하시나요?", emptyList()),
+            SupportProgramConversationResult(SupportProgramConversationStatus.CLARIFICATION_REQUIRED, emptyContext, "어떤 지원을 원하시나요?",
+                emptyList(), clarificationKind = SupportProgramConversationClarificationKind.QUERY),
         )
     }
 
@@ -111,6 +113,7 @@ class SupportProgramConversationControllerTest {
             .andExpect(jsonPath("$.proposedContext.query").value("무역 지원"))
             .andExpect(jsonPath("$.answer").value(answer)).andReturn().response.contentAsString
         assertTrue(mapper.readTree(result).get("clarificationQuestion").isNull)
+        assertTrue(mapper.readTree(result).get("clarificationKind").isNull)
         Mockito.verify(service).interpret(dto.message, emptyContext, null, expectedProposal, expectedLastSearch)
         Mockito.verifyNoInteractions(search)
     }
@@ -148,6 +151,7 @@ class SupportProgramConversationControllerTest {
     fun explicitlyNullUnspecifiedFieldsAreAcceptedAndEveryResponseKeyIsPreserved() {
         stubClarification()
         val response = mvc().perform(request()).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CLARIFICATION_REQUIRED"))
+            .andExpect(jsonPath("$.clarificationKind").value("QUERY"))
             .andExpect(jsonPath("$.changedFields").isEmpty()).andReturn().response.contentAsString
         val tree = mapper.readTree(response)
         assertTrue(tree.has("answer"))

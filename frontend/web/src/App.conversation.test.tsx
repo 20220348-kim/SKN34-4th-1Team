@@ -11,7 +11,7 @@ import { appContainer } from './app/appContainer'
 import { createAppStore } from './app/store'
 import { sessionRestored, signedIn } from './presentation/shared/auth/state/authSlice'
 import { emptyConversationContext, readyConversationProposal, seoulConversationContext } from './data/fixtures/supportProgramConversation'
-import type { SupportProgramInterpretation } from './domain/entities/SupportProgramConversation'
+import { supportFieldQuickReplies, type SupportProgramInterpretation } from './domain/entities/SupportProgramConversation'
 
 vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => ({ CoreApiConnectionStatus: () => null }))
 const readiness = vi.hoisted(() => ({ canSearch: true }))
@@ -549,6 +549,34 @@ describe('대화 조건 해석·확인 검색 HTTP E2E', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
     expect(network.searchRequests).toHaveLength(1)
     expect(store.getState().chat.searchOptions.companyConditions?.establishedOn).toBe('2024-01-01')
+  })
+
+  it('찾는 지원사업을 묻는 질문에는 지원 분야 선택지를 주고 고르면 그 문구로 이어 해석만 한다', async () => {
+    const draft = { ...emptyConversationContext, companyConditions: { ...emptyConversationContext.companyConditions, region: '서울' } }
+    const question = '어떤 지원사업을 찾으시나요? 필요한 지원 내용이나 목적을 알려 주세요.'
+    const network = mockConversationNetwork([
+      { status: 'CLARIFICATION_REQUIRED', proposedContext: draft, clarificationQuestion: question,
+        changedFields: ['REGION'], clarificationKind: 'QUERY' },
+      { ...readyConversationProposal({ ...draft, query: '수출·해외진출 지원' }), changedFields: ['QUERY', 'REGION'] },
+    ])
+    renderConversationApp()
+    await submitMessage('서울 지원사업')
+    const clarification = screen.getByRole('region', { name: '조건 추가 확인' })
+    const replies = within(clarification).getByRole('group', { name: '지원 분야로 답하기' })
+    expect(within(replies).getAllByRole('button').map((button) => button.textContent)).toEqual([...supportFieldQuickReplies])
+    expect(within(clarification).getByText('지원 분야를 고르거나 답변을 입력해 주세요. 아직 검색하지 않았어요.')).toBeTruthy()
+
+    // 작성 중인 답변이 있으면 선택지가 그 내용을 덮어쓰지 않습니다.
+    const input = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(input, { target: { value: '제조 공정 개선' } })
+    expect((within(replies).getByRole('button', { name: '수출·해외진출 지원' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(input, { target: { value: '' } })
+
+    await act(async () => fireEvent.click(within(replies).getByRole('button', { name: '수출·해외진출 지원' })))
+    await waitFor(() => expect(screen.getByRole('region', { name: '조건 변경 제안' })).toBeTruthy())
+    expect(network.interpretRequests[1]).toEqual({ message: '수출·해외진출 지원', context: emptyConversationContext,
+      pendingClarification: { question, draftContext: draft } })
+    expect(network.searchRequests).toHaveLength(0)
   })
 
   it('제공처 검색 불가 중에도 해석할 수 있지만 준비 완료 전 확인 검색은 막는다', async () => {

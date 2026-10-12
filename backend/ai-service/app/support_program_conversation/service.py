@@ -61,7 +61,7 @@ class SupportProgramConversationService:
                 question = _CLARIFICATION_QUESTIONS[output.clarification_kind]
             return SupportProgramConversationResponse(
                 schemaVersion=SCHEMA_VERSION, status=output.status, updates=output.updates,
-                answer=answer, clarificationQuestion=question,
+                answer=answer, clarificationQuestion=question, clarificationKind=output.clarification_kind,
             )
         except (ValidationError, ValueError) as error:
             raise SupportProgramConversationError() from error

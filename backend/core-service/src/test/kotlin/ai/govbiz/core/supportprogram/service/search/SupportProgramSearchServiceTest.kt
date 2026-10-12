@@ -3,6 +3,12 @@ package ai.govbiz.core.supportprogram.service.search
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityAssessment
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityEvidence
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityEvidenceField
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityReview
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityReviewStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
@@ -312,6 +318,49 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
+    fun movesProgramsTaggedOnlyForOtherRegionsBehindTheRestWithoutDroppingThem() {
+        val query = "AI 창업지원"
+        val conditions = SupportProgramCompanyConditions(region = "서울특별시")
+        fun tagged(id: String, vararg regions: String) =
+            catalogProgram(id).let { it.copy(program = it.program.copy(regions = regions.toList())) }
+        val programs = listOf(
+            tagged("gyeongbuk", "경북"), tagged("seoul", "서울"), tagged("jeonnam", "전남", "광주"),
+            tagged("nationwide", "경북", "전국"), tagged("body-match", "경북"),
+        )
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(programs).`when`(retrieval).retrieve("$query\n서울특별시", programs)
+        ranking.response = { candidates ->
+            candidates.mapIndexed { index, candidate ->
+                // 본문 인용으로 지역을 확인한 공고는 태그가 달라도 뒤로 보내지 않습니다.
+                val region = if (candidate.program.id == "body-match") SupportProgramEligibilityStatus.MATCH
+                else SupportProgramEligibilityStatus.UNKNOWN
+                candidate.program.copy(recommendationScore = 90 - index, eligibilityReview = review(region))
+            }
+        }
+
+        val result = service().search(query, true, conditions)
+
+        assertEquals(listOf("seoul", "nationwide", "body-match", "gyeongbuk", "jeonnam"), result.programs.map(SupportProgram::id))
+        assertEquals(listOf(false, false, false, true, true), result.programs.map(SupportProgram::regionTagMismatch))
+        assertEquals(listOf(89, 87, 86, 90, 88), result.programs.map(SupportProgram::recommendationScore))
+    }
+
+    @Test
+    fun keepsRankingOrderWithoutRegionFlagsWhenNoCompanyRegionWasConfirmed() {
+        val query = "AI 창업지원"
+        val programs = listOf(catalogProgram("first").let { it.copy(program = it.program.copy(regions = listOf("경북"))) },
+            catalogProgram("second"))
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(programs).`when`(retrieval).retrieve("$query\n정보통신업", programs)
+        ranking.response = { candidates -> candidates.map { it.program.copy(recommendationScore = 80) } }
+
+        val result = service().search(query, true, SupportProgramCompanyConditions(industry = "정보통신업"))
+
+        assertEquals(listOf("first", "second"), result.programs.map(SupportProgram::id))
+        assertEquals(listOf(false, false), result.programs.map(SupportProgram::regionTagMismatch))
+    }
+
+    @Test
     fun keepsMaximumLengthQueryUnchangedForRankingWhileBoundingEnrichedRetrieval() {
         val query = "가".repeat(500)
         val conditions = SupportProgramCompanyConditions("나".repeat(50), "다".repeat(100), LocalDate.of(1900, 1, 1), "라".repeat(100))
@@ -538,6 +587,20 @@ class SupportProgramSearchServiceTest {
         ),
         sortTimestamp = sortTimestamp,
     )
+
+    private fun review(region: SupportProgramEligibilityStatus): SupportProgramEligibilityReview {
+        fun assessment(status: SupportProgramEligibilityStatus) = SupportProgramEligibilityAssessment(
+            status, "본문 확인",
+            if (status == SupportProgramEligibilityStatus.MATCH) {
+                listOf(SupportProgramEligibilityEvidence(SupportProgramEligibilityEvidenceField.SUMMARY, "AI 지원"))
+            } else emptyList(),
+        )
+        return SupportProgramEligibilityReview(
+            SupportProgramEligibilityReviewStatus.REVIEW_REQUIRED,
+            assessment(SupportProgramEligibilityStatus.UNKNOWN),
+            assessment(region),
+        )
+    }
 
     private data class RankingCall(
         val query: String,

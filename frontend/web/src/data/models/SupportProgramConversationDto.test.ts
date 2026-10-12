@@ -17,6 +17,17 @@ describe('대화 해석 응답 계약', () => {
     expect(domain.changedFields).not.toBe(ready.changedFields)
   })
 
+  it('확인 질문의 종류는 정해진 코드만 받고 종류를 보내기 전 서버의 질문도 그대로 받는다', () => {
+    const question = { status: 'CLARIFICATION_REQUIRED', proposedContext: emptyConversationContext,
+      clarificationQuestion: '어떤 지원사업을 찾으시나요? 필요한 지원 내용이나 목적을 알려 주세요.', changedFields: [] }
+    expect(toSupportProgramInterpretation(supportProgramInterpretationDtoSchema.parse({ ...question, clarificationKind: 'QUERY' }))
+      .clarificationKind).toBe('QUERY')
+    expect(supportProgramInterpretationDtoSchema.parse(question)).not.toHaveProperty('clarificationKind')
+    expect(supportProgramInterpretationDtoSchema.parse({ ...question, clarificationKind: null }).clarificationKind).toBeNull()
+    expect(supportProgramInterpretationDtoSchema.safeParse({ ...question, clarificationKind: 'WHERE' }).success).toBe(false)
+    expect(supportProgramInterpretationDtoSchema.safeParse({ ...ready, clarificationKind: 'QUERY' }).success).toBe(false)
+  })
+
   it('설명 답변과 이전 서버의 answer 누락을 검증하며 조건 제안과 구분한다', () => {
     const answered = { ...ready, status: 'ANSWERED', answer: '대구 무역 검색 결과는 0건입니다.\n접수 상태를 바꿔 볼 수 있어요.' }
     expect(supportProgramInterpretationDtoSchema.parse(answered)).toEqual(answered)

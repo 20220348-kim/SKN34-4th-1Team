@@ -1,6 +1,8 @@
 import { z } from 'zod'
 
-import { conversationChangedFields, type SupportProgramInterpretation } from '../../domain/entities/SupportProgramConversation'
+import {
+  conversationChangedFields, conversationClarificationKinds, type SupportProgramInterpretation,
+} from '../../domain/entities/SupportProgramConversation'
 
 const querySchema = z.string().max(500).refine((value) => value.trim().length > 0
   && !/[^\P{C}\n\r\t]/u.test(value))
@@ -35,7 +37,12 @@ export const supportProgramInterpretationDtoSchema = z.object({
   answer: z.string().max(1000).refine((value) => value.trim().length > 0
     && !/[^\P{C}\n\r\t]/u.test(value)).nullable().default(null),
   changedFields: z.array(z.enum(conversationChangedFields)).max(7),
+  // 이 필드를 보내기 전 Core 응답과 저장된 대화는 종류 없는 질문으로 받고 기존 응답 모양을 유지합니다.
+  clarificationKind: z.enum(conversationClarificationKinds).nullish(),
 }).superRefine((value, context) => {
+  if (value.status !== 'CLARIFICATION_REQUIRED' && value.clarificationKind != null) {
+    context.addIssue({ code: 'custom', path: ['clarificationKind'], message: '질문 종류는 확인 질문에만 있어야 합니다.' })
+  }
   if (value.status === 'READY' && (!value.proposedContext.query || value.clarificationQuestion !== null)) {
     context.addIssue({ code: 'custom', message: 'READY에는 검색 의도가 필요하며 확인 질문은 없어야 합니다.' })
   }

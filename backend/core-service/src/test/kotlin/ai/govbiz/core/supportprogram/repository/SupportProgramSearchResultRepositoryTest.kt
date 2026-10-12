@@ -15,6 +15,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
+import tools.jackson.databind.node.ObjectNode
 import tools.jackson.module.kotlin.KotlinModule
 
 class SupportProgramSearchResultRepositoryTest {
@@ -24,7 +25,8 @@ class SupportProgramSearchResultRepositoryTest {
     private val token = UUID.randomUUID().toString()
     private val key = "govbiz:search-result:v1:" + MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).toHexString()
     private val conditions = SupportProgramCompanyConditions("서울", "AI", LocalDate.of(2020, 1, 2), "기술 개발")
-    private val snapshot = SupportProgramSearchSnapshot("서울 AI \"지원\" 😀", listOf(program("BIZINFO"), program("KSTARTUP")),
+    private val snapshot = SupportProgramSearchSnapshot("서울 AI \"지원\" 😀",
+        listOf(program("BIZINFO").copy(regionTagMismatch = true), program("KSTARTUP")),
         SupportProgramConversationContext("서울 AI \"지원\" 😀", false, conditions))
 
     @AfterEach
@@ -96,6 +98,20 @@ class SupportProgramSearchResultRepositoryTest {
         assertFalse(payload.contains("sourceQualifiedId"))
         assertFalse(key.contains(token))
         assertFalse(connection.redis.hasKey("govbiz:search-result:v1:$token"))
+    }
+
+    @Test
+    fun resultsSavedBeforeTheRegionTagFlagExistedRestoreAsNotFlagged() {
+        repository.save(token, snapshot)
+        val stored = connection.redis.opsForHash<String, String>().get(key, "payload")!!
+        assertTrue(stored.contains("\"regionTagMismatch\":true"))
+        val legacy = json.readTree(stored) as ObjectNode
+        legacy.get("programs").forEach { (it as ObjectNode).remove("regionTagMismatch") }
+        connection.redis.opsForHash<String, String>().put(key, "payload", json.writeValueAsString(legacy))
+
+        val restored = requireNotNull(repository.claim(token, 1L))
+        assertEquals(listOf(false, false), restored.programs.map(SupportProgram::regionTagMismatch))
+        assertEquals(snapshot.programs.map { it.copy(regionTagMismatch = false) }, restored.programs)
     }
 
     @Test

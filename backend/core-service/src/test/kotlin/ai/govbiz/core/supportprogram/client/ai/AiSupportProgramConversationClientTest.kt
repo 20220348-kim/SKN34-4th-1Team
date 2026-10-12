@@ -52,6 +52,7 @@ class AiSupportProgramConversationClientTest {
         val payload = client.interpret(request)
         assertEquals("READY", payload.status)
         assertNull(payload.clarificationQuestion)
+        assertNull(payload.clarificationKind)
         assertNull(payload.answer)
         assertEquals("부산", payload.updates!!.single()!!.value)
     }
@@ -64,10 +65,11 @@ class AiSupportProgramConversationClientTest {
           "context":{"query":null,"acceptingOnly":true,"companyConditions":{"region":null,"industry":null,"establishedOn":null,"supportPurpose":null}},
           "pendingClarification":{"question":"정확한 설립일은?","draftContext":{"query":"시제품 지원","acceptingOnly":false,"companyConditions":{"region":"부산","industry":null,"establishedOn":"2024-02-29","supportPurpose":null}}},
           "pendingProposal":null,"lastSearch":null
-        }""", JsonCompareMode.STRICT)).andRespond(withSuccess("""{"schemaVersion":"$VERSION","status":"CLARIFICATION_REQUIRED","updates":[],"clarificationQuestion":"어떤 지원을 원하시나요?"}""", MediaType.APPLICATION_JSON))
+        }""", JsonCompareMode.STRICT)).andRespond(withSuccess("""{"schemaVersion":"$VERSION","status":"CLARIFICATION_REQUIRED","updates":[],"clarificationQuestion":"어떤 지원을 원하시나요?","clarificationKind":"QUERY"}""", MediaType.APPLICATION_JSON))
         val payload = client.interpret(request.copy(pendingClarification = AiSupportProgramPendingClarificationRequest("정확한 설립일은?", draft)))
         assertEquals("CLARIFICATION_REQUIRED", payload.status)
         assertEquals(emptyList<Any>(), payload.updates)
+        assertEquals("QUERY", payload.clarificationKind)
     }
 
     @Test

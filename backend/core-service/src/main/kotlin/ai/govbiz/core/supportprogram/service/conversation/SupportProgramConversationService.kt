@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.service.conversation
 
+import ai.govbiz.core._common.domain.RegionDictionary
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramConversationClient
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationCompanyConditionsRequest
@@ -7,6 +8,7 @@ import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationC
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationLastSearchRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramConversationRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramPendingClarificationRequest
+import ai.govbiz.core.supportprogram.domain.SupportProgramConversationClarificationKind
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationContext
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationField
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationLastSearch
@@ -71,21 +73,34 @@ class SupportProgramConversationService(
                 val year = value.takeIf { it.matches(Regex("[0-9]{4}")) }?.toIntOrNull() ?: invalidResponse()
                 if (year !in 1900..referenceDate.year || evidence.removeSuffix("년") != value) invalidResponse()
             }
-            proposed = applyUpdate(proposed, field, value)
+            // 서울특별시→서울처럼 표기만 다른 지역은 기존 표기를 유지해 바뀐 조건으로 세지 않습니다.
+            val applied = if (field == SupportProgramConversationField.REGION && value != null) {
+                listOf(context.companyConditions.region, proposed.companyConditions.region)
+                    .firstOrNull { RegionDictionary.isSameRegion(it, value) } ?: value
+            } else value
+            proposed = applyUpdate(proposed, field, applied)
         }
         if (!validContext(proposed, referenceDate)) invalidResponse()
+        // 질문 종류는 허용 코드만 받습니다. 이 필드를 보내기 전 AI Service의 질문은 종류 없이(null) 전달합니다.
+        val clarificationKind = payload.clarificationKind?.let { code ->
+            SupportProgramConversationClarificationKind.entries.firstOrNull { it.name == code } ?: invalidResponse()
+        }
         when (status) {
             SupportProgramConversationStatus.READY ->
-                if (proposed.query == null || payload.clarificationQuestion != null || payload.answer != null) invalidResponse()
+                if (proposed.query == null || payload.clarificationQuestion != null || payload.answer != null ||
+                    clarificationKind != null
+                ) invalidResponse()
             SupportProgramConversationStatus.CLARIFICATION_REQUIRED ->
                 if (payload.clarificationQuestion == null || !validText(payload.clarificationQuestion, 160) || payload.answer != null) invalidResponse()
             SupportProgramConversationStatus.ANSWERED ->
                 if (updates.isNotEmpty() || payload.clarificationQuestion != null || payload.answer == null ||
-                    !validText(payload.answer, 1000, multiline = true)
+                    !validText(payload.answer, 1000, multiline = true) || clarificationKind != null
                 ) invalidResponse()
         }
         val changedFields = SupportProgramConversationField.entries.filter { valueOf(context, it) != valueOf(proposed, it) }
-        return SupportProgramConversationResult(status, proposed, payload.clarificationQuestion, java.util.List.copyOf(changedFields), payload.answer)
+        return SupportProgramConversationResult(
+            status, proposed, payload.clarificationQuestion, java.util.List.copyOf(changedFields), payload.answer, clarificationKind,
+        )
     }
 
     private fun applyUpdate(

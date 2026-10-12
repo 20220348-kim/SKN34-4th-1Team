@@ -144,6 +144,26 @@ describe('ProgramResults', () => {
     }
   })
 
+  it('서버가 뒤로 보낸 다른 지역 공고에만 지역 태그와 함께 확인 안내를 붙이고 순서는 그대로 둔다', () => {
+    const programs = [
+      { ...relocationReviewRequiredProgram, regionTagMismatch: false },
+      { ...relocationReviewRequiredProgram, id: 'OTHER_REGION', title: '경북 전남 한정 지원', regions: ['경북', '전남'],
+        regionTagMismatch: true },
+    ]
+    render(<ProgramResults programs={programs} />, { wrapper: SearchRouter })
+    const cards = screen.getAllByRole('article')
+
+    expect(cards.map((card) => within(card).getByRole('heading', { level: 2 }).textContent))
+      .toEqual(programs.map((program) => program.title))
+    expect(within(cards[0]).queryByText('다른 지역 한정일 수 있음')).toBeNull()
+    expect(within(cards[0]).queryByText(/회사 소재지와 달라/)).toBeNull()
+    expect(within(cards[1]).getByText('다른 지역 한정일 수 있음', { exact: true })).toBeTruthy()
+    expect(within(cards[1]).getByText('공고 지역(경북·전남)이 회사 소재지와 달라 뒤쪽에 두었어요. 지역 조건은 원문에서 확인해 주세요.'))
+      .toBeTruthy()
+    // 태그 표시는 본문 자격 판정과 별개이므로 기존 확인 필요 표시를 바꾸지 않습니다.
+    expect(within(cards[1]).getByText('확인 필요', { exact: true })).toBeTruthy()
+  })
+
   it('충청남도 공고는 개별 원문이 아닌 공식 공지 목록임을 알리고 다른 출처의 원문 링크는 유지한다', () => {
     const programs = [
       { ...supportPrograms[0], sourceCode: 'CNTRADE_NOTICE', sourceName: '충청남도 온라인수출지원시스템',

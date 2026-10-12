@@ -1,31 +1,7 @@
 package ai.govbiz.core.partner.domain
 
+import ai.govbiz.core._common.domain.RegionDictionary
 import java.time.LocalDate
-
-/**
- * 모집글 희망 지역과 같은 짧은 시·도 이름입니다. 회사 소재지는 "서울특별시"처럼 긴 이름으로 저장되기도 해서
- * 맞춤 추천은 비교 전에 이 이름으로 맞춥니다. "서울특별시 강남구"처럼 시·군·구가 붙어 있으면 첫 낱말을 봅니다.
- */
-object PartnerRegionNames {
-    val SHORT_NAMES: List<String> = listOf(
-        "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
-        "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
-    )
-    private val LONG_NAMES = mapOf(
-        "서울특별시" to "서울", "부산광역시" to "부산", "대구광역시" to "대구", "인천광역시" to "인천",
-        "광주광역시" to "광주", "대전광역시" to "대전", "울산광역시" to "울산", "세종특별자치시" to "세종",
-        "경기도" to "경기", "강원특별자치도" to "강원", "강원도" to "강원", "충청북도" to "충북", "충청남도" to "충남",
-        "전북특별자치도" to "전북", "전라북도" to "전북", "전라남도" to "전남", "경상북도" to "경북", "경상남도" to "경남",
-        "제주특별자치도" to "제주", "제주도" to "제주",
-    )
-
-    fun shortName(region: String): String? {
-        val first = region.trim().split(WHITESPACE).firstOrNull() ?: return null
-        return if (first in SHORT_NAMES) first else LONG_NAMES[first]
-    }
-
-    private val WHITESPACE = Regex("\\s+")
-}
 
 /** 모집글을 고를 공고입니다. 공고는 제공처마다 ID가 겹칠 수 있어 출처와 함께 다룹니다. */
 data class PartnerMatchProgram(val sourceCode: String, val sourceProgramId: String)
@@ -41,7 +17,7 @@ data class PartnerMatchConditions(
     val program: PartnerMatchProgram? = null,
 ) {
     init {
-        require(regions.all { it in PartnerRegionNames.SHORT_NAMES }) { "regions must be short province names" }
+        require(regions.all { it in RegionDictionary.PROVINCES }) { "regions must be short province names" }
         require(keywords.size <= MAX_KEYWORDS) { "keywords must have at most $MAX_KEYWORDS items" }
         require(keywords.all { it.isNotBlank() && it == it.trim() && it.length <= MAX_KEYWORD_LENGTH }) {
             "each keyword must be a trimmed 1~$MAX_KEYWORD_LENGTH character text"

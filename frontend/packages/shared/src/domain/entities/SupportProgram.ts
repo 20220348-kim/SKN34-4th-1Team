@@ -33,6 +33,11 @@ export type SupportProgram = {
   matchedReasons: string[]
   recommendationScore: number | null
   eligibilityReview: SupportProgramEligibilityReview | null
+  /**
+   * 검색 결과에서만 참일 수 있습니다. 전국이 아닌 공고 지역 태그가 회사 소재지와 겹치지 않아 다른 지역 한정일 수 있어
+   * 서버가 결과 뒤로 보낸 공고입니다. 본문 자격 판정이 아닙니다.
+   */
+  regionTagMismatch?: boolean
 }
 
 /**

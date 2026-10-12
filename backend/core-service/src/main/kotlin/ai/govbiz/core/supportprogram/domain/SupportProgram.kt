@@ -27,6 +27,11 @@ data class SupportProgram(
     val preferenceDescription: String? = null,
     /** K-Startup 주관 기관 유형(공공기관·민간·교육기관·지자체 등)입니다. 기관 이름이 아닙니다. */
     val supervisingInstitutionType: String? = null,
+    /**
+     * 검색 결과 전용입니다. 전국이 아닌 공고 지역 태그가 회사 소재지와 겹치지 않아 다른 지역 한정일 수 있습니다.
+     * 태그 기반 정렬·표시용이며 본문 자격 판정(eligibilityReview)이 아닙니다.
+     */
+    val regionTagMismatch: Boolean = false,
 ) {
     init {
         require(SOURCE_CODE_PATTERN.matches(sourceCode)) {

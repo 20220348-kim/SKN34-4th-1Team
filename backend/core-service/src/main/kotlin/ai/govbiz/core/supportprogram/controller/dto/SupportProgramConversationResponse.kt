@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.controller.dto
 
+import ai.govbiz.core.supportprogram.domain.SupportProgramConversationClarificationKind
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationContext
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationField
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationStatus
@@ -11,6 +12,8 @@ data class SupportProgramConversationResponse(
     val clarificationQuestion: String?,
     val changedFields: List<SupportProgramConversationField>,
     val answer: String?,
+    /** CLARIFICATION_REQUIRED의 질문 종류이며 다른 상태와 종류를 모르는 질문은 null입니다. */
+    val clarificationKind: SupportProgramConversationClarificationKind? = null,
 ) {
     companion object {
         fun from(result: SupportProgramConversationResult) = SupportProgramConversationResponse(
@@ -19,6 +22,7 @@ data class SupportProgramConversationResponse(
             result.clarificationQuestion,
             java.util.List.copyOf(result.changedFields),
             result.answer,
+            result.clarificationKind,
         )
     }
 }

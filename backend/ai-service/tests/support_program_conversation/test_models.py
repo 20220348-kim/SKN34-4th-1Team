@@ -267,3 +267,19 @@ def test_public_clarification_contract_keeps_short_nonblank_text_validation(ques
             "schemaVersion": SCHEMA_VERSION, "status": "CLARIFICATION_REQUIRED", "updates": [],
             "answer": None, "clarificationQuestion": question,
         })
+
+
+def test_clarification_response_carries_only_an_allowed_question_kind():
+    base = {"schemaVersion": SCHEMA_VERSION, "status": "CLARIFICATION_REQUIRED", "updates": [], "answer": None,
+            "clarificationQuestion": "어떤 지원사업을 찾으시나요? 필요한 지원 내용이나 목적을 알려 주세요."}
+    parsed = SupportProgramConversationResponse.model_validate({**base, "clarificationKind": "QUERY"})
+    assert parsed.model_dump(by_alias=True)["clarificationKind"] == "QUERY"
+    for invalid in ({}, {"clarificationKind": None}, {"clarificationKind": "어디인가요?"}):
+        with pytest.raises(ValidationError):
+            SupportProgramConversationResponse.model_validate({**base, **invalid})
+
+    ready = {**base, "status": "READY", "clarificationQuestion": None}
+    # 질문이 아닌 응답은 기존 Core 계약 그대로 종류 키를 내지 않는다.
+    assert "clarificationKind" not in SupportProgramConversationResponse.model_validate(ready).model_dump(by_alias=True)
+    with pytest.raises(ValidationError):
+        SupportProgramConversationResponse.model_validate({**ready, "clarificationKind": "QUERY"})

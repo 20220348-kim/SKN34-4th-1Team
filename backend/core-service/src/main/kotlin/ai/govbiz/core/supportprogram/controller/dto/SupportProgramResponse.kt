@@ -26,6 +26,8 @@ data class SupportProgramResponse(
     val matchedReasons: List<String>,
     val recommendationScore: Int?,
     val eligibilityReview: SupportProgramEligibilityReviewResponse? = null,
+    /** 검색 결과 전용: 공고 지역 태그가 회사 소재지와 겹치지 않아 다른 지역 한정일 수 있습니다. 자격 판정이 아닙니다. */
+    val regionTagMismatch: Boolean = false,
 ) {
     companion object {
         fun from(program: SupportProgram): SupportProgramResponse =
@@ -47,6 +49,7 @@ data class SupportProgramResponse(
                 matchedReasons = program.matchedReasons,
                 recommendationScore = program.recommendationScore,
                 eligibilityReview = program.eligibilityReview?.let(SupportProgramEligibilityReviewResponse::from),
+                regionTagMismatch = program.regionTagMismatch,
             )
     }
 }

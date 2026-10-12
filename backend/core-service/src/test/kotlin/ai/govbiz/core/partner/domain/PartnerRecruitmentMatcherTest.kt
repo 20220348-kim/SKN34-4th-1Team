@@ -158,12 +158,4 @@ class PartnerRecruitmentMatcherTest {
         assertEquals(3, result.matches.size)
         assertEquals(5, result.total)
     }
-
-    @Test
-    fun normalizesLongCompanyRegionNames() {
-        assertEquals("서울", PartnerRegionNames.shortName("서울특별시"))
-        assertEquals("경기", PartnerRegionNames.shortName("경기도 성남시"))
-        assertEquals("강원", PartnerRegionNames.shortName("강원도"))
-        assertNull(PartnerRegionNames.shortName("해외"))
-    }
 }
