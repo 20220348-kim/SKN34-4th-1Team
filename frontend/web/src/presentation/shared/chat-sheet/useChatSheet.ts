@@ -30,6 +30,13 @@ export function useInChatSheet(): boolean {
   return useContext(InChatSheetContext)
 }
 
+/** 시트로 띄운 화면의 주소입니다. 시트가 없으면 null입니다. 뒤의 대화가 시트에서 저장한 검토를 작업 카드에 붙일 때 씁니다. */
+export const ChatSheetLocationContext = createContext<Location | null>(null)
+
+export function useChatSheetLocation(): Location | null {
+  return useContext(ChatSheetLocationContext)
+}
+
 /** 대화 위 시트를 닫은 횟수입니다. 뒤에 남아 있던 대화의 작업 카드는 이 값이 바뀌면 상태를 다시 읽습니다. */
 export const ChatSheetClosedContext = createContext(0)
 
@@ -97,6 +104,7 @@ export function useChatSheetRouting() {
      */
     routesLocation: current.background ?? location,
     background: current.background,
+    sheetLocation: current.background ? location : null,
     kind: current.background ? chatSheetKind(location.pathname) : null,
     closedCount: current.closed,
     close,

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { asValue } from 'awilix/browser'
-import { StrictMode, useState } from 'react'
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
@@ -15,8 +15,7 @@ import { PlanQuotaExceededError } from '@govbiz/shared/domain/errors/PlanQuotaEr
 import { CombinationReviewUseCase } from '../../../../domain/usecases/CombinationReviewUseCase'
 import { CombinationReviewRepositoryImpl } from '../../../../data/repositories/CombinationReviewRepositoryImpl'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
-import { CombinationReviewEditorPage, CombinationReviewListPage, CombinationReviewPanel, CombinationReviewRunResultPage } from './CombinationReviewPages'
-import type { InitialReviewProgram } from '../viewmodel/useReviewEditorViewModel'
+import { CombinationReviewEditorPage, CombinationReviewListPage, CombinationReviewRunResultPage } from './CombinationReviewPages'
 import { answerRunFixture, reviewFixture, runFixture } from '../testing/reviewFixtures'
 import { useReviewSessionIsolation } from '../viewmodel/useReviewSessionIsolation'
 import { chooseOption, optionLabels, selectedValue } from '../../../../test/selectField'
@@ -78,178 +77,6 @@ function mount(path = '/app/combination-reviews/12?step=analysis', strict = fals
   const rendered = render(strict ? <StrictMode>{screenTree}</StrictMode> : screenTree)
   return { store, ...rendered }
 }
-
-function mountPanel(id: number | null = 12, initialProgram: InitialReviewProgram | null = null, onCreated = vi.fn()) {
-  const store = createAppStore()
-  store.dispatch(signedIn({ email: 'a@example.com', role: 'ADMIN', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
-  function SavedPanel() {
-    const [savedId, setSavedId] = useState(id)
-    return <CombinationReviewPanel id={savedId} initialProgram={initialProgram} onCreated={(next) => { onCreated(next); setSavedId(next) }} />
-  }
-  return { store, onCreated, ...render(<Provider store={store}><Isolation /><MemoryRouter initialEntries={[
-    { pathname: '/app/chat', search: '?step=analysis&conversation=4', state: { additionalFacts: '다른 화면에서 온 설명' } },
-  ]}><LocationProbe /><SavedPanel /></MemoryRouter></Provider>) }
-}
-
-describe('embedded combination review', () => {
-  it.each([false, true])('creates a review only after two explicit choices, with preselection=%s, and keeps the chat URL', async (preselected) => {
-    const first = catalogProgram('PBLN_100', { title: '청년창업 사업화 지원 공고' })
-    const second = catalogProgram('PBLN_200', { title: '딥테크 성장 지원 공고' })
-    browseSavedPrograms.mockResolvedValue(savedEntries(first, second))
-    repository.create.mockResolvedValue(structuredClone(reviewFixture))
-    const mounted = mountPanel(null, preselected ? { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_100' } : null)
-    if (preselected) await within(slot(1)).findByText(first.title)
-    expect(screen.queryByRole('main')).toBeNull()
-    expect(repository.create).not.toHaveBeenCalled()
-    expect(repository.start).not.toHaveBeenCalled()
-    fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '대화에서 고른 두 사업' } })
-    for (const index of preselected ? [2] : [1, 2]) {
-      fireEvent.click(within(slot(index)).getByRole('button', { name: `사업 ${index} 공고 고르기` }))
-      const picker = screen.getByRole('dialog', { name: '공고 고르기' })
-      fireEvent.click(await within(picker).findByRole('radio', { name: new RegExp(index === 1 ? first.title : second.title) }))
-      fireEvent.click(within(picker).getByRole('button', { name: `사업 ${index}로 선택` }))
-    }
-    fireEvent.click(nextButton())
-    await screen.findByRole('region', { name: '분석 실행' })
-    expect(mounted.onCreated).toHaveBeenCalledExactlyOnceWith(12)
-    expect(repository.create.mock.calls[0][0].programs.map((program: ReviewProgram) => program.participation)).toEqual([unknownParticipation(), unknownParticipation()])
-    expect(screen.getByLabelText('분석에 참고할 추가 설명 (선택)')).toHaveProperty('value', '')
-    expect(repository.start).not.toHaveBeenCalled()
-    expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
-  })
-
-  it('fills the title as "사업 1 X 사업 2 검토" once both programs are chosen, without overwriting a typed title', async () => {
-    const first = catalogProgram('PBLN_100', { title: '청년창업 사업화 지원 공고' })
-    const second = catalogProgram('PBLN_200', { title: '딥테크 성장 지원 공고' })
-    const third = catalogProgram('PBLN_300', { title: '2026년 수출 바우처 모집 공고' })
-    browseSavedPrograms.mockResolvedValue(savedEntries(first, second, third))
-    mountPanel(null)
-    const title = () => screen.getByLabelText('검토 제목') as HTMLInputElement
-    const choose = async (index: number, program: SupportProgram) => {
-      fireEvent.click(within(slot(index)).getByRole('button', { name: new RegExp(`사업 ${index} 공고 (고르기|바꾸기)`) }))
-      const picker = screen.getByRole('dialog', { name: '공고 고르기' })
-      fireEvent.click(await within(picker).findByRole('radio', { name: new RegExp(program.title) }))
-      fireEvent.click(within(picker).getByRole('button', { name: `사업 ${index}로 선택` }))
-    }
-    await choose(1, first)
-    expect(title().value).toBe('')
-    await choose(2, second)
-    expect(title().value).toBe('청년창업 사업화 지원 X 딥테크 성장 지원 검토')
-    // 자동으로 채운 제목은 사업을 바꾸면 따라 바뀌고, 직접 고친 제목은 그대로 둡니다.
-    await choose(2, third)
-    expect(title().value).toBe('청년창업 사업화 지원 X 수출 바우처 검토')
-    fireEvent.change(title(), { target: { value: '내가 정한 제목' } })
-    await choose(2, second)
-    expect(title().value).toBe('내가 정한 제목')
-  })
-
-  it('answers "can I apply to both" in chat with the verdict chips and conclusion, and opens the full result on the result page', async () => {
-    repository.runs.mockResolvedValue({ items: [structuredClone(answerRunFixture)], nextBeforeId: null })
-    repository.run.mockResolvedValue(structuredClone(answerRunFixture))
-    mountPanel()
-    const conclusion = await screen.findByRole('region', { name: '검토 결론' })
-    expect(within(conclusion).getByText('신청 · 조건부')).toBeTruthy()
-    expect(within(conclusion).getByText('함께 수행 · 기관 확인')).toBeTruthy()
-    expect(within(conclusion).getByText('같은 과제·비용 · 불가')).toBeTruthy()
-    expect(within(conclusion).getByRole('heading', { name: '같은 과제·비용으로 두 번 받을 수 없어요' })).toBeTruthy()
-    // 조건부 답은 조건과 결과를 함께 보여 주고, 기관에 물어볼 것·근거 원문은 결과 화면으로 미룹니다.
-    expect(within(conclusion).getByRole('list', { name: '조건별 결과' })).toBeTruthy()
-    expect(within(conclusion).queryByText('기관에 물어볼 것')).toBeNull()
-    // 결과 자세히는 대화에 펼치지 않고 검토 결과 화면으로 옮깁니다.
-    await act(async () => { fireEvent.click(within(conclusion).getByRole('button', { name: /결과 자세히/ })) })
-    expect(currentLocation()).toBe('/app/combination-reviews/12/runs/31')
-    expect(screen.queryByRole('region', { name: '실행 31 결과' })).toBeNull()
-  })
-
-  it('folds the optional situation and the run history in chat', async () => {
-    await act(async () => { mountPanel() })
-    expect(screen.getByText('내 상황 (선택) · 고르면 조건에 따라 갈리는 답을 좁혀요').closest('details')?.open).toBe(false)
-    expect(screen.getByText(/^실행 기록 \d+건$/).closest('details')?.open).toBe(false)
-  })
-
-  it('saves changed input, starts once, and moves to the result page of the accepted run', async () => {
-    const queued = { ...runFixture, inputRevision: 3, status: 'QUEUED', analysis: null, evidence: null, finishedAt: null }
-    repository.replace.mockResolvedValue(undefined)
-    repository.start.mockImplementation(async (_id, request) => ({ ...queued, requestKey: request.requestKey }))
-    await act(async () => { mountPanel() })
-    chooseOption(screen.getByLabelText('사업 1 지금 상태'), 'UNKNOWN')
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '검토 실행' })) })
-    expect(repository.replace).toHaveBeenCalledTimes(1)
-    expect(repository.start).toHaveBeenCalledTimes(1)
-    expect(repository.start.mock.calls[0][1].expectedRevision).toBe(3)
-    // 분석을 접수하면 대화에서 진행을 지켜보지 않고 검토 결과 화면에서 진행 상태와 결과를 봅니다.
-    expect(currentLocation()).toBe(`/app/combination-reviews/12/runs/${queued.id}`)
-    expect(screen.queryByRole('main')).toBeNull()
-  })
-
-  it('preserves the same pending request across reopening without an automatic analysis', async () => {
-    repository.start.mockRejectedValueOnce(new TypeError('lost response')).mockImplementation(async (_id, request) => ({ ...runFixture, requestKey: request.requestKey }))
-    const first = mountPanel()
-    fireEvent.click(await screen.findByRole('button', { name: '검토 실행' }))
-    await screen.findByRole('alert')
-    const request = repository.start.mock.calls[0][1]
-    first.unmount()
-    mountPanel()
-    await screen.findByText(/응답을 확인하지 못한 분석 요청/)
-    expect(repository.start).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
-    await screen.findByRole('button', { name: /#30 · 입력 버전 1 · 분석 완료/ })
-    expect(repository.start).toHaveBeenCalledTimes(2)
-    expect(repository.start.mock.calls[1][1]).toEqual(request)
-    expect(currentLocation()).toBe('/app/chat?step=analysis&conversation=4')
-  })
-
-  it('opens a failed run on the result page without starting a new analysis', async () => {
-    const failed = { ...runFixture, status: 'FAILED', analysis: null, failureCode: 'SOURCE_UNSUPPORTED' }
-    repository.runs.mockResolvedValue({ items: [failed], nextBeforeId: null })
-    repository.run.mockResolvedValue(failed)
-    mountPanel()
-    fireEvent.click(await screen.findByRole('button', { name: /자세히 보기: 실행 #30/ }))
-    expect(currentLocation()).toBe('/app/combination-reviews/12/runs/30')
-    expect(screen.queryByRole('region', { name: '실행 30 결과' })).toBeNull()
-    expect(repository.start).not.toHaveBeenCalled()
-  })
-
-  it('does not attach a late created review after the account changes', async () => {
-    browseSavedPrograms.mockResolvedValue(savedEntries(catalogProgram('PBLN_200', { title: '두 번째 공고' })))
-    let resolve!: (value: typeof reviewFixture) => void
-    repository.create.mockImplementation(() => new Promise((done) => { resolve = done }))
-    const mounted = mountPanel(null, { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_100' })
-    fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '계정 전환 전 검토' } })
-    fireEvent.click(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' }))
-    const picker = screen.getByRole('dialog', { name: '공고 고르기' })
-    fireEvent.click(await within(picker).findByRole('radio', { name: /두 번째 공고/ }))
-    fireEvent.click(within(picker).getByRole('button', { name: '사업 2로 선택' }))
-    fireEvent.click(nextButton())
-    await waitFor(() => expect(repository.create).toHaveBeenCalledTimes(1))
-    const signal = repository.create.mock.calls[0][1] as AbortSignal
-    act(() => mounted.store.dispatch(signedIn({ email: 'b@example.com', role: 'ADMIN', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null })))
-    expect(signal.aborted).toBe(true)
-    await act(async () => { resolve(reviewFixture) })
-    expect(mounted.onCreated).not.toHaveBeenCalled()
-    expect(repository.start).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('검토 제목')).toHaveProperty('value', '')
-  })
-
-  it.each(['unmount', 'account'] as const)('stops embedded polling after %s and ignores a late result', async (departure) => {
-    vi.useFakeTimers()
-    const queued = { ...runFixture, status: 'QUEUED', analysis: null, finishedAt: null }
-    repository.runs.mockResolvedValue({ items: [queued], nextBeforeId: null })
-    let resolve!: (value: typeof runFixture) => void
-    repository.run.mockImplementation(() => new Promise((done) => { resolve = done }))
-    let mounted!: ReturnType<typeof mountPanel>
-    await act(async () => { mounted = mountPanel() })
-    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
-    const signal = repository.run.mock.calls[0][2] as AbortSignal
-    if (departure === 'unmount') mounted.unmount()
-    else act(() => mounted.store.dispatch(signedOut()))
-    expect(signal.aborted).toBe(true)
-    await act(async () => { resolve(runFixture); await vi.advanceTimersByTimeAsync(9000) })
-    expect(repository.run).toHaveBeenCalledTimes(1)
-    expect(repository.start).not.toHaveBeenCalled()
-    expect(screen.queryByRole('region', { name: '최근 실행' })).toBeNull()
-  })
-})
 
 describe('review screens and execution safety', () => {
   it('shows the review title and both ancestor links on results and navigates back', async () => {
@@ -515,6 +342,53 @@ describe('review screens and execution safety', () => {
 
     await waitFor(() => expect(repository.create).toHaveBeenCalledOnce())
     expect(programKeys(repository.create.mock.calls[0][0].programs)).toEqual(['BIZINFO:PBLN_100', 'BIZINFO:PBLN_500'])
+  })
+
+  it('fills the title as "사업 1 X 사업 2 검토" once both programs are chosen, without overwriting a typed title', async () => {
+    const first = catalogProgram('PBLN_100', { title: '청년창업 사업화 지원 공고' })
+    const second = catalogProgram('PBLN_200', { title: '딥테크 성장 지원 공고' })
+    const third = catalogProgram('PBLN_300', { title: '2026년 수출 바우처 모집 공고' })
+    browseSavedPrograms.mockResolvedValue(savedEntries(first, second, third))
+    mount('/app/combination-reviews/new')
+    const title = () => screen.getByLabelText('검토 제목') as HTMLInputElement
+    const choose = async (index: number, program: SupportProgram) => {
+      fireEvent.click(within(slot(index)).getByRole('button', { name: new RegExp(`사업 ${index} 공고 (고르기|바꾸기)`) }))
+      const picker = screen.getByRole('dialog', { name: '공고 고르기' })
+      fireEvent.click(await within(picker).findByRole('radio', { name: new RegExp(program.title) }))
+      fireEvent.click(within(picker).getByRole('button', { name: `사업 ${index}로 선택` }))
+    }
+    await choose(1, first)
+    expect(title().value).toBe('')
+    await choose(2, second)
+    expect(title().value).toBe('청년창업 사업화 지원 X 딥테크 성장 지원 검토')
+    // 자동으로 채운 제목은 사업을 바꾸면 따라 바뀌고, 직접 고친 제목은 그대로 둡니다.
+    await choose(2, third)
+    expect(title().value).toBe('청년창업 사업화 지원 X 수출 바우처 검토')
+    fireEvent.change(title(), { target: { value: '내가 정한 제목' } })
+    await choose(2, second)
+    expect(title().value).toBe('내가 정한 제목')
+  })
+
+  it('does not open a late created review after the account changes', async () => {
+    browseSavedPrograms.mockResolvedValue(savedEntries(catalogProgram('PBLN_200', { title: '두 번째 공고' })))
+    let resolve!: (value: typeof reviewFixture) => void
+    repository.create.mockImplementation(() => new Promise((done) => { resolve = done }))
+    const path = '/app/combination-reviews/new?sourceCode=BIZINFO&sourceProgramId=PBLN_100'
+    const mounted = mount(path)
+    fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '계정 전환 전 검토' } })
+    fireEvent.click(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' }))
+    const picker = screen.getByRole('dialog', { name: '공고 고르기' })
+    fireEvent.click(await within(picker).findByRole('radio', { name: /두 번째 공고/ }))
+    fireEvent.click(within(picker).getByRole('button', { name: '사업 2로 선택' }))
+    fireEvent.click(nextButton())
+    await waitFor(() => expect(repository.create).toHaveBeenCalledTimes(1))
+    const signal = repository.create.mock.calls[0][1] as AbortSignal
+    act(() => mounted.store.dispatch(signedIn({ email: 'b@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null })))
+    expect(signal.aborted).toBe(true)
+    await act(async () => { resolve(reviewFixture) })
+    expect(currentLocation()).toBe(path)
+    expect(repository.start).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('검토 제목')).toHaveProperty('value', '')
   })
 
   it.each(['?sourceCode=bizinfo&sourceProgramId=PBLN_100', '?sourceCode=BIZINFO&sourceProgramId=%20', '?sourceProgramId=PBLN_100'])(

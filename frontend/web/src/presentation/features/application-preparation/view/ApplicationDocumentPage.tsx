@@ -63,32 +63,13 @@ function madeAtLabel(value: string) {
   return `${two(date.getMonth() + 1)}.${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
 }
 
-/** 대화에서 기존 문서 생성·진행·다운로드 흐름을 같은 구현으로 보여 줍니다. */
-export function ApplicationDocumentPanel({ id, program, requestedRevision, onEdit }: {
-  id: number
-  program?: { sourceCode: string; sourceProgramId: string }
-  requestedRevision?: number | null
-  onEdit: () => void
-}) {
-  return <DocumentResults key={`${id}:${program?.sourceCode}:${program?.sourceProgramId}:${requestedRevision ?? 'stored'}`}
-    id={id} program={program} initialRevision={requestedRevision} onEdit={onEdit} />
-}
-
-function DocumentResults({ id, program, initialRevision, onEdit }: {
-  id: number
-  program?: { sourceCode: string; sourceProgramId: string }
-  initialRevision?: number | null
-  onEdit?: () => void
-}) {
-  const embedded = onEdit !== undefined
-  const sourceCode = program?.sourceCode
-  const sourceProgramId = program?.sourceProgramId
+function DocumentResults({ id }: { id: number }) {
   const useCase = appContainer.resolve('applicationPreparationUseCase')
   // 이 화면을 열었거나 여기서 작업이 끝나는 것을 지켜봤으면 그 결과는 확인한 것입니다. 작업을 접수하면 사이드바·목록이 따라가게 다시 읽힙니다.
   const { refresh: refreshJobs, markDocumentJobsSeen } = usePreparationJobActions()
   const [search, setSearch] = useSearchParams()
   /** 답변 입력에서 [초안 만들기]로 들어온 버전입니다. 한 번 읽으면 주소에서 지워, 다시 들어와도 같은 버전을 저절로 제출하지 않습니다. */
-  const requestedRevision = useRef(embedded ? initialRevision == null ? null : String(initialRevision) : search.get('generate'))
+  const requestedRevision = useRef(search.get('generate'))
   const [preparation, setPreparation] = useState<ApplicationPreparation | null>(null)
   const [files, setFiles] = useState<ApplicationDocument[]>([])
   /** 최근 생성 작업들. 문서 묶음 제목의 만든 시각을 작업의 끝난 시각에서 읽습니다. */
@@ -149,13 +130,13 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
   }
 
   useEffect(() => {
-    if (embedded || !search.has('generate')) return
+    if (!search.has('generate')) return
     setSearch((current) => {
       const next = new URLSearchParams(current)
       next.delete('generate')
       return next
     }, { replace: true })
-  }, [embedded, search, setSearch])
+  }, [search, setSearch])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -191,7 +172,7 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
           useCase.documentJobs(id, controller.signal).catch(() => [] as ApplicationDocumentGenerationJob[]),
         ])
         if (controller.signal.aborted) return
-        if (detail.id !== id || (sourceCode !== undefined && (detail.form.sourceCode !== sourceCode || detail.form.sourceProgramId !== sourceProgramId))) {
+        if (detail.id !== id) {
           setPreparation(null); setFiles([]); setJobs([])
           throw new Error('선택한 공고와 신청 문서가 일치하지 않습니다. 신청 준비를 다시 시작해 주세요.')
         }
@@ -260,7 +241,7 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
     }
     void load()
     return () => { controller.abort(); downloadController.current?.abort(); migrationController.current?.abort() }
-  }, [id, sourceCode, sourceProgramId, useCase, attempt, markDocumentJobsSeen, refreshJobs, reloadPlanUsage])
+  }, [id, useCase, attempt, markDocumentJobsSeen, refreshJobs, reloadPlanUsage])
 
   useEffect(() => {
     if (busySince === null) { setElapsedSeconds(0); return }
@@ -286,7 +267,7 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
       if (controller.signal.aborted) return
       const updated = await useCase.get(id, controller.signal)
       if (controller.signal.aborted) return
-      if (updated.id !== id || (sourceCode !== undefined && (updated.form.sourceCode !== sourceCode || updated.form.sourceProgramId !== sourceProgramId))) {
+      if (updated.id !== id) {
         setPreparation(null); setFiles([]); setMigration(null)
         throw new Error('선택한 공고와 신청 문서가 일치하지 않습니다. 신청 준비를 다시 시작해 주세요.')
       }
@@ -375,21 +356,13 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
       <button type="button" className={`${workspacePageStyles.secondaryButton} ${d.headerOnly}`} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
     </> : undefined
 
-  const Content = embedded ? 'section' : 'main'
   return <>
-    {embedded ? <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="text-base font-bold">{pageTitle}</h2>
-      <div className="flex flex-wrap gap-2">
-        {generating && <span className={workspaceTagClassName('muted')}><ButtonSpinner />초안 만드는 중</span>}
-        <button type="button" className={n.secondarySm} onClick={onEdit}>답변 입력으로</button>
-        {canRegenerate && <button type="button" className={n.secondarySm} onClick={regenerate}>다시 만들기</button>}
-      </div>
-    </div> : <WorkspacePageHeader
+    <WorkspacePageHeader
       parent={[{ to: appPaths.applicationPreparations, label: '신청 문서 작성' }, { to: back, label: '답변 입력' }]}
       title={pageTitle}
       actions={headerActions}
-    />}
-    <Content className={embedded ? 'flex min-w-0 flex-col gap-4' : workspacePageStyles.content}>
+    />
+    <main className={workspacePageStyles.content}>
       {(preparation || busy) && <ApplicationPreparationLede preparation={preparation} />}
       <div className={d.body}>
         {busy && job && <section className={n.progress} role="status" aria-live="polite" aria-label="문서 생성 진행">
@@ -407,7 +380,7 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
         {showFilesSkeleton && <DocumentFilesSkeleton />}
 
         {failedJob && preparation && <FailureCard job={failedJob} sourceUrl={preparation.form.sourceUrl} editorTo={back}
-          reanalyzeTo={reanalyzeTo} retryDisabled={busy} onRetry={regenerate} onEdit={onEdit} />}
+          reanalyzeTo={reanalyzeTo} retryDisabled={busy} onRetry={regenerate} />}
         {capacityFull && <div className={`${n.alert} ${n.alertWarning}`} role="alert">
           <div className={n.alertText}>
             <strong className={n.alertTitle}>진행 중인 초안 만들기가 3건이에요</strong>
@@ -483,20 +456,19 @@ function DocumentResults({ id, program, initialRevision, onEdit }: {
             <strong className={n.alertTitle} id="documents-unanswered-title">답하지 않은 질문 {unanswered.length}개</strong>
             <p>{unanswered[0].label}{unanswered.length > 1 ? ` 외 ${unanswered.length - 1}개` : ''} — 문서에 빈칸으로 남아요. 제출 전에 채우거나 답을 적고 다시 만들어 주세요.</p>
           </div>
-          {onEdit ? <button type="button" className={n.secondarySm} onClick={onEdit}>답변 입력으로</button>
-            : <Link className={n.secondarySm} to={`${back}?${new URLSearchParams({ question: unanswered[0].key })}`}>답변 입력으로</Link>}
+          <Link className={n.secondarySm} to={`${back}?${new URLSearchParams({ question: unanswered[0].key })}`}>답변 입력으로</Link>
         </section>}
 
         {files.length > 0 && <p className={d.note}>한 원본 파일에 신청서가 여러 개 있으면 한 파일로 드려요. 내려받은 문서의 기입 위치와 줄바꿈을 확인한 뒤 제출해 주세요.</p>}
 
-        {canRegenerate && !embedded && <div className={d.mobileBar}>
+        {canRegenerate && <div className={d.mobileBar}>
           {changedBadge && <span className="self-start">{changedBadge}</span>}
           <div className={d.mobileButtons}>
             <button type="button" className={e.prevButton} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
           </div>
         </div>}
       </div>
-    </Content>
+    </main>
     <WorkspaceToast notice={toast} onClose={() => setToast(null)} />
   </>
 }
@@ -510,19 +482,17 @@ type FailureCardProps = {
   reanalyzeTo: string
   retryDisabled: boolean
   onRetry: () => void
-  onEdit?: () => void
 }
 
 /**
  * 끝났지만 성공하지 못한 초안 작업의 안내 카드입니다. 제목 · 본문 · 버튼은 실패 코드의 묶음으로 고르고,
  * 서버 문장은 아래에 작은 글씨로만 둡니다. 빨간 경고는 다시 시도로 풀리는 일시 오류에만 씁니다.
  */
-function FailureCard({ job, sourceUrl, editorTo, reanalyzeTo, retryDisabled, onRetry, onEdit }: FailureCardProps) {
+function FailureCard({ job, sourceUrl, editorTo, reanalyzeTo, retryDisabled, onRetry }: FailureCardProps) {
   const code = failureCodeOf(job)
   const group = failureGroupOf(job)
   const review = `${editorTo}?step=review`
-  const toEditor = (to: string) => onEdit ? <button type="button" className={n.secondarySm} onClick={onEdit}>답변 입력으로</button>
-    : <Link className={n.secondarySm} to={to}>답변 입력으로</Link>
+  const toEditor = (to: string) => <Link className={n.secondarySm} to={to}>답변 입력으로</Link>
   const title = generationFailureTitle(job)
   let body: string
   let actions: ReactNode = null
@@ -531,8 +501,7 @@ function FailureCard({ job, sourceUrl, editorTo, reanalyzeTo, retryDisabled, onR
       body = '양식이 크거나 복잡해 입력칸 위치를 찾지 못했어요. 다시 시도해도 결과는 같아요. 저장된 답변을 보며 원본 양식에 직접 옮겨 적어 주세요.'
       actions = <>
         <a className={n.secondarySm} href={sourceUrl} target="_blank" rel="noreferrer">원문에서 양식 받기 ↗<span className="sr-only"> (새 창)</span></a>
-        {onEdit ? <button type="button" className={n.secondarySm} onClick={onEdit}>답변 입력으로</button>
-          : <Link className={n.secondarySm} to={`${review}&helper=open`}>답변 모아 보기</Link>}
+        <Link className={n.secondarySm} to={`${review}&helper=open`}>답변 모아 보기</Link>
       </>
       break
     case 'reanalysis':

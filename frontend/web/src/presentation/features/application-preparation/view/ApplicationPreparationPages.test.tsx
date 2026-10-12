@@ -11,8 +11,8 @@ import type { ApplicationDocumentGenerationJob, ApplicationForm, ApplicationPrep
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { ApplicationPreparationUseCase } from '../../../../domain/usecases/ApplicationPreparationUseCase'
-import { signedIn, signedOut } from '../../../shared/auth/state/authSlice'
-import { ApplicationPreparationEditorPage, ApplicationPreparationEditorPanel, ApplicationPreparationListPage } from './ApplicationPreparationPages'
+import { signedIn } from '../../../shared/auth/state/authSlice'
+import { ApplicationPreparationEditorPage, ApplicationPreparationListPage } from './ApplicationPreparationPages'
 import { formAnalysisPollMs, formAnalysisSettlePollMs, formAnalysisWindowMs } from '../viewmodel/useApplicationPreparationListViewModel'
 import { PreparationJobsSync } from '../../../shared/preparation-jobs/PreparationJobsSync'
 
@@ -20,7 +20,7 @@ import { PreparationJobsSync } from '../../../shared/preparation-jobs/Preparatio
 vi.unmock('../../../shared/preparation-jobs/PreparationJobsSync')
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { ApplicationPreparationNewPage } from './ApplicationPreparationNewPage'
-import { ApplicationDocumentPage, ApplicationDocumentPanel } from './ApplicationDocumentPage'
+import { ApplicationDocumentPage } from './ApplicationDocumentPage'
 import { chooseOption, optionValues, selectedValue } from '../../../../test/selectField'
 
 const original = appContainer.resolve('applicationPreparationUseCase')
@@ -1023,128 +1023,6 @@ function mount(path: string) {
   </Routes><LocationProbe /></MemoryRouter></Provider>)
   return { store, ...rendered }
 }
-
-function mountPanel(kind: 'editor' | 'documents', requestedRevision?: number) {
-  const store = createAppStore()
-  store.dispatch(signedIn({ email: 'owner@example.com', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }))
-  const onDocuments = vi.fn()
-  const onEdit = vi.fn()
-  const program = { sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId }
-  const rendered = render(<Provider store={store}><MemoryRouter initialEntries={['/app/chat?step=review&generate=9&question=project-title']}>
-    {kind === 'editor' ? <ApplicationPreparationEditorPanel id={12} program={program} onDocuments={onDocuments} />
-      : <ApplicationDocumentPanel id={12} program={program} requestedRevision={requestedRevision} onEdit={onEdit} />}
-    <LocationProbe />
-  </MemoryRouter></Provider>)
-  return { ...rendered, store, onDocuments, onEdit }
-}
-
-describe('embedded application panels', () => {
-  it('waits for the pending answer to save before opening existing documents', async () => {
-    repository.documents.mockResolvedValue([documentFile])
-    const pending = deferred<ApplicationPreparation>()
-    repository.replaceInputs.mockReturnValue(pending.promise)
-    const panel = mountPanel('editor')
-    fireEvent.change(await screen.findByRole('textbox', { name: '답변 입력' }), { target: { value: '저장 후 이동' } })
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '문서 보기' })))
-    expect(repository.replaceInputs).toHaveBeenCalledOnce()
-    expect(panel.onDocuments).not.toHaveBeenCalled()
-    await act(async () => { pending.resolve({ ...detail, inputRevision: 4 }); await pending.promise })
-    expect(panel.onDocuments).toHaveBeenCalledOnce()
-    expect(panel.onDocuments).toHaveBeenCalledWith()
-    expect(screen.getByTestId('location').textContent).toBe('/app/chat?step=review&generate=9&question=project-title')
-  })
-
-  it('uses local question/review state, flushes autosave, and hands the saved revision to the conversation', async () => {
-    echoReplaceInputs(detail)
-    const panel = mountPanel('editor')
-    const answer = await screen.findByRole('textbox', { name: '답변 입력' })
-    expect(screen.getByRole('heading', { name: '업체명' })).toBeTruthy()
-    expect(screen.queryByRole('banner')).toBeNull()
-    expect(screen.queryByRole('main')).toBeNull()
-    fireEvent.change(answer, { target: { value: '새봄테크' } })
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '다음 →' })))
-    expect(screen.getByRole('heading', { name: '과제명' })).toBeTruthy()
-    fireEvent.change(screen.getByRole('textbox', { name: '답변 입력' }), { target: { value: '수출 역량 강화' } })
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '다음 →' })))
-    expect(screen.getByRole('heading', { name: '초안을 만들기 전에 확인해 주세요' })).toBeTruthy()
-    afterSwapGuard()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '초안 만들기' })))
-    expect(panel.onDocuments).toHaveBeenCalledWith(5)
-    expect(repository.replaceInputs).toHaveBeenCalledTimes(2)
-    expect(repository.submitDocumentJob).not.toHaveBeenCalled()
-    expect(screen.getByTestId('location').textContent).toBe('/app/chat?step=review&generate=9&question=project-title')
-  })
-
-  it('flushes pending answers with keepalive when the same account leaves the conversation card', async () => {
-    vi.useFakeTimers()
-    let panel!: ReturnType<typeof mountPanel>
-    await act(async () => { panel = mountPanel('editor') })
-    fireEvent.change(screen.getByRole('textbox', { name: '답변 입력' }), { target: { value: '남은 입력' } })
-    panel.unmount()
-    await act(async () => vi.advanceTimersByTimeAsync(3000))
-    expect(repository.replaceInputs).toHaveBeenCalledOnce()
-    expect(repository.replaceInputs).toHaveBeenCalledWith(12, 'company-overview', expect.objectContaining({ expectedRevision: 3 }), undefined, { keepalive: true })
-  })
-
-  it('aborts an active save and ignores its late result when the embedded card account changes', async () => {
-    const pending = deferred<ApplicationPreparation>()
-    repository.replaceInputs.mockReturnValue(pending.promise)
-    const panel = mountPanel('editor')
-    fireEvent.change(await screen.findByRole('textbox', { name: '답변 입력' }), { target: { value: '저장 중인 입력' } })
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: '다음 →' })))
-    const signal = repository.replaceInputs.mock.calls[0][3] as AbortSignal
-    act(() => panel.store.dispatch(signedOut()))
-    panel.unmount()
-    expect(signal.aborted).toBe(true)
-    await act(async () => { pending.resolve({ ...detail, inputRevision: 4 }); await pending.promise })
-    expect(panel.onDocuments).not.toHaveBeenCalled()
-    expect(repository.replaceInputs).toHaveBeenCalledOnce()
-  })
-
-  it('does not flush a pending answer under a replacement account', async () => {
-    vi.useFakeTimers()
-    let panel!: ReturnType<typeof mountPanel>
-    await act(async () => { panel = mountPanel('editor') })
-    fireEvent.change(screen.getByRole('textbox', { name: '답변 입력' }), { target: { value: '이전 계정 입력' } })
-    act(() => panel.store.dispatch(signedIn({ email: 'replacement@example.com', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null })))
-    panel.unmount()
-    await act(async () => vi.advanceTimersByTimeAsync(3000))
-    expect(repository.replaceInputs).not.toHaveBeenCalled()
-  })
-
-  it.each(['editor', 'documents'] as const)('blocks the %s panel when the loaded preparation belongs to another source', async (kind) => {
-    repository.get.mockResolvedValue({ ...detail, form: { ...firstForm, sourceCode: 'KSTARTUP' } })
-    repository.documents.mockResolvedValue([documentFile])
-    mountPanel(kind, 3)
-    expect(await screen.findByText('선택한 공고와 신청 문서가 일치하지 않습니다. 신청 준비를 다시 시작해 주세요.')).toBeTruthy()
-    expect(screen.queryByRole('textbox')).toBeNull()
-    expect(screen.queryByRole('button', { name: /초안 다운로드/ })).toBeNull()
-    expect(repository.replaceInputs).not.toHaveBeenCalled()
-    expect(repository.submitDocumentJob).not.toHaveBeenCalled()
-  })
-
-  it('generates the explicitly requested revision and returns to editing without changing the chat URL', async () => {
-    repository.get.mockResolvedValue(readyPreparation())
-    jobSucceeds([documentFile])
-    const panel = mountPanel('documents', 3)
-    await screen.findByRole('button', { name: /초안 다운로드/ })
-    expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
-    expect(repository.submitDocumentJob).toHaveBeenCalledOnce()
-    expect(screen.queryByRole('banner')).toBeNull()
-    expect(screen.queryByRole('main')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '답변 입력으로' }))
-    expect(panel.onEdit).toHaveBeenCalledOnce()
-    expect(screen.getByTestId('location').textContent).toBe('/app/chat?step=review&generate=9&question=project-title')
-  })
-
-  it('reopens stored documents without submitting another generation even when the chat URL contains generate', async () => {
-    repository.documents.mockResolvedValue([documentFile])
-    mountPanel('documents')
-    await screen.findByRole('button', { name: /초안 다운로드/ })
-    expect(repository.submitDocumentJob).not.toHaveBeenCalled()
-    expect(screen.getByTestId('location').textContent).toBe('/app/chat?step=review&generate=9&question=project-title')
-  })
-})
 
 describe('application preparation list', () => {
   it('announces initial loading and then shows the empty state', async () => {
@@ -2560,6 +2438,17 @@ describe('application preparation creation and detail', () => {
     expect(repository.replaceInputs).toHaveBeenLastCalledWith(12, 'company-overview', { expectedRevision: 4, facts: [
       { fieldKey: 'company-name', status: 'PROVIDED', value: '새봄테크', sourceText: '업체명: 새봄테크' },
     ] }, undefined, { keepalive: true })
+  })
+
+  it('flushes pending answers with keepalive when leaving the editor', async () => {
+    vi.useFakeTimers()
+    let page!: ReturnType<typeof mount>
+    await act(async () => { page = mount('/app/application-preparations/12') })
+    fireEvent.change(screen.getByRole('textbox', { name: '답변 입력' }), { target: { value: '남은 입력' } })
+    page.unmount()
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(repository.replaceInputs).toHaveBeenCalledOnce()
+    expect(repository.replaceInputs).toHaveBeenCalledWith(12, 'company-overview', expect.objectContaining({ expectedRevision: 3 }), undefined, { keepalive: true })
   })
 
   it('marks an answer as undecided with the checkbox and saves it as UNKNOWN', async () => {
