@@ -171,6 +171,9 @@ it('routes a started preparation to its editor page instead of opening the edito
   await mount(true, 12, false)
   const card = screen.getByRole('region', { name: `신청 문서 · ${program.title}` })
   expect(card.textContent).toContain('필수 답변 1/3')
+  // 이 공고로 쓰는 신청 문서가 있으면 [신청서 쓰기] 칩 대신 그 화면을 여는 [이어서 쓰기 · n/m]을 둡니다.
+  expect(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('link', { name: '이어서 쓰기 · 1/3' })
+    .getAttribute('href')).toBe('/app/application-preparations/12')
   const link = within(card).getByRole('link', { name: '이어서 쓰기' })
   expect(link.getAttribute('href')).toBe('/app/application-preparations/12')
   expect(api.get).not.toHaveBeenCalled()
@@ -200,7 +203,7 @@ it('expands the analysis in place of the card, collapses back, and expands a new
   // 새 작업 카드가 생기면 그 카드가 바로 펼쳐지고, 지난 카드는 신청 준비 화면 링크만 남습니다.
   await act(async () => addApplication(store))
   expect(screen.getByRole('region', { name: '신청 문서' })).toBeTruthy()
-  expect(within(screen.getByRole('region', { name: `신청 문서 · ${program.title}` })).getByRole('link', { name: '신청 준비 화면에서 이어서 보기' })
+  expect(within(screen.getByRole('region', { name: `신청 문서 · ${program.title}` })).getByRole('link', { name: '신청 문서 화면에서 시작하기' })
     .getAttribute('href')).toBe(newPath)
 })
 
@@ -252,7 +255,7 @@ it.each(['selection', 'reset', 'account'] as const)('keeps one live analysis car
   await act(async () => addApplication(store))
   expect(oldSignal.aborted).toBe(true)
   expect(screen.getAllByRole('status', { name: '양식 분석 진행' })).toHaveLength(1)
-  expect(screen.getAllByRole('link', { name: '신청 준비 화면에서 이어서 보기' })).toHaveLength(1)
+  expect(screen.getAllByRole('link', { name: '신청 문서 화면에서 시작하기' })).toHaveLength(1)
   await act(async () => vi.advanceTimersByTimeAsync(2000))
   expect(api.poll).toHaveBeenCalledTimes(2)
   const signal = api.poll.mock.calls[1][1]!
@@ -283,4 +286,41 @@ it('keeps the Google Form pathway and its retry without offering paid attachment
   expect(screen.queryByRole('button', { name: '입력칸별로 분석' })).toBeNull()
   expect(api.discover).not.toHaveBeenCalled()
   expect(api.create).not.toHaveBeenCalled()
+})
+
+it('shows a draft finished on the application page as done on every card and downloads it from the latest card', async () => {
+  const api = mockPreparation([form])
+  const summary: ApplicationPreparationSummary = { id: 12, inputRevision: 2, progressStage: 'PREPARING', progressRevision: 0,
+    progressStageUpdatedAt: created.updatedAt, sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId,
+    serviceField: 'GENERAL', programTitle: program.title, formTitle: form.formTitle, updatedAt: created.updatedAt,
+    answeredRequired: 3, requiredTotal: 3, hasCurrentDocument: true }
+  // 대화 카드는 신청 준비 번호를 모릅니다(신청 문서 화면에서 만듦). 공고로 내 신청 준비를 찾습니다.
+  api.list.mockResolvedValue({ items: [summary], nextBeforeId: null })
+  const draft = { id: 31, inputRevision: 2, fileName: '사업계획서_초안.hwpx', mediaType: 'application/hwp+zip', size: 10,
+    filledAnswerCount: 3, unfilledAnswerCount: 0, unfilledAnswers: [] }
+  const documents = vi.spyOn(api.useCase, 'documents').mockResolvedValue([{ ...draft, id: 30, inputRevision: 1 }, draft])
+  const blob = new Blob(['draft'])
+  const download = vi.spyOn(api.useCase, 'downloadDocument').mockResolvedValue(blob)
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:draft'), revokeObjectURL: vi.fn() }))
+  const store = await mount(false, undefined, false)
+  const card = screen.getByRole('region', { name: `신청 문서 · ${program.title}` })
+  expect(card.textContent).toContain('초안 완료')
+  expect(card.textContent).toContain('사업계획서 · 필수 답변 3/3')
+  expect(within(card).getByRole('link', { name: '초안 보기' }).getAttribute('href')).toBe('/app/application-preparations/12/documents')
+  expect(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('link', { name: '초안 보기' })
+    .getAttribute('href')).toBe('/app/application-preparations/12/documents')
+  // 끝난 일에는 입력칸 분석 상태를 읽지 않습니다.
+  expect(api.lookup).not.toHaveBeenCalled()
+  await act(async () => fireEvent.click(within(card).getByRole('button', { name: '초안 받기' })))
+  expect(documents).toHaveBeenCalledWith(12, expect.any(AbortSignal))
+  expect(download).toHaveBeenCalledWith(12, 31, expect.any(AbortSignal))
+  expect(URL.createObjectURL).toHaveBeenCalledWith(blob)
+  // 새 카드가 생겨도 지난 카드는 '시작 전'이 아니라 끝난 상태와 링크를 보여 주고, 끝난 일은 대화 안에 분석을 펼치지 않습니다.
+  await act(async () => addApplication(store))
+  const cards = screen.getAllByRole('region', { name: `신청 문서 · ${program.title}` })
+  expect(cards).toHaveLength(2)
+  expect(cards.every((item) => item.textContent?.includes('초안 완료'))).toBe(true)
+  expect(screen.getAllByRole('button', { name: '초안 받기' })).toHaveLength(1)
+  expect(screen.queryByRole('region', { name: '신청 문서' })).toBeNull()
+  expect(api.discover).not.toHaveBeenCalled()
 })

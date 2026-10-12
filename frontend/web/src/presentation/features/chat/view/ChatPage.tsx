@@ -8,6 +8,7 @@ import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { ApplicationPreparationInline } from '../../application-preparation/view/ApplicationPreparationInline'
 import { CombinationReviewPanel } from '../../combination-review/view/CombinationReviewPages'
+import { continueLabel, preparationOf, preparationPath, programKey, useProgramPreparations } from '../hooks/useProgramPreparations'
 import { useChatPageViewModel } from '../viewmodel/useChatPageViewModel'
 import { companyConditionFields } from '../viewmodel/chatConversationProposal'
 import { ConversationProposal } from './ConversationProposal'
@@ -35,6 +36,8 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     evidenceUsage,
     govQuickQuestions,
     handleAskGovQuestion,
+    govPendingQuestion,
+    setReturnToGovChat,
     govTools,
     handleStartGovTool,
     isRestoredHistory,
@@ -91,6 +94,18 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const openWork = messages.find((message) => message.id === openWorkId && (message.govApplication || message.govReview))
   const liveOpenWork = openWork && isLiveWork(openWork) ? openWork : null
   const closeWork = useCallback(() => { setOpenWorkId(null); setWorkRefresh((value) => value + 1) }, [])
+  // 신청 문서는 신청 문서 화면에서 만들어지므로, 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾아 지금 상태를 보여 줍니다.
+  const preparations = useProgramPreparations(isGovAgent && layout === 'workspace'
+    && (govProgram !== null || messages.some((message) => message.govApplication)), workRefresh)
+  const selectedPreparation = govProgram && preparations?.phase === 'ready' ? preparations.byProgram.get(programKey(govProgram)) ?? null : null
+  // Gov 대화를 떠나면 신청 문서 · 중복 검토 · 파트너 화면이 [대화로 돌아가기]를 보입니다. 환영 인사뿐인 대화면 두지 않습니다.
+  const hasConversation = useRef(false)
+  hasConversation.current = messages.length > 1
+  useEffect(() => {
+    if (!isGovAgent || layout !== 'workspace') return
+    setReturnToGovChat(false)
+    return () => setReturnToGovChat(hasConversation.current)
+  }, [isGovAgent, layout, setReturnToGovChat])
   // [신청서 쓰기] 칩으로 펼친 신청 문서는 저장된 양식이 없으면 입력칸 분석을 바로 시작합니다.
   // 말로 요청한 카드·카드 버튼·지난 기록으로 펼친 것은 열기만 하고 분석은 버튼으로 시작합니다. 판단은 펼친 분석 화면이 한 번 하고 표시를 지웁니다.
   const [autoAnalyzeId, setAutoAnalyzeId] = useState<string | null>(null)
@@ -271,6 +286,9 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           && message.govEvidence.program.sourceProgramId === govProgram.sourceProgramId)
         const showQuickQuestions = isGovAgent && layout === 'workspace' && isLatest && !isUser && govQuickQuestions.length > 0
           && (message.id === askAnchor.messageId || answeredSelected)
+        // 공고를 고르지 않아 답하지 못한 요청은 공고를 고른 때의 마지막 메시지 아래에 한 번 다시 묻기 칩으로 둡니다(누를 때만 보냄).
+        const pendingQuestion = isGovAgent && layout === 'workspace' && isLatest && !isUser && message.id === askAnchor.messageId
+          ? govPendingQuestion : null
 
         return (
           <article
@@ -305,11 +323,12 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
               </div>
               {/* 신청 문서 · 중복 검토는 대화에 작업 카드만 두고, 입력칸 분석 · 검토 입력은 카드 자리에서 펼치며 그다음은 화면으로 옮깁니다. */}
               {message.govApplication ? (liveOpenWork?.id === message.id && message.govApplication.preparationId === undefined
+                && !preparationOf(message.govApplication, preparations)
                 ? <GovWorkInline kind="신청 문서" title={message.govApplication.program.title} onClose={closeWork}>
                   <ApplicationPreparationInline key={`${accountEmail}:${message.id}`} program={message.govApplication.program}
                     autoAnalyze={message.id === autoAnalyzeId} onAutoAnalyzeHandled={clearAutoAnalyze} />
                 </GovWorkInline>
-                : <GovApplicationCard application={message.govApplication} refresh={workRefresh}
+                : <GovApplicationCard application={message.govApplication} refresh={workRefresh} preparations={preparations}
                   live={isLiveWork(message)} onOpen={() => setOpenWorkId(message.id)} />) : null}
               {message.govReview ? (liveOpenWork?.id === message.id
                 ? <GovWorkInline kind="중복 검토" title={message.govReview.program?.title ?? '공고 두 개 고르기'} onClose={closeWork}>
@@ -346,10 +365,16 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                   ))}
                 </div>
               ) : null}
-              {showQuickQuestions ? (
+              {showQuickQuestions || pendingQuestion !== null ? (
                 <div className={chatPageStyles.suggestedQuestions} role="group" aria-label={answeredSelected ? '이어서 묻기' : '이 공고에 바로 묻기'}>
                   <span className="self-center text-xs text-ink-muted">{answeredSelected ? '이어서 묻기' : '이 공고에 바로 묻기'}</span>
-                  {govQuickQuestions.map((suggestion) => (
+                  {pendingQuestion !== null ? (
+                    <button type="button" className={chatPageStyles.govQuickQuestionButton} disabled={isBusy} title={pendingQuestion}
+                      aria-label={`방금 질문을 이 공고로 묻기: ${pendingQuestion}`} onClick={() => handleAskGovQuestion(pendingQuestion)}>
+                      ‘{pendingQuestion.length > 20 ? `${pendingQuestion.slice(0, 20)}…` : pendingQuestion}’ 이 공고로 묻기
+                    </button>
+                  ) : null}
+                  {showQuickQuestions && govQuickQuestions.map((suggestion) => (
                     <button key={suggestion.label} type="button" className={chatPageStyles.govQuickQuestionButton} disabled={isBusy}
                       onClick={() => handleAskGovQuestion(suggestion.question)}>
                       {suggestion.label}
@@ -429,11 +454,16 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                     </svg>
                   </button>
                 </div>
-                {/* 둘째 줄은 작업 칩 [신청서 쓰기] · [중복 검토]입니다. 원문 질문 기본 질문은 대화 안 이어 묻기 칩으로 둡니다.
+                {/* 둘째 줄은 작업 칩 [신청서 쓰기] · [중복 검토] · [파트너 찾기]입니다. 원문 질문 기본 질문은 대화 안 이어 묻기 칩으로 둡니다.
                     작업 칩은 질문 칩과 색을 달리해 누르면 일이 시작된다는 것을 구분하고, 경로 선택 없이 작업 카드를 만들어 대화 안에 펼칩니다.
+                    이 공고로 이미 쓰는 신청 문서가 있으면 [신청서 쓰기] 대신 [이어서 쓰기 · n/m] 또는 [초안 보기]로 그 화면을 엽니다.
                     처리 중에는 줄을 그대로 두고 누를 수 없게만 해 막대 높이가 줄었다 늘지 않게 합니다. */}
                 {govTools.length > 0 ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label="이 공고로 작업하기">
-                  {govTools.map((tool) => (
+                  {govTools.map((tool) => tool === 'APPLICATION' && selectedPreparation && !isBusy ? (
+                    <Link key={tool} className={chatPageStyles.govToolButton} to={preparationPath(selectedPreparation)}>
+                      {selectedPreparation.hasCurrentDocument ? '초안 보기' : continueLabel(selectedPreparation)}
+                    </Link>
+                  ) : (
                     <button key={tool} type="button" className={chatPageStyles.govToolButton} disabled={isBusy}
                       title={tool === 'APPLICATION' ? '저장된 양식이 없으면 입력칸 분석(유료 AI)을 바로 시작해요' : undefined}
                       onClick={() => { if (tool === 'APPLICATION') applicationChipAt.current = Date.now(); handleStartGovTool(tool) }}>

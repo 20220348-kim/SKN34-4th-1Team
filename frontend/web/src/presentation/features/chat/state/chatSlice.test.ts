@@ -8,6 +8,10 @@ import type { Account } from '../../../../domain/entities/Account'
 import { sessionRestored, signedIn, signedOut } from '../../../shared/auth/state/authSlice'
 import {
   conversationReset,
+  govMessageSucceeded,
+  govProgramSelected,
+  govToolStarted,
+  returnToGovChatChanged,
   searchResultRestored,
   searchResultRestoreFailed,
   draftChanged,
@@ -344,5 +348,62 @@ describe('unseen outcome', () => {
     expect(store.getState().chat.unseenOutcome).toBe('interpretation-ready')
     store.dispatch(conversationReset())
     expect(store.getState().chat.unseenOutcome).toBeNull()
+  })
+})
+
+describe('Gov 공고 선택 뒤 다시 묻기 · 파트너 찾기 · 대화로 돌아가기', () => {
+  const program = { sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, title: supportPrograms[0].title }
+
+  function selectProgram(store: AppStore) {
+    const searched = searchStarted('AI')
+    store.dispatch(searched)
+    store.dispatch(searchSucceeded(completeSearchResult({ requestId: searched.payload.requestId, programs: [supportPrograms[0]] })))
+    store.dispatch(govProgramSelected(program))
+  }
+
+  it('공고를 골라야 한다는 답의 요청을 남기고, 공고를 고른 뒤 보낸 메시지나 다른 답이 오면 지운다', () => {
+    const store = createAppStore()
+    store.dispatch(signedIn({ ...account, role: 'ADMIN', tier: 'ADMIN' }))
+    const asked = interpretationStarted({ message: '신청 자격 알려줘', context: emptyConversationContext })
+    store.dispatch(asked)
+    store.dispatch(govMessageSucceeded({ requestId: asked.payload.requestId, message: '공고를 먼저 골라 주세요.', needsProgram: true }))
+    expect(store.getState().chat.govPendingQuestion).toBe('신청 자격 알려줘')
+    // 공고를 고르기 전에 보낸 검색 요청은 남겨 둔 요청을 지우지 않습니다.
+    store.dispatch(interpretationStarted({ message: 'AI 창업', context: emptyConversationContext }))
+    expect(store.getState().chat.govPendingQuestion).toBe('신청 자격 알려줘')
+    store.dispatch(interpretationCancelled(store.getState().chat.interpretation.requestId!))
+    selectProgram(store)
+    expect(store.getState().chat.govPendingQuestion).toBe('신청 자격 알려줘')
+    store.dispatch(interpretationStarted({ message: '신청 자격 알려줘', context: emptyConversationContext }))
+    expect(store.getState().chat.govPendingQuestion).toBeNull()
+
+    // 다른 답(파트너 조회)이 오면 남겨 둔 요청을 지웁니다.
+    store.dispatch(conversationReset())
+    const again = interpretationStarted({ message: '신청서 써줘', context: emptyConversationContext })
+    store.dispatch(again)
+    store.dispatch(govMessageSucceeded({ requestId: again.payload.requestId, message: '공고를 먼저 골라 주세요.', needsProgram: true }))
+    const partners = interpretationStarted({ message: '파트너 찾아줘', context: emptyConversationContext })
+    store.dispatch(partners)
+    store.dispatch(govMessageSucceeded({ requestId: partners.payload.requestId, message: '모집글', partners: { message: '모집글' } }))
+    expect(store.getState().chat.govPendingQuestion).toBeNull()
+  })
+
+  it('[파트너 찾기] 칩은 고른 공고만 조건으로 담은 파트너 카드를 만든다', () => {
+    const store = createAppStore()
+    store.dispatch(signedIn({ ...account, role: 'ADMIN', tier: 'ADMIN' }))
+    selectProgram(store)
+    store.dispatch(govToolStarted('PARTNERS'))
+    const [request, answer] = store.getState().chat.messages.slice(-2)
+    expect(request).toMatchObject({ role: 'user', text: '이 공고 파트너 찾기' })
+    expect(answer.govPartners).toEqual({ message: '이 공고로 모집 중인 파트너 모집글을 찾아봤어요.',
+      conditions: { seekingRoles: [], regions: [], keywords: [], program: { sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId } } })
+  })
+
+  it('대화로 돌아가기 표시는 대화를 새로 시작하면 지운다', () => {
+    const store = createAppStore()
+    store.dispatch(returnToGovChatChanged(true))
+    expect(store.getState().chat.returnToGovChat).toBe(true)
+    store.dispatch(conversationReset())
+    expect(store.getState().chat.returnToGovChat).toBe(false)
   })
 })

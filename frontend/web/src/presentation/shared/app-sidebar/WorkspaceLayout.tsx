@@ -43,6 +43,14 @@ export function WorkspaceLayout() {
           <button type="button" className={`${appSidebarStyles.iconButton} ml-auto`} aria-label="지원사업 새검색"
             title="지원사업 새검색" onClick={vm.requestNewChat}><SidebarActionIcon name="newChat" /></button>
         </header> : null}
+        {vm.showReturnToChat ? <div className="flex shrink-0 items-center border-b border-line bg-surface-muted px-4 py-2">
+          <Link to={appPaths.chat} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-primary no-underline hover:underline">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M19 12H5M11 18l-6-6 6-6" />
+            </svg>
+            대화로 돌아가기
+          </Link>
+        </div> : null}
         <Outlet />
       </div>
       {pendingAction?.kind === 'delete' ? (

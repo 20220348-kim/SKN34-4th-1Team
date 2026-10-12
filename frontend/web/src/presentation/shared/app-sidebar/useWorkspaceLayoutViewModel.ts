@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router'
 
-import { useAppDispatch } from '../../../app/hooks'
+import { useAppDispatch, useAppSelector } from '../../../app/hooks'
 import { useChatHistory } from '../../features/chat/hooks/useChatHistory'
 import { conversationReset } from '../../features/chat/state/chatSlice'
 import { appPaths } from '../routes/appPaths'
@@ -16,6 +16,8 @@ const mobileMediaQuery = '(max-width: 759px)'
  * 새검색·대화 열기·삭제의 확인 흐름을 한곳에서 관리하고, View는 반환된 상태와 handler만 연결합니다.
  * DOM ref는 포커스 제어에만 쓰며 Redux에 두지 않습니다.
  */
+const govWorkPaths = [appPaths.applicationPreparations, appPaths.combinationReviews, appPaths.partners]
+
 export function useWorkspaceLayoutViewModel() {
   const [isMobile, setIsMobile] = useState(() => typeof window.matchMedia === 'function'
     && window.matchMedia(mobileMediaQuery).matches)
@@ -30,6 +32,7 @@ export function useWorkspaceLayoutViewModel() {
   const navigate = useNavigate()
   const location = useLocation()
   const history = useChatHistory()
+  const returnToGovChat = useAppSelector((state) => state.chat.returnToGovChat)
   const { cancelOpening } = history
 
   useEffect(() => {
@@ -124,6 +127,8 @@ export function useWorkspaceLayoutViewModel() {
     closeLabel: isMobile ? '메뉴 닫기' : '사이드바 접기',
     openLabel: isMobile ? '메뉴 열기' : '사이드바 펼치기',
     closeMenu, closeSidebar, openSidebar,
+    /** Gov 대화에서 넘어온 신청 문서 · 중복 검토 · 파트너 화면이면 [대화로 돌아가기]를 보입니다. */
+    showReturnToChat: returnToGovChat && govWorkPaths.some((path) => location.pathname.startsWith(path)),
     ...chatActions,
   }
 }

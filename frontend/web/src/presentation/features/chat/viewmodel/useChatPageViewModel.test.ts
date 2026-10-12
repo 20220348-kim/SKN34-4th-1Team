@@ -403,6 +403,8 @@ function createChatHook(overrides: Partial<ChatHook> = {}): ChatHook {
   return {
     isGovAgent: false,
     govProgram: null,
+    govPendingQuestion: null,
+    setReturnToGovChat: vi.fn(),
     selectGovProgram: vi.fn(),
     startGovTool: vi.fn(),
     attachGovPreparation: vi.fn(),
