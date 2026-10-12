@@ -2295,7 +2295,11 @@ describe('application preparation creation and detail', () => {
     expect(banner.textContent).not.toContain(firstForm.programTitle)
     expect(banner.querySelector('p')).toBeNull()
     expectLede()
-    expect(document.querySelector('main')!.firstElementChild).toBe(screen.getByTitle(ledeText))
+    // 맨 위는 대화의 신청 문서 카드와 같은 단계 띠(2 답변 작성)이고, 그 아래가 공고 한 줄입니다.
+    const main = document.querySelector('main')!
+    expect(main.firstElementChild).toBe(screen.getByRole('list', { name: '신청 문서 단계' }))
+    expect(main.querySelector('[aria-current="step"]')?.textContent).toContain('답변 작성')
+    expect(main.children[1]).toBe(screen.getByTitle(ledeText))
     expect(screen.queryByText('파일 SHA-256')).toBeNull()
     // 검증된 양식에는 AI 추출 안내가 없습니다.
     expect(screen.queryByText('AI가 공식 첨부에서 뽑은 문항이에요')).toBeNull()

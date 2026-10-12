@@ -258,12 +258,7 @@ export const newPreparationStyles = {
   usage: 'text-[0.78rem]',
   usageCentered: 'justify-center text-[0.78rem]',
   // 10초 넘는 작업의 진행 카드: 스피너 + 제목 + 경과, 아래 줄 "화면을 나가도 계속돼요".
-  progress: 'flex flex-col gap-3 rounded-2xl border border-brand-line bg-white p-5 shadow-[0_8px_24px_rgb(32_33_36_/_6%)] max-[599px]:p-4',
-  progressHead: 'flex items-start gap-2.5',
   spinner: 'mt-0.5 size-[18px] shrink-0 rounded-full border-2 border-brand-line border-t-brand-primary motion-safe:animate-spin',
-  progressTitle: 'min-w-0 flex-1 text-[0.95rem] leading-[1.4] font-bold text-ink',
-  progressTime: 'text-[0.78rem] whitespace-nowrap text-ink-muted tabular-nums',
-  progressNote: 'm-0 border-t border-line pt-2.5 text-[0.78rem] text-ink-muted',
   // 버튼. lg는 48px, md는 40px, sm은 32px입니다.
   primaryLg: `inline-flex h-12 cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 bg-brand-primary px-6 text-[0.875rem] font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   primary: `inline-flex h-10 cursor-pointer items-center justify-center gap-1 rounded-full border-0 bg-brand-primary px-5 text-[0.8125rem] font-bold text-white no-underline hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,

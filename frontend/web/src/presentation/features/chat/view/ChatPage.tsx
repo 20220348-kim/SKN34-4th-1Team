@@ -93,7 +93,8 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const preparations = useProgramPreparations(isGovAgent && layout === 'workspace'
     && (govProgram !== null || messages.some((message) => message.govApplication)), cardRefresh)
   const selectedPreparation = govProgram && preparations?.phase === 'ready' ? preparations.byProgram.get(programKey(govProgram)) ?? null : null
-  // Gov 대화를 떠나면 신청 문서 · 중복 검토 · 파트너 화면이 [대화로 돌아가기]를 보입니다. 환영 인사뿐인 대화면 두지 않습니다.
+  // Gov 대화를 카드 · 시트에서 떠나면 그때 연 신청 문서 · 중복 검토 · 파트너 화면이 [대화로 돌아가기]를 보입니다(사이드바 메뉴로 옮기면 두지 않음).
+  // 환영 인사뿐인 대화면 두지 않습니다.
   const hasConversation = useRef(false)
   hasConversation.current = messages.length > 1
   useEffect(() => {

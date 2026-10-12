@@ -38,12 +38,7 @@ export const reviewStyles = {
   primaryPill: `inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-brand-primary px-5 py-2 text-sm font-bold text-white no-underline hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   secondaryPill: `inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-line-strong bg-white px-4 py-2 text-sm font-semibold text-ink no-underline hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 진행 카드 · 최근 실행 안내 (신청 문서의 분석 · 초안 진행 카드와 같은 틀)
-  progress: 'flex flex-col gap-3 rounded-2xl border border-brand-line bg-white p-5 shadow-[0_8px_24px_rgb(32_33_36_/_6%)] max-[599px]:p-4',
-  progressHead: 'flex items-start gap-2.5',
   spinner: 'mt-0.5 size-[18px] shrink-0 rounded-full border-2 border-brand-line border-t-brand-primary motion-safe:animate-spin',
-  progressTitle: 'min-w-0 flex-1 text-[0.95rem] leading-[1.4] font-bold text-ink',
-  progressTime: 'text-[0.78rem] whitespace-nowrap text-ink-muted tabular-nums',
-  progressNote: 'm-0 border-t border-line pt-2.5 text-[0.78rem] text-ink-muted',
   progressSteps: 'grid gap-2 text-xs sm:grid-cols-2',
   progressStep: 'rounded-lg bg-surface-muted px-3 py-2 text-ink-muted',
   progressStepDone: 'rounded-lg bg-brand-soft px-3 py-2 font-semibold text-brand-primary',

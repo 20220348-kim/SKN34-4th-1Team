@@ -22,6 +22,7 @@ import { preparationOf, preparationPath, type ProgramPreparations } from '../hoo
 import { partnerRecruitmentStyles } from '../../partner-recruitment/view/PartnerRecruitment.styles'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkSteps, type WorkStepState } from '../../../shared/workspace/WorkSteps'
+import { applicationWorkSteps, reviewWorkSteps } from '../../../shared/workspace/workStepNames'
 import { elapsedLabel, useElapsedSeconds } from '../../../shared/workspace/elapsed'
 
 /**
@@ -39,8 +40,6 @@ const toneClass: Record<CardTone, string> = {
   ok: 'bg-brand-soft text-brand-hover',
 }
 
-const applicationSteps = ['양식 확인', '답변 작성', '초안'] as const
-const reviewSteps = ['공고 선택', '분석 입력', '분석·결과'] as const
 const statusPollMs = 5000
 
 function WorkCard({ kind, title, badge, tone, steps, line, children, action }: {
@@ -157,7 +156,7 @@ export function GovApplicationCard({ application, live, refresh, preparations, o
   }, [nowRunning, generating, onChanged])
 
   const newPath = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId })}`
-  const steps = (step: number, state: WorkStepState) => <WorkSteps label="신청 문서 단계" steps={applicationSteps} current={step} state={state} />
+  const steps = (step: number, state: WorkStepState) => <WorkSteps label="신청 문서 단계" steps={applicationWorkSteps} current={step} state={state} />
   if (summary) {
     const done = summary.hasCurrentDocument === true
     const required = summary.requiredTotal ? `필수 답변 ${summary.answeredRequired ?? 0}/${summary.requiredTotal}` : null
@@ -259,7 +258,7 @@ export function GovReviewCard({ review, live, refresh, onOpenSheet }: {
   const elapsed = useElapsedSeconds(status?.since, live && status?.running === true)
   const headline = status?.answers ? reviewAnswerHeadline(status.answers) : null
   const title = program?.title ?? '공고 두 개 고르기'
-  const steps = (step: number, state: WorkStepState) => <WorkSteps label="중복 검토 단계" steps={reviewSteps} current={step} state={state} />
+  const steps = (step: number, state: WorkStepState) => <WorkSteps label="중복 검토 단계" steps={reviewWorkSteps} current={step} state={state} />
   if (reviewId === undefined) {
     const newPath = `${appPaths.combinationReviewNew}${program ? `?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId })}` : ''}`
     return <WorkCard kind="중복 검토" title={title} badge="시작 전" tone="neutral" steps={steps(0, 'current')}

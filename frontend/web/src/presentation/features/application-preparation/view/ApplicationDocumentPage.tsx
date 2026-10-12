@@ -19,6 +19,9 @@ import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/works
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { ApplicationPreparationLede } from './ApplicationPreparationLede'
+import { WorkProgress } from '../../../shared/workspace/WorkProgress'
+import { WorkSteps } from '../../../shared/workspace/WorkSteps'
+import { applicationWorkSteps } from '../../../shared/workspace/workStepNames'
 import { failureCodeOf, failureGroupOf, generationFailureTitle, generationStages } from './documentGeneration'
 import { ButtonSpinner, DocumentFilesSkeleton } from './ApplicationPreparationSkeletons'
 import {
@@ -48,11 +51,6 @@ export function ApplicationDocumentPage() {
     </>
   }
   return <DocumentResults key={`${account.email}:${id}`} id={id} />
-}
-
-function elapsedLabel(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  return minutes > 0 ? `${minutes}분 ${seconds % 60}초 지남` : `${seconds}초 지남`
 }
 
 /** "09.22 15:40"처럼 묶음 제목에 붙는 만든 시각입니다. */
@@ -363,19 +361,17 @@ function DocumentResults({ id }: { id: number }) {
       actions={headerActions}
     />
     <main className={workspacePageStyles.content}>
+      {/* 맨 위 단계 띠입니다. 초안을 만드는 중이면 진행 중, 지금 답변 버전의 초안이 있으면 모두 완료입니다. */}
+      <WorkSteps size="page" label="신청 문서 단계" steps={applicationWorkSteps} current={2}
+        state={busy && job ? 'running' : preparation && files.some((file) => file.inputRevision === preparation.inputRevision) ? 'done' : 'current'} />
       {(preparation || busy) && <ApplicationPreparationLede preparation={preparation} />}
       <div className={d.body}>
-        {busy && job && <section className={n.progress} role="status" aria-live="polite" aria-label="문서 생성 진행">
-          <div className={n.progressHead}>
-            <span className={n.spinner} aria-hidden="true" />
-            <strong className={n.progressTitle}>답변 버전 {job.expectedRevision}로 초안을 {files.length > 0 ? '다시 ' : ''}만들고 있어요</strong>
-            <span className={n.progressTime}>{elapsedLabel(elapsedSeconds)}</span>
-          </div>
+        {busy && job && <WorkProgress label="문서 생성 진행" title={`답변 버전 ${job.expectedRevision}로 초안을 ${files.length > 0 ? '다시 ' : ''}만들고 있어요`}
+          elapsedSeconds={elapsedSeconds} note="화면을 나가도 계속돼요. 돌아오면 이어서 보여 드려요.">
           <p className={n.muted}>보통 1~3분 걸려요. 양식이 크면 더 걸릴 수 있어요.</p>
           {job.status === 'QUEUED' && <p className={n.muted}>순서를 기다리고 있어요.</p>}
           <StageList job={job} />
-          <p className={n.progressNote}>화면을 나가도 계속돼요. 돌아오면 이어서 보여 드려요.</p>
-        </section>}
+        </WorkProgress>}
         {checking && <p className="sr-only" role="status">저장된 문서를 확인하고 있어요.</p>}
         {showFilesSkeleton && <DocumentFilesSkeleton />}
 
