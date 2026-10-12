@@ -6,9 +6,9 @@
 **자동 배포가 활성화된 목표 구조**를 표현하며, 개인 main의 필수 CI 통과부터 EKS·Vercel 갱신까지 연결합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=be244c2d5ed5)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=bf884c9298c5)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=be244c2d5ed5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=1ffd1dac1d04) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=bf884c9298c5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=a6dbc0d6fcab) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
@@ -41,6 +41,36 @@
 | 결과 → 관리자 | `ops-artifacts`는 결과 PVC를 읽기 전용으로 제공하고, `ops-sync`가 상태·결과를 반영합니다. 관리자는 같은 React 웹에서 검토·판정·비교 기준을 관리합니다. |
 | 도구 UI | Prefect·Langfuse는 공개하지 않습니다. EKS 권한을 가진 사용자가 각 PC에서 loopback port-forward를 연결합니다. |
 
+### 외부 API 연결
+
+외부 API 제공자는 AWS·VPC·EKS 경계 밖에 표시합니다. 요청은 아래와 같이 Pod에서 시작합니다.
+이 경로는 사용자가 웹·모바일에서 들어오는 Vercel·CloudFront·ALB 경로와 별개입니다.
+
+보라색 화살표는 외부 API 요청입니다. 영역 왼쪽의 Catalog·AI와 가운데의 NAT·Internet Gateway는
+위 VPC에 있는 구성의 요청 경로를 다시 표시한 것입니다. 두 호출은 같은 NAT Gateway를 사용합니다.
+
+| 호출 주체 → 외부 대상 | 하는 일과 실행 조건 |
+|---|---|
+| **Catalog → 공고 제공처 API** | 기업마당·K-Startup·과학기술정보통신부(MSIT)·충남 수출지원(CNTRADE_NOTICE)의 공고를 수집합니다. 기본 주소는 `https://apis.data.go.kr`입니다. 제공처별 키와 수집 실행 설정이 필요하며, 그림의 선이 정기 수집 활성화를 뜻하지는 않습니다. |
+| **AI Service → OpenAI** | 답변 생성·추천·RAG·임베딩을 요청합니다. `OPENAI_API_KEY`와 모델 설정이 필요합니다. Catalog는 AI 내부 API로 색인을 요청하고, 실제 OpenAI 임베딩 호출은 AI Service가 담당합니다. |
+
+NAT Gateway는 public subnet에 있고, private 노드의 외부 요청을 Internet Gateway로 내보냅니다.
+현재 클러스터 설정은 NAT Gateway 1개를 사용합니다. 외부 호출 대상과 키·정기 수집 활성화 상태는 배포 환경의 설정으로 정해집니다.
+
+평가 코드에는 live OpenAI 호출도 있지만 **현재 평가 Chart는 이를 비활성화**합니다.
+실행기의 live·RAG live는 `false`, OpenAI 키는 빈 값이며, NetworkPolicy에는 외부 HTTPS 송신 허용이 없습니다.
+따라서 실행기를 OpenAI 호출 주체로 연결하지 않았습니다. 향후 유료 평가에는 승인·예산·키와 외부 통신 정책 준비가 필요합니다.
+
+Core의 Google·Kakao OAuth, Bizno 사업자 조회, SMTP 메일, 기업마당 원문·첨부 조회 등 보조 연동은 개별 선을 생략했습니다.
+이번 보완은 연결 관계를 설명하는 문서 변경이며 외부 API 실호출이나 새 배포·운영 검증을 수행했다는 뜻은 아닙니다.
+
+근거: [Catalog 제공처·수집 설정](../../../backend/catalog-service/src/main/resources/application.properties) ·
+[AI OpenAI 클라이언트](../../../backend/ai-service/app/bootstrap.py) ·
+[EKS private 노드·NAT 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml) ·
+[평가 실행기 설정](../../../infrastructure/gitops/charts/govbiz-evaluation/templates/workload.yaml) ·
+[평가 통신 정책](../../../infrastructure/gitops/charts/govbiz-evaluation/templates/network-policy.yaml) ·
+[Core 보조 연동 설정](../../../backend/core-service/src/main/resources/application.properties).
+
 ## AWS 저장·실행 경계
 
 | 구성 | 범위 |
@@ -54,8 +84,8 @@
 
 ## 자동 배포 흐름
 
-실선은 서비스 요청·데이터 관계, 회색 점선은 설정에 따른 연결·추가 검증 경로,
-주황색 실선은 **CI 통과 후 자동 배포 경로**입니다.
+회색 실선은 내부 요청·데이터 관계, 회색 점선은 설정에 따른 연결·추가 검증 경로,
+보라색 실선은 **외부 API 요청**, 주황색 실선은 **CI 통과 후 자동 배포 경로**입니다.
 
 개인 저장소 main의 **같은 최신 SHA**에 대한 필수 CI가 모두 통과하면 GitHub Actions가
 CodeConnections로 연결한 CodeBuild 임시 실행기에 빌드·ECR 발행을 맡깁니다.
@@ -109,7 +139,7 @@ node docs/assets/architecture/build-aws-eks.mjs --render
 Playwright 설치 디렉터리를 별도로 지정할 때는 `GOVBIZ_DIAGRAM_NODE_MODULES`,
 Chrome 실행 파일을 지정할 때는 `GOVBIZ_DIAGRAM_CHROME`을 사용합니다.
 렌더링은 외부 네트워크 요청을 차단하고 로고 로드·텍스트 폭·이미지 경계를 확인합니다.
-SVG는 3,000 × 3,670, PNG는 6,000 × 7,340입니다.
+SVG는 3,000 × 4,070, PNG는 6,000 × 8,140입니다.
 
 로고는 [AWS·공통 로고 출처](aws-logo-sources.json)와
 [Kubernetes·서비스 로고 출처](kubernetes-logo-sources.json)의 로컬 파일을 SHA-256으로 확인해 사용합니다.

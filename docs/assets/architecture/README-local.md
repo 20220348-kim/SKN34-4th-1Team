@@ -6,14 +6,14 @@
 업무 서비스·평가 실행·관측 저장소를 같은 kind 클러스터 안에 배치하고 namespace로 구분했습니다.
 기존 그림의 Compose 평가 영역과 외부 HTTP 브리지를 Kubernetes Service·PVC로 교체했습니다.
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=73d524f283f6)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=55e144236d84)
 
 ## 파일
 
-- [PNG](govbiz-local-architecture.png?v=73d524f283f6): 5,600 × 5,960, GitHub·발표 첨부용.
-- [SVG](govbiz-local-architecture.svg?v=66658e5cedb7): 2,800 × 2,980, 로고가 내장된 편집 가능한 원본.
+- [PNG](govbiz-local-architecture.png?v=55e144236d84): 5,600 × 6,760, GitHub·발표 첨부용.
+- [SVG](govbiz-local-architecture.svg?v=5f904839e3ab): 2,800 × 3,380, 로고가 내장된 편집 가능한 원본.
 - [생성 스크립트](build-local.mjs): 기존 로컬 로고를 사용하며 클러스터·GHCR에 접근하지 않습니다.
-- 로고 출처·해시는 [Kubernetes 로고 목록](kubernetes-logo-sources.json), [RabbitMQ·MyBatis 로고 목록](logo-sources.json), [Devicon 라이선스](DEVICON-LICENSE)를 따릅니다.
+- 로고 출처·해시는 [Kubernetes 로고 목록](kubernetes-logo-sources.json), [RabbitMQ·MyBatis·OpenAI 로고 목록](logo-sources.json), [로고별 라이선스 안내](README.md#로고-출처)를 따릅니다.
 
 ## 1. 세 namespace와 데이터 소유권
 
@@ -61,6 +61,34 @@ NetworkPolicy로 통신 범위를 제한하고 인증값은 Secret으로 주입�
 현재 평가 Chart는 **저장 응답 재평가**를 실행하며 새 답변·새 RAG·정기 실행은 비활성입니다.
 Kubernetes로 옮겼다는 이유로 유료 모델 호출을 켜지 않습니다. 해당 실행은 승인·예산·실행 설정을 갖춘 뒤 활성화하는 별도 범위입니다.
 실행 완료는 품질 합격과 구분하며, 사람이 검토한 결과를 관리자가 비교 기준으로 지정합니다.
+
+### 외부 API 연결
+
+그림의 외부 API 영역은 **kind 클러스터 밖의 서비스**입니다. 내부 Pod에서 시작한 요청이
+개발 PC의 인터넷 연결을 통해 나가며, 웹에 접속할 때 사용하는 port-forward를 거치는 경로는 아닙니다.
+보라색 화살표는 외부 API 요청입니다. 영역 왼쪽의 Catalog·AI는 위에 나온 서비스의 호출 경로를 다시 표시한 것입니다.
+
+| 호출 주체 → 외부 대상 | 하는 일과 실행 조건 |
+|---|---|
+| **Catalog → 공고 제공처 API** | 기업마당·K-Startup·과학기술정보통신부(MSIT)·충남 수출지원(CNTRADE_NOTICE)의 공고를 수집합니다. 기본 API 주소는 `https://apis.data.go.kr`이며 제공처별 키가 필요합니다. 로컬 기본 설정의 정기 수집은 꺼져 있고, 수집 실행 또는 스케줄 활성화 시 요청합니다. |
+| **AI Service → OpenAI** | 답변 생성·추천·RAG와 임베딩에 사용합니다. `OPENAI_API_KEY`와 모델 설정을 갖추고 해당 기능을 호출할 때 외부 요청이 발생합니다. Catalog가 AI에 색인을 요청하면 임베딩의 실제 OpenAI 호출도 AI Service가 담당합니다. |
+
+평가 코드에도 새 응답을 생성하는 OpenAI 호출이 있지만, **현재 Kubernetes 평가 실행기에는 연결을 열어 두지 않았습니다.**
+Chart는 live·RAG live를 `false`, OpenAI 키를 빈 값으로 고정하고 NetworkPolicy는 DNS·Prefect·Ops·Langfuse만 허용합니다.
+따라서 실행기에서 OpenAI로 향하는 선을 현재 사용 가능한 연결로 그리지 않았습니다.
+추후 유료 평가를 활성화하려면 승인·예산뿐 아니라 키 주입과 외부 통신 정책 변경도 필요합니다.
+
+주요 공고·AI 경로를 보여 주는 그림이므로 Core의 Google·Kakao OAuth, Bizno 사업자 조회,
+SMTP 메일, 기업마당 원문·첨부 조회 등 기능별 보조 연동은 개별 선으로 표시하지 않았습니다.
+이번 변경은 코드와 설정을 바탕으로 그림을 보완한 것이며 외부 API 호출·키 유효성·배포 상태를 새로 검증한 기록은 아닙니다.
+
+근거: [Catalog 제공처·수집 설정](../../../backend/catalog-service/src/main/resources/application.properties) ·
+[로컬 Catalog 설정](../../../infrastructure/gitops/environments/local-msa/catalog-service.yaml) ·
+[AI OpenAI 클라이언트](../../../backend/ai-service/app/bootstrap.py) ·
+[AI Secret 참조](../../../infrastructure/gitops/environments/in-cluster/ai-service.yaml) ·
+[평가 실행기 설정](../../../infrastructure/gitops/charts/govbiz-evaluation/templates/workload.yaml) ·
+[평가 통신 정책](../../../infrastructure/gitops/charts/govbiz-evaluation/templates/network-policy.yaml) ·
+[Core 보조 연동 설정](../../../backend/core-service/src/main/resources/application.properties).
 
 ## 3. 로컬 화면 접근
 

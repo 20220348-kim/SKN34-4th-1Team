@@ -59,14 +59,16 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 
 ## Vercel + AWS EKS 전체 구성 — 2026-10-12
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=be244c2d5ed5)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=bf884c9298c5)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=be244c2d5ed5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=1ffd1dac1d04)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=bf884c9298c5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=a6dbc0d6fcab)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
 로컬 통합 구성에 Vercel·CloudFront·내부 ALB·EKS·EC2 워커·EBS·ECR·S3를 반영한 별도 그림입니다.
 MySQL은 EKS 내부에 유지하며, 모바일·MyBatis·업무·평가·관측 연결과 저장소별 색상을 보존했습니다.
+Catalog → 공고 제공처 API, AI Service → OpenAI의 외부 호출은 별도 보라색 영역에서 표시합니다.
+사설 Pod의 NAT Gateway → Internet Gateway 출구와 VPC 밖 API를 구분합니다.
 자동 배포를 활성화한 목표 구조로, 개인 main의 CI 통과 → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel 흐름을 표시합니다.
 실제 활성화·실행 검증 상태는 구성도 설명 문서에 별도로 기록합니다.
 
@@ -83,9 +85,9 @@ Kubernetes의 namespace·PVC·port-forward와 다른 실행 경로이며 두 그
 
 ## Kubernetes 로컬 전체 구성 — 2026-10-12
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=73d524f283f6)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=55e144236d84)
 
-- [전환 후 구성 PNG](govbiz-local-architecture.png?v=73d524f283f6) · [SVG 원본](govbiz-local-architecture.svg?v=66658e5cedb7)
+- [전환 후 구성 PNG](govbiz-local-architecture.png?v=55e144236d84) · [SVG 원본](govbiz-local-architecture.svg?v=5f904839e3ab)
 - [namespace·데이터·내부 통신·접근 방식](README-local.md)
 - [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ·MyBatis 로고 출처·해시](logo-sources.json)
 
@@ -94,6 +96,8 @@ LLMOps까지 Kubernetes로 전환한 구조입니다. 하나의 kind 클러스�
 로컬 배포는 필수 CI·GHCR 검증 → 불변 배포 태그 → Argo 자동 동기화로 연결합니다. 기존 환경의 최초 인계·활성화는 별도입니다.
 React/Vite 웹과 React Native·Expo 모바일 앱은 같은 Core API·공통 계약을 사용하고, 관리자 Ops는 웹에서 접근합니다.
 Prefect·실행기·결과 서버·Langfuse와 저장소를 내부 Service·PVC로 연결하고, 도구 UI는 port-forward로 접근합니다.
+외부 API 영역에는 Catalog → 공고 제공처 API, AI Service → OpenAI와 개발 PC를 통한 인터넷 출구를 표시합니다.
+보라색 화살표는 주요 외부 호출이며, 현재 비활성인 평가 실행기의 직접 모델 호출과 구분합니다.
 실제 이전 기록과 그림의 범위는 [그림 설명](README-local.md#그림의-기준)을 따릅니다.
 
 ## 통합 전 Mac Kubernetes · 비공개 GHCR · Argo CD 기록
