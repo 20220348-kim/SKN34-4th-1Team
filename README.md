@@ -289,7 +289,7 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 <img src="docs/assets/readme/architecture-resources-caption.svg" alt="5.2.4 Kubernetes 내부 리소스 구조 — 아래 그림은 ① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다." width="820">
 
-그림은 **2026-10-13 확인한 저장소의 운영 설정**(Helm Chart·EKS 설정·자동 배포 코드)을 설명합니다. 로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
+로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
 
 **전체 Namespace와 워크로드 배치**
 
@@ -402,8 +402,6 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 <a id="525-운영-배포-프로세스"></a>
 
 <img src="docs/assets/readme/architecture-deployment-caption.svg" alt="5.2.5 운영 배포 프로세스 — 운영 배포는 GitHub Actions가 순서를 제어하고, CodeBuild가 이미지를 빌드해 ECR에 저장한 뒤, Argo CD가 Git의 배포 설정을 EKS에 반영하는 흐름입니다. 백엔드 배포가 성공하면 같은 커밋의 웹을 Vercel 운영 주소로 전환합니다." width="820">
-
-배포 기준은 **개인 저장소 `ilil1/SKN34-4th-1Team`의 최신 `main` 커밋**입니다. 학교 저장소의 변경은 개인 `main`에 동기화해야 이 흐름으로 이어집니다.
 
 **① 검증·이미지 빌드·배포 설정 생성**
 
