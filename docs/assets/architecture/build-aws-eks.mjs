@@ -12,7 +12,9 @@ const manifests = await Promise.all(['aws-logo-sources.json', 'kubernetes-logo-s
 const manifest = [...new Map(manifests.flat().map(source => [source.name, source])).values()];
 const icons = new Map();
 for (const source of manifest) {
-  const bytes = await fs.readFile(path.join(root, 'icons', source.file));
+  const raw = await fs.readFile(path.join(root, 'icons', source.file));
+  // Git checks out text assets with CRLF on Windows; source hashes use LF.
+  const bytes = source.file.endsWith('.svg') ? Buffer.from(raw.toString('utf8').replace(/\r\n/g, '\n')) : raw;
   if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) throw new Error(`Logo hash mismatch: ${source.name}`);
   const isSvg = source.file.endsWith('.svg');
   if (isSvg) {
@@ -25,10 +27,10 @@ for (const source of manifest) {
   icons.set(source.name, `data:${isSvg ? 'image/svg+xml' : 'image/png'};base64,${bytes.toString('base64')}`);
 }
 
-const W = 3000, H = 3670;
+const W = 3000, H = 4070;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
-const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E'};
+const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E', external:'#67548E'};
 const parts = [];
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;'}[c]));
 function text(x, y, value, {size=23, weight=400, fill=ink, anchor='start', max=2600}={}) {
@@ -252,7 +254,7 @@ parts.push('</g>');
 card(115,2466,2770,78,'#FFFFFF','#CFDCE7',16);
 icon('nat',137,2483,38); icon('igw',976,2483,38);
 text(193,2516,'외부 요청: private workload → NAT Gateway 1개',{size:24,max:740});
-text(1030,2516,'→ Internet Gateway → VPC 외부 OpenAI · 공고 제공처 API',{size:24,max:1490});
+text(1030,2516,'→ Internet Gateway → 외부 API · 호출 주체·목적지는 아래 02 참고',{size:24,max:1490});
 text(2855,2516,'NAT는 public subnet',{size:20,fill:muted,anchor:'end',max:330});
 
 // These managed AWS services support the cluster; no RDS replacement is assumed.
@@ -293,8 +295,33 @@ text(173,2960,'Controller가 Ingress 설정을 읽어 내부 ALB 구성',{size:2
 text(1230,2929,'인프라: eksctl · CloudFormation · IAM / Pod Identity · EBS CSI',{size:23,max:1670});
 text(1230,2966,'워커 2대는 한 AZ · 평가 실행은 승인·예산 정책으로 제어',{size:22,fill:muted,max:1670});
 
+// Route detail outside the AWS boundary; callers and NAT/IGW remain in the VPC above.
+card(60,3040,2880,350,'#F8F6FC','#CEC4E2',26);
+text(90,3084,'02   외부 API 연결 · 위 EKS 서비스의 호출 경로',{size:28,weight:700,fill:colors.external,max:1800});
+text(2905,3084,'호출 대상은 이 AWS VPC 밖',{size:24,fill:colors.external,anchor:'end',max:850});
+for (const [y,brand,caller,purpose,target,detail] of [
+  [3110,'springboot','Catalog · :8081','공고 수집·정규화','공식 공고 API','기업마당 · K-Startup · 과기정통부 · 충남 수출지원'],
+  [3235,'fastapi','AI Service · :8000','답변 생성·임베딩','OpenAI','Responses / Embeddings API'],
+]) {
+  card(90,y,500,105);
+  icon(brand,112,y+19,38);
+  text(170,y+44,caller,{size:28,weight:700,max:398});
+  text(114,y+82,purpose,{size:24,fill:muted,max:452});
+  card(675,y,1000,105,'#FFFFFF','#CEC4E2',18);
+  text(700,y+44,'사설 Pod → NAT Gateway → Internet Gateway',{size:27,weight:600,max:950});
+  text(700,y+82,'NAT는 public subnet · 외부 HTTPS 요청',{size:24,fill:muted,max:950});
+  card(1755,y,1150,105,'#F1F8FC','#C3DAE8',18);
+  if (target==='OpenAI') icon('openai',1779,y+18,40);
+  text(target==='OpenAI'?1835:1779,y+44,`${target} · HTTPS`,{size:30,weight:700,max:1030});
+  text(1779,y+82,detail,{size:25,fill:muted,max:1102});
+  edge(`M590 ${y+52}H675`,'external');
+  edge(`M1675 ${y+52}H1755`,'external');
+}
+text(90,3375,'API 키·제공처 활성화 설정 필요 · 평가 실행기의 외부 모델 호출은 현재 Chart에서 비활성 · 위 경로는 인바운드 ALB와 분리',{size:24,fill:muted,max:2800});
+
+parts.push('<g transform="translate(0 400)">');
 card(60,3040,2880,466,'#FDF9F2','#E3D0AC',26);
-text(90,3086,'02   main 변경 → CI 검증 → AWS / Vercel 자동 배포',{size:28,weight:700,fill:'#98631F'});
+text(90,3086,'03   main 변경 → CI 검증 → AWS / Vercel 자동 배포',{size:28,weight:700,fill:'#98631F'});
 text(2905,3086,'같은 최신 SHA 검증 · 백엔드 갱신 후 웹 전환',{size:22,fill:'#98631F',anchor:'end',max:1050});
 const delivery = [
   [90,410,'githubactions','GitHub Actions',['개인 main · 필수 CI 5개','같은 최신 SHA 통과 확인','배포 순서·조건 조율']],
@@ -316,13 +343,12 @@ text(90,3438,'자동 교체 범위: 애플리케이션·평가 실행기·결과
 text(90,3479,'권한 분리: CodeBuild는 빌드·ECR·Git 발행과 EKS 상태 조회 · Argo CD가 Git 설정으로 운영 앱 갱신',{size:23,fill:muted,max:2800});
 
 parts.push('<path d="M70 3520H2930" stroke="#E4EBF0" stroke-width="2"/>');
-for(const [x,kind,name] of [[80,'runtime','요청 · 데이터 관계'],[790,'config','조건부 연결 · 별도 검증'],[1640,'deploy','CI 통과 후 자동 배포']]) {
+for(const [x,kind,name] of [[80,'runtime','요청 · 데이터 관계'],[700,'config','조건부 연결 · 별도 검증'],[1480,'external','외부 API 호출'],[2100,'deploy','CI 통과 후 자동 배포']]) {
   edge(`M${x} 3564H${x+62}`,kind);
   text(x+82,3572,name,{size:24,max:740});
 }
-text(2925,3572,'실행 완료 ≠ 품질 합격',{size:24,weight:600,anchor:'end',max:640});
-text(80,3624,'자동 배포를 활성화한 목표 구성 · 실행·저장소·품질 검토의 경계 유지 · 실제 적용·검증 기록은 구성도 설명 문서 참고',{size:22,fill:muted,max:2850});
-parts.push('</svg>');
+text(80,3624,'자동 배포를 활성화한 목표 구성 · 실제 적용·검증 기록은 구성도 설명 문서 참고 · 실행 완료 ≠ 품질 합격',{size:22,fill:muted,max:2850});
+parts.push('</g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
 console.log(`Created ${basename}.svg`);

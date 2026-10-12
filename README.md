@@ -241,14 +241,15 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 <img src="docs/assets/readme/architecture-kubernetes-caption.svg" alt="5.2.2 Kubernetes 로컬 전체 구성도 — 개발 PC의 kind 클러스터에 업무 서비스와 LLMOps를 함께 실행합니다. 업무(govbiz-msa)·평가(govbiz-evaluation)·관측(govbiz-observability) namespace로 구분하고, 서비스는 ClusterIP·내부 DNS로 통신하며 데이터는 PVC에 보존합니다." width="820">
 
-![GovBiz 로컬 전체 구성도 — kind 기반 업무·평가·관측](docs/assets/architecture/govbiz-local-architecture.png?v=73d524f283f6)
+![GovBiz 로컬 전체 구성도 — kind 기반 업무·평가·관측](docs/assets/architecture/govbiz-local-architecture.png?v=55e144236d84)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png?v=73d524f283f6) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg?v=66658e5cedb7)
+[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png?v=55e144236d84) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg?v=5f904839e3ab)
 
 | 구분 | 로컬 구성 |
 |---|---|
 | **웹·모바일 접근** | 개발 중에는 Vite에서 Core·Ops로 port-forward하고, 배포한 웹은 Kubernetes의 Nginx에서 내부 API로 연결합니다. React Native·Expo 앱은 기기에서 접근 가능한 Core API 주소와 Bearer 인증을 사용합니다. |
 | **관리·관측** | 같은 웹에서 관리자 Ops 화면을 제공하며, Prefect·Langfuse UI는 각각 port-forward로 접근합니다. |
+| **외부 API 연결** | Catalog는 기업마당·K-Startup·과기정통부·충남 수출지원 공고 API를, AI Service는 OpenAI를 호출합니다. kind 네트워크에서 개발 PC의 인터넷 연결을 거쳐 나가는 경로이며, API 키와 기능별 실행 설정이 필요합니다. |
 | **자동 배포** | 소스 동기화 → 필수 CI → GHCR 이미지 발행 → Helm 배포 YAML 생성·태그 발행 → Argo CD 자동 동기화의 5단계입니다. Helm은 Chart·로컬 설정값·검증된 이미지 digest로 배포 설정을 만들고, Argo CD는 이를 kind에 반영합니다. 진행 중인 평가가 있으면 교체를 보류하고 DB·PVC·Secret은 보존합니다. |
 
 [로컬 배치·저장소·접근 방식 상세](docs/assets/architecture/README-local.md) · [자동 배포 설정·최초 전환](infrastructure/gitops/docs/local-auto-sync.md)
@@ -257,14 +258,15 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 <img src="docs/assets/readme/architecture-production-caption.svg" alt="5.2.3 운영 전체 구성도 — 웹은 Vercel, 백엔드·LLMOps는 AWS EKS에 배치합니다. 아래는 main의 CI 통과 후 자동 배포가 적용되는 구조입니다." width="820">
 
-![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=be244c2d5ed5)
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=bf884c9298c5)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=be244c2d5ed5) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=1ffd1dac1d04)
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=bf884c9298c5) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=a6dbc0d6fcab)
 
 | 구분 | 운영 구성 |
 |---|---|
 | **웹·API 접근** | Vercel 웹의 API 요청은 CloudFront VPC origin → 내부 ALB → EKS Nginx를 거쳐 Core·Ops로 분기합니다. 모바일은 운영 HTTPS 주소로 같은 Core API를 호출합니다. |
 | **서비스 실행** | 사설 EC2 워커 2대의 EKS에 업무·평가·관측 namespace를 배치합니다. 현재 노드 배치는 단일 AZ입니다. |
+| **외부 API 연결** | Catalog → 공고 제공처 API, AI Service → OpenAI의 요청은 사설 Pod에서 NAT Gateway → Internet Gateway를 거쳐 나갑니다. 외부 API는 VPC 밖에 있으며, 사용자 요청이 들어오는 ALB 경로와 구분합니다. |
 | **데이터 보존** | MySQL·검색·큐·평가·관측 데이터는 EBS gp3 PVC에 보존합니다. S3는 암호화한 이전 백업을 보관합니다. |
 | **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → Helm 배포 YAML·불변 Git 태그 발행 → Argo CD의 EKS 동기화 → Vercel 웹 전환 순서입니다. |
 | **배포 도구** | Helm은 Chart·EKS 설정·이미지 digest로 YAML을 만듭니다. Argo CD가 평가 접수 보호·migration·앱 교체·연결 검증을 수행하고, CodeBuild는 결과를 조회합니다. 최초 운영 인계·활성화 상태는 아래 검증 기록에서 구분합니다. |

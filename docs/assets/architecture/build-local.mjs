@@ -9,10 +9,12 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const basename = 'govbiz-local-architecture';
 const manifest = JSON.parse(await fs.readFile(path.join(root, 'kubernetes-logo-sources.json'), 'utf8'));
 manifest.push(...JSON.parse(await fs.readFile(path.join(root, 'logo-sources.json'), 'utf8'))
-  .filter(source => ['rabbitmq', 'mybatis'].includes(source.name)));
+  .filter(source => ['rabbitmq', 'mybatis', 'openai'].includes(source.name)));
 const icons = new Map();
 for (const source of manifest) {
-  const bytes = await fs.readFile(path.join(root, 'icons', source.file));
+  const raw = await fs.readFile(path.join(root, 'icons', source.file));
+  // Git checks out text assets with CRLF on Windows; source hashes use LF.
+  const bytes = source.file.endsWith('.svg') ? Buffer.from(raw.toString('utf8').replace(/\r\n/g, '\n')) : raw;
   if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) throw new Error(`Logo hash mismatch: ${source.name}`);
   const isSvg = source.file.endsWith('.svg');
   if (isSvg) {
@@ -25,10 +27,10 @@ for (const source of manifest) {
   icons.set(source.name, `data:${isSvg ? 'image/svg+xml' : 'image/png'};base64,${bytes.toString('base64')}`);
 }
 
-const W = 2800, H = 2980;
+const W = 2800, H = 3380;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
-const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570'};
+const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', external:'#67548E'};
 const parts = [];
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;'}[c]));
 function text(x, y, value, {size=23, weight=400, fill=ink, anchor='start', max=2600}={}) {
@@ -248,10 +250,34 @@ edge('M1925 1635H1950V1100H2010');
 edge('M1925 1730H1965V1565H2010');
 text(100,2146,'평가 PVC: Prefect / 결과 분리 · 실행기와 결과 서버는 같은 노드에서 RWO PVC 공유 · 외부 도구 UI는 loopback 포워딩',{size:23,fill:muted,max:2600});
 
-parts.push('<g transform="translate(0 290)">');
+// Repeat the two callers as a route detail, outside the cluster boundary.
+card(60,2210,2680,350,'#F8F6FC','#CEC4E2',26);
+text(90,2254,'03   외부 API 연결 · 위 서비스의 호출 경로',{size:26,weight:700,fill:colors.external,max:1600});
+text(2705,2254,'호출 대상은 kind 클러스터 밖',{size:23,fill:colors.external,anchor:'end',max:850});
+for (const [y,brand,caller,purpose,target,detail] of [
+  [2280,'springboot','Catalog · :8081','공고 수집·정규화','공식 공고 API','기업마당 · K-Startup · 과기정통부 · 충남 수출지원'],
+  [2405,'fastapi','AI Service · :8000','답변 생성·임베딩','OpenAI','Responses / Embeddings API'],
+]) {
+  card(90,y,460,105);
+  icon(brand,110,y+19,38);
+  text(166,y+44,caller,{size:27,weight:700,max:362});
+  text(112,y+82,purpose,{size:23,fill:muted,max:416});
+  card(625,y,925,105,'#FFFFFF','#CEC4E2',18);
+  text(650,y+44,'kind 네트워크 → 개발 PC의 인터넷 연결',{size:27,weight:600,max:875});
+  text(650,y+82,'외부 HTTPS 요청 · API 키는 서버에 주입',{size:23,fill:muted,max:875});
+  card(1630,y,1075,105,'#F1F8FC','#C3DAE8',18);
+  if (target==='OpenAI') icon('openai',1654,y+18,40);
+  text(target==='OpenAI'?1710:1654,y+44,`${target} · HTTPS`,{size:29,weight:700,max:955});
+  text(1654,y+82,detail,{size:24,fill:muted,max:1027});
+  edge(`M550 ${y+52}H625`,'external');
+  edge(`M1550 ${y+52}H1630`,'external');
+}
+text(90,2545,'API 키·제공처 활성화 설정 필요 · 평가 실행기의 외부 모델 호출은 현재 Chart에서 비활성 · 외부 API는 이 클러스터에 배포하지 않음',{size:23,fill:muted,max:2600});
+
+parts.push('<g transform="translate(0 690)">');
 // Human review changes the comparison baseline; orchestration completion is not a quality verdict.
 card(60,1920,2680,240,'#F0F9F5','#BBDDD0',26);
-text(90,1960,'03   React Ops에서 이어지는 평가 · 사람 검토',{size:26,weight:700,fill:'#256B49'});
+text(90,1960,'04   React Ops에서 이어지는 평가 · 사람 검토',{size:26,weight:700,fill:'#256B49'});
 const review = [
   [90,570,'자료 선택 · 실행 접수','자료·캡처·버전을 고정하고 실행 관리'],
   [750,570,'보고서 · trace 비교','후보와 기존 기준의 차이 확인'],
@@ -272,11 +298,10 @@ text(450,2241,'코드 저장 → dev.py → 변경 서비스 Docker 빌드 → k
 text(90,2298,'웹 Vite HMR · 앱 Expo Fast Refresh · 웹·업무·평가 앱은 검증 태그로 자동 sync · 기반 도구·저장소 유지 · prune 비활성 · Secret / PVC 보존',{size:23,fill:muted,max:2600});
 
 parts.push('<path d="M70 2380H2730" stroke="#E4EBF0" stroke-width="2"/>');
-for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[625,'deploy','검증 · 이미지 공급'],[1210,'config','설정된 내부 연동'],[1800,'dev','평가 · 사람 검토']]){
+for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[560,'deploy','검증 · 이미지 공급'],[1090,'config','설정된 내부 연동'],[1610,'external','외부 API 호출'],[2070,'dev','평가 · 사람 검토']]){
   edge(`M${x} 2420H${x+55}`,kind); text(x+76,2428,name,{size:22,max:570});
 }
-text(2725,2428,'실행 완료 ≠ 품질 합격',{size:24,weight:600,anchor:'end',max:800});
-text(75,2477,'2026.10.12 · LLMOps Kubernetes 통합 · 자동 배포 활성화·실시간 가동 상태·유료 모델 품질의 검증 결과는 별도',{size:21,fill:muted,max:2650});
+text(75,2477,'2026.10.12 · 자동 배포 활성화·실시간 가동 상태·유료 모델 품질의 검증 결과는 별도 · 실행 완료 ≠ 품질 합격',{size:21,fill:muted,max:2650});
 parts.push('</g></g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
