@@ -234,7 +234,8 @@ class SupportProgramConversationControllerTest {
     @Test
     fun validatesRawUtf16TextLimitsControlCharactersAndRealCalendarDates() {
         val mvc = mvc()
-        for (message in listOf("", " ", "\u00a0", "가".repeat(501), "😀".repeat(251), "AI\u0000", "AI\u200b")) mvc.perform(request(body(message = message))).andExpect(status().isBadRequest())
+        val refused = listOf("", " ", "\u00a0", "\u200b", "\u200d ", "가".repeat(501), "😀".repeat(251), "AI\u0000", "AI\u202e", "AI\u2066", "AI\ue000", "AI\uffff", "AI\ufdd0", "AI\ud83f\udffe")
+        for (message in refused) mvc.perform(request(body(message = message))).andExpect(status().isBadRequest())
         for ((field, limit) in listOf("region" to 50, "industry" to 100, "supportPurpose" to 100)) {
             for (value in listOf("", " ", "가".repeat(limit + 1), "😀".repeat(limit / 2 + 1), "가\n", "가\r", "가\t", "가\u0000", "가\u200b")) {
                 val context = contextJson()
@@ -251,6 +252,20 @@ class SupportProgramConversationControllerTest {
         }
         for (query in listOf("", " ", "가".repeat(501), "😀".repeat(251), "AI\u0000")) mvc.perform(request(body(contextJson().apply { put("query", query) }))).andExpect(status().isBadRequest())
         Mockito.verifyNoInteractions(service, search)
+    }
+
+    @Test
+    fun aMessageKeepsEmojiSequencesPastedInvisibleCharactersAndNewerEmoji() {
+        val mvc = mvc()
+        // 👩‍💻(ZWJ), 웹에서 붙여 넣은 폭 없는 공백·BOM, 이 Java가 모르는 새 이모지(U+1FAE9), 깃발 태그 시퀀스
+        val messages = listOf("개발자 👩\u200d💻 창업 지원", "서울 창업 지원\u200b", "\ufeff서울 창업", "새 \ud83e\udee9 지원", "🏴\udb40\udc67\udb40\udc62\udb40\udc7f 수출")
+        for (message in messages) {
+            val dto = mapper.readValue(body(message = message), SupportProgramConversationRequest::class.java)
+            Mockito.`when`(service.interpret(dto.message, dto.context.toDomain(), null))
+                .thenReturn(SupportProgramConversationResult(SupportProgramConversationStatus.READY, dto.context.toDomain(), null, emptyList()))
+            mvc.perform(request(body(message = message))).andExpect(status().isOk())
+            Mockito.verify(service).interpret(message, dto.context.toDomain(), null)
+        }
     }
 
     @Test

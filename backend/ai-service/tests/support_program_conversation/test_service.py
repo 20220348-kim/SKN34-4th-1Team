@@ -303,3 +303,34 @@ async def test_foundation_precision_can_be_replaced_and_cleared(request_data, fi
     result = service._merge_context(request, output).company_conditions
     assert result.founded_year == (int(value) if field == "FOUNDED_YEAR" and value else None)
     assert result.established_on == (value if field == "ESTABLISHED_ON" else None)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("message,evidence", [
+    ("부산으로  변경", "부산으로 변경"),  # spacing
+    ("부산으로\u00a0변경", "부산으로 변경"),  # no-break space
+    ("부\u200b산으로 변경", "부산"),  # pasted zero-width space
+    ("\u1107\u116e\u1109\u1161\u11ab으로 변경", "부산"),  # decomposed Hangul (NFD) from some keyboards
+    ("Busan으로 변경", "busan"),  # letter case
+])
+async def test_evidence_may_differ_from_the_message_only_in_spacing_form_and_case(request_data, output_data, message, evidence):
+    request_data["message"] = message
+    output_data["updates"][0]["evidence"] = evidence
+    agent = AsyncMock()
+    agent.interpret.return_value = SupportProgramConversationOutput.model_validate(output_data)
+    response = await SupportProgramConversationService(agent).interpret(SupportProgramConversationRequest.model_validate(request_data))
+    assert response.status == "READY"
+
+
+@pytest.mark.anyio
+async def test_dotted_founding_date_keeps_month_and_day(request_data):
+    request_data["message"] = "2021. 3. 15. 설립"
+    output = SupportProgramConversationOutput(status="READY", updates=[{
+        "field": "ESTABLISHED_ON", "operation": "SET", "value": "2021-03-15", "evidence": "2021. 3. 15.",
+    }], answerKind=None, clarificationKind=None)
+    agent = AsyncMock()
+    agent.interpret.return_value = output
+    service = SupportProgramConversationService(agent)
+    request = SupportProgramConversationRequest.model_validate(request_data)
+    await service.interpret(request)
+    assert service._merge_context(request, output).company_conditions.established_on == "2021-03-15"

@@ -39,6 +39,8 @@ def test_nullable_fields_and_omitted_pending_are_valid(request_data):
 @pytest.mark.parametrize("value", ["", " \t\n", "a\x00", "a\u200b", "a\ud800", "a\ue000"])
 @pytest.mark.parametrize("field", ["message", "query"])
 def test_rejects_blank_or_forbidden_query_characters(request_data, value, field):
+    if field == "message" and value == "a\u200b":
+        value = "\u200b"  # a message may hold a pasted zero-width space but must not be only invisible characters
     (request_data if field == "message" else request_data["context"])[field] = value
     with pytest.raises(ValidationError):
         SupportProgramConversationRequest.model_validate(request_data)
@@ -110,7 +112,9 @@ def test_rejects_invalid_set_values_and_invented_dates(field, value, evidence):
         ConversationUpdate(field=field, operation="SET", value=value, evidence=evidence)
 
 
-@pytest.mark.parametrize("evidence", ["2024-01-01", "2024년 1월 1일", "2024년01월01일", "2024년\u00a01월 1일"])
+@pytest.mark.parametrize("evidence", [
+    "2024-01-01", "2024년 1월 1일", "2024년01월01일", "2024년\u00a01월 1일", "2024.1.1", "2024.01.01.", "2024. 1. 1.",
+])
 def test_normalizes_only_explicit_full_date_evidence(evidence):
     assert ConversationUpdate(field="ESTABLISHED_ON", operation="SET", value="2024-01-01", evidence=evidence)
 
@@ -283,3 +287,32 @@ def test_clarification_response_carries_only_an_allowed_question_kind():
     assert "clarificationKind" not in SupportProgramConversationResponse.model_validate(ready).model_dump(by_alias=True)
     with pytest.raises(ValidationError):
         SupportProgramConversationResponse.model_validate({**ready, "clarificationKind": "QUERY"})
+
+
+@pytest.mark.parametrize("message", [
+    "개발자 👩\u200d💻 창업 지원",  # ZWJ emoji sequence
+    "농업 👨\u200d🌾 지원사업",
+    "서울 창업 지원\u200b",  # zero-width space pasted from a web page
+    "\ufeff서울 창업 지원",  # byte order mark
+    "새 이모지 \U0001fae9 지원",  # emoji newer than this Unicode version (unassigned here)
+    "깃발 🏴\U000e0067\U000e0062\U000e007f 수출",  # emoji tag sequence
+])
+def test_a_message_keeps_emoji_sequences_and_pasted_invisible_characters(request_data, message):
+    request_data["message"] = message
+    assert SupportProgramConversationRequest.model_validate(request_data).message == message
+
+
+@pytest.mark.parametrize("message", [
+    "서울\u202e지원", "서울\u2066지원\u2069", "서울\u200f지원", "서울\x07지원", "서울\ue000지원", "서울\ud800지원",
+    "서울\uffff", "서울\ufdd0", "서울\U0001fffe", "\u200b\u200d", "😀" * 251,
+])
+def test_a_message_still_refuses_control_bidirectional_private_use_and_noncharacters(request_data, message):
+    request_data["message"] = message
+    with pytest.raises(ValidationError):
+        SupportProgramConversationRequest.model_validate(request_data)
+
+
+@pytest.mark.parametrize("evidence", ["2024.1", "2024.13.1", "2024.2.30", "24.1.1", "2024..1.1", "2024.1.1 설립"])
+def test_refuses_dotted_dates_that_are_incomplete_impossible_or_carry_words(evidence):
+    with pytest.raises(ValidationError):
+        ConversationUpdate(field="ESTABLISHED_ON", operation="SET", value="2024-01-01", evidence=evidence)
