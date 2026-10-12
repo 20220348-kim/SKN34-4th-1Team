@@ -23,7 +23,7 @@
 | 컴퓨팅·네트워크 | 시드니 EKS, private EC2 기본 2대·최대 3대, NAT 1개, EKS API의 사설 접근·관리 IP 제한 | [클러스터 설정](../../../infrastructure/eks/cluster.sydney-demo.yaml), [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
 | 노드 배치 | 업무 DB·Catalog·Ops는 application, Prefect·평가 실행기·결과 저장소·Langfuse·Argo CD는 observability. 기본 두 노드에서는 Core·AI를 각각 1개씩 배치 | [EKS 서비스 설정](../../../infrastructure/eks/gitops-values.yaml), [배포 YAML 생성](../../../infrastructure/eks/gitops.py) |
 | 로드밸런싱 | 내부 ALB → 정상 Gateway Pod IP → Core·Ops Service. Core → AI Service로 연결하며 Core·AI Service는 준비된 Pod로 분산 | [API 진입점](../../../infrastructure/eks/api-entrypoint.md) |
-| Pod·EC2 자동확장 | HPA: CPU requests 대비 평균 사용률 60%, Core·AI 각각 2~3개·Gateway 1~3개. 배치 대기 Pod가 생기면 Cluster Autoscaler가 application EC2를 최대 1대 추가 | [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
+| Pod·EC2 자동확장 | HPA: CPU requests 대비 평균 사용률 60%, Core·AI 각각 2\~3개·Gateway 1\~3개. 배치 대기 Pod가 생기면 Cluster Autoscaler가 application EC2를 최대 1대 추가 | [자동 확장 설정](../../../infrastructure/eks/autoscaling/README.md) |
 | 데이터 | 기존 DB·색인·큐·평가·관측 데이터를 EBS gp3 PVC에 복원, S3에는 암호화한 이전 백업 보관 | [이전 기록](../../../infrastructure/eks/sydney-demo.md), [StorageClass](../../../infrastructure/eks/storage-class.yaml) |
 | 변경 배포 | 같은 최신 main의 필수 CI → CodeBuild·ECR → Helm·Git 태그 → Argo CD·EKS → Vercel | [자동 배포 구성·검증 상태](../../../infrastructure/eks/continuous-deployment.md), [워크플로](../../../.github/workflows/eks-release.yml) |
 | Helm·Argo CD | Helm으로 만든 배포 YAML을 Git에 보관하고 Argo CD가 EKS 앱에 반영합니다. Helm은 AWS Load Balancer Controller 설치에도 사용합니다. | [Argo 최초 인계](../../../infrastructure/eks/argo-cd.md), [Controller 설치 절차](../../../infrastructure/eks/api-entrypoint.md#실제-적용-전-준비) |
@@ -86,9 +86,9 @@ Core의 Google·Kakao OAuth, Bizno 사업자 조회, SMTP 메일, 기업마당 �
 
 | 구성 | 범위 |
 |---|---|
-| EKS 워커 | 기본은 `application`과 `observability`의 `m7i-flex.large` 각 1대입니다. `application`은 최대 2대, `observability`는 1대를 유지해 전체 EC2는 2~3대입니다. Namespace와 노드 풀은 서로 다른 구분입니다. |
+| EKS 워커 | 기본은 `application`과 `observability`의 `m7i-flex.large` 각 1대입니다. `application`은 최대 2대, `observability`는 1대를 유지해 전체 EC2는 2\~3대입니다. Namespace와 노드 풀은 서로 다른 구분입니다. |
 | 기본 두 노드의 배치 | application은 업무 DB·검색·큐·Catalog·Ops, observability는 Langfuse·관측 저장소·Argo CD·Prefect·평가 실행기·결과 저장소를 실행합니다. 기본 두 노드에서는 Core·AI를 각각 1개씩 배치합니다. 기존 PVC를 보존하며 평가 실행기와 결과 API는 같은 노드에서 결과 PVC를 공유합니다. |
-| Pod·노드 자동 확장 | Core·AI HPA는 각각 2~3개이며 같은 서비스의 Pod는 필수 anti-affinity로 노드당 1개만 배치합니다. 세 번째 Pod가 대기하면 Cluster Autoscaler가 application EC2 1대를 추가합니다. Gateway는 HPA 1~3개입니다. 부하 감소 후 Pod가 줄고 남은 Pod를 안전하게 옮길 수 있어야 추가 노드를 제거합니다. |
+| Pod·노드 자동 확장 | Core·AI HPA는 각각 2\~3개이며 같은 서비스의 Pod는 필수 anti-affinity로 노드당 1개만 배치합니다. 세 번째 Pod가 대기하면 Cluster Autoscaler가 application EC2 1대를 추가합니다. Gateway는 HPA 1\~3개입니다. 부하 감소 후 Pod가 줄고 남은 Pod를 안전하게 옮길 수 있어야 추가 노드를 제거합니다. |
 | Core·AI 교체 | `RollingUpdate`에서 `maxSurge: 0`, `maxUnavailable: 1`로 최대 1개씩 교체합니다. 최대 3대 상태에서 네 번째 노드를 요구하지 않도록 설정합니다. |
 | 가용 영역 | 제어면 서브넷은 2개 AZ를 사용하지만 두 워커는 `ap-southeast-2a`에 있습니다. 다중 AZ 고가용성 구성으로 표시하지 않습니다. |
 | EBS | 데이터 PVC 13개는 업무 7개·평가 2개·관측 4개입니다. 암호화 gp3와 `Retain`을 사용합니다. MySQL 3개는 EKS StatefulSet으로 유지하며 RDS로 전환한 구성이 아닙니다. |
