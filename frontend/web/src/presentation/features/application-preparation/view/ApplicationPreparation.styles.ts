@@ -83,8 +83,6 @@ export const applicationPreparationStyles = {
   cardStamp: 'text-xs leading-5 text-slate-500 tabular-nums',
   cardActions: 'flex shrink-0 items-center gap-1.5',
   secondarySm: `inline-flex min-h-8 items-center justify-center rounded-full border border-slate-300 bg-white px-3 text-[0.8125rem] font-semibold text-ink no-underline hover:bg-slate-50 ${focus}`,
-  menuButton: `grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-base leading-none text-ink-muted hover:text-ink ${focus}`,
-  menuItemDanger: 'text-red-800 hover:bg-red-50',
   dangerSolid: `inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-danger px-4 py-2 text-sm font-semibold text-white hover:bg-[#7f2d39] disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   stepBar: 'sticky bottom-0 flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] backdrop-blur',
 } as const

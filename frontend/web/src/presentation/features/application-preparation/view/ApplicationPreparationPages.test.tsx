@@ -74,7 +74,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { onlineInputGuide: vi.fn(), googleForm: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { onlineInputGuide: vi.fn(), googleForm: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn(), dismissDiscoveryJob: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -1170,6 +1170,11 @@ describe('application preparation list', () => {
     expect(within(done).getByRole('link', { name: `양식 보기: ${secondForm.programTitle}` }).getAttribute('href'))
       .toBe('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_2')
     expect(within(done).queryByRole('button', { name: /문서 메뉴/ })).toBeNull()
+    // 끝난 분석은 오른쪽 위 버튼으로 지울 수 있고 공고 보기가 보입니다. 진행 중인 분석은 지울 수 없습니다.
+    expect(within(done).getByRole('button', { name: `삭제: ${secondForm.programTitle}` })).toBeTruthy()
+    expect(within(done).getByRole('link', { name: `공고 보기: ${secondForm.programTitle}` }).getAttribute('href'))
+      .toBe(supportProgramDetailPath({ sourceCode: secondForm.sourceCode, sourceProgramId: secondForm.sourceProgramId }, true))
+    expect(within(running).queryByRole('button', { name: /^삭제:/ })).toBeNull()
     expect(within(document).getByText('문서를 이미 시작한 공고')).toBeTruthy()
     expect(within(document).queryByText('양식 분석')).toBeNull()
     expect(screen.queryByText('오래된 분석 공고')).toBeNull()
@@ -1182,6 +1187,30 @@ describe('application preparation list', () => {
     await waitFor(() => expect(screen.queryByText('양식 분석')).toBeNull())
   })
 
+
+  it('removes a finished form analysis card only after confirmation and keeps it hidden after the jobs are read again', async () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const finished = { id: 8, sourceCode: secondForm.sourceCode, sourceProgramId: secondForm.sourceProgramId, programTitle: secondForm.programTitle,
+      programSourceUrl: secondForm.sourceUrl, status: 'FAILED' as const, result: null, failureCode: 'APPLICATION_FORM_NO_FORM', createdAt: recent }
+    repository.discoveryJobs.mockResolvedValue([finished])
+    repository.list.mockResolvedValue({ items: [], nextBeforeId: null })
+    repository.dismissDiscoveryJob.mockImplementation(async () => {
+      // 서버는 기록을 남기고 지운 표시만 바꿔 돌려줍니다.
+      repository.discoveryJobs.mockResolvedValue([{ ...finished, dismissed: true, seen: true }])
+    })
+    mount('/app/application-preparations')
+    const card = (await screen.findByText(secondForm.programTitle)).closest('li')!
+    expect(within(card).getByText('원문 참고')).toBeTruthy()
+    fireEvent.click(within(card).getByRole('button', { name: `삭제: ${secondForm.programTitle}` }))
+    const confirmation = screen.getByRole('dialog', { name: '양식 분석을 목록에서 지울까요?' })
+    expect(confirmation.textContent).toContain('새 문서 화면에서 다시 볼 수 있어요')
+    expect(repository.dismissDiscoveryJob).not.toHaveBeenCalled()
+    fireEvent.click(within(confirmation).getByRole('button', { name: '삭제' }))
+    await waitFor(() => expect(repository.dismissDiscoveryJob).toHaveBeenCalledWith(8, undefined))
+    await waitFor(() => expect(screen.queryByText(secondForm.programTitle)).toBeNull())
+    expect(screen.getByText('삭제했어요.')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없어요' })).toBeTruthy()
+  })
   it('shows analysis cards instead of the empty state, and tells when a running analysis finishes', async () => {
     const running = { id: 9, sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId, programTitle: firstForm.programTitle,
       programSourceUrl: firstForm.sourceUrl, status: 'RUNNING' as const, result: null, failureCode: null, createdAt: new Date().toISOString() }
@@ -1302,9 +1331,7 @@ describe('application preparation list', () => {
     expect(within(making).getByRole('link', { name: '진행 보기: 만드는 중 문서' }).getAttribute('href')).toBe(draftPage(25))
     expect(within(making).getAllByRole('link')[0].getAttribute('href')).toBe(draftPage(25))
     // 만드는 동안에는 삭제할 수 없습니다.
-    fireEvent.click(within(making).getByRole('button', { name: '문서 메뉴: 만드는 중 문서' }))
-    expect((screen.getByRole('menuitem', { name: '삭제' }) as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.keyDown(document, { key: 'Escape' })
+    expect((within(making).getByRole('button', { name: '삭제: 만드는 중 문서' }) as HTMLButtonElement).disabled).toBe(true)
 
     expect(within(queued).getByText('초안 대기').querySelector('[class*="animate-spin"]')).toBeNull()
     expect(within(queued).getByText('차례를 기다리고 있어요')).toBeTruthy()
@@ -1319,9 +1346,7 @@ describe('application preparation list', () => {
     expect(within(failed).getByText('초안 실패')).toBeTruthy()
     expect(within(failed).getByText('양식을 다시 분석해야 해요')).toBeTruthy()
     expect(within(failed).getByRole('link', { name: '자세히 보기: 실패 문서' }).getAttribute('href')).toBe(draftPage(22))
-    fireEvent.click(within(failed).getByRole('button', { name: '문서 메뉴: 실패 문서' }))
-    expect((screen.getByRole('menuitem', { name: '삭제' }) as HTMLButtonElement).disabled).toBe(false)
-    fireEvent.keyDown(document, { key: 'Escape' })
+    expect((within(failed).getByRole('button', { name: '삭제: 실패 문서' }) as HTMLButtonElement).disabled).toBe(false)
 
     expect(within(stale).getByText('작성 중')).toBeTruthy()
     expect(within(stale).getByText('필수 답변 2 / 4')).toBeTruthy()
@@ -1420,8 +1445,7 @@ describe('application preparation list', () => {
 
     // 지운 문서의 작업이 사이드바 수에 남지 않게, 삭제가 끝나면 작업 목록을 다시 읽습니다.
     const reads = repository.recentDocumentJobs.mock.calls.length
-    fireEvent.click(within(list).getByRole('button', { name: '문서 메뉴: 지울 문서' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '삭제' }))
+    fireEvent.click(within(list).getByRole('button', { name: '삭제: 지울 문서' }))
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '삭제' }))
     await waitFor(() => expect(repository.delete).toHaveBeenCalledWith(61, expect.any(AbortSignal)))
     await waitFor(() => expect(repository.recentDocumentJobs.mock.calls.length).toBeGreaterThan(reads))
@@ -1522,12 +1546,10 @@ describe('application preparation list', () => {
     mount('/app/application-preparations')
     await screen.findByText(firstForm.programTitle)
 
-    // 삭제는 카드의 [⋯] 메뉴 안에만 있고, 카드에 빨간 버튼을 두지 않는다.
-    expect(screen.queryByRole('button', { name: '삭제' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: `문서 메뉴: ${firstForm.programTitle}` }))
-    const menu = screen.getByRole('menu', { name: '문서 메뉴' })
-    expect(within(menu).getByRole('menuitem', { name: '공고 보기' }).getAttribute('href')).toBe(supportProgramDetailPath({ sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId }, true))
-    fireEvent.click(within(menu).getByRole('menuitem', { name: '삭제' }))
+    // 동작이 둘뿐이라 [⋯] 메뉴 없이, 삭제는 카드 오른쪽 위 옅은 아이콘으로 두고 공고 보기는 아래쪽 보조 링크로 둡니다.
+    expect(screen.queryByRole('button', { name: /문서 메뉴/ })).toBeNull()
+    expect(screen.getByRole('link', { name: `공고 보기: ${firstForm.programTitle}` }).getAttribute('href')).toBe(supportProgramDetailPath({ sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId }, true))
+    fireEvent.click(screen.getByRole('button', { name: `삭제: ${firstForm.programTitle}` }))
     const confirmation = screen.getByRole('dialog', { name: '신청 문서를 삭제할까요?' })
     expect(confirmation.textContent).toContain('AI 실행 기록')
     expect(repository.delete).not.toHaveBeenCalled()

@@ -137,23 +137,22 @@ describe('관심 공고함', () => {
     expect(browse).toHaveBeenCalledTimes(2)
   })
 
-  it('관심 공고함에서 연 상세는 관심 공고함으로 돌아가고, 저장 버튼으로 담기·빼기를 오간다', async () => {
-    vi.spyOn(appContainer.resolve('browseSavedSupportProgramsUseCase'), 'execute').mockResolvedValue(saved)
+  it('관심 공고함에서 연 상세는 관심 공고함 위 시트로 열리고, 저장 버튼으로 담기·빼기를 오가며 닫으면 목록을 다시 읽는다', async () => {
+    const browse = vi.spyOn(appContainer.resolve('browseSavedSupportProgramsUseCase'), 'execute').mockResolvedValue(saved)
     vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0]!)
     vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(true)
     const remove = vi.spyOn(appContainer.resolve('removeSavedSupportProgramUseCase'), 'execute').mockResolvedValue(undefined)
     const save = vi.spyOn(appContainer.resolve('saveSupportProgramUseCase'), 'execute').mockResolvedValue({ outcome: 'saved', saved: saved[0]! })
     renderApp('/app/saved-programs', memberAccount)
 
-    fireEvent.click(await screen.findByRole('link', { name: program.title }))
-    await screen.findByRole('heading', { name: program.title })
-    // 상세 위 돌아가기 링크가 관심 공고함을 가리킵니다.
-    expect(screen.getByRole('link', { name: '관심 공고함으로 돌아가기' }).getAttribute('href')).toBe('/app/saved-programs')
-    expect(screen.queryByRole('link', { name: '검색 결과로 돌아가기' })).toBeNull()
-    // 관심 공고함에서 연 상세는 사이드바도 관심 공고함이 켜진 채이고, 검색 탭 줄은 없습니다.
-    const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    expect(within(sidebar).getByRole('link', { name: '관심 공고함' }).getAttribute('aria-current')).toBe('page')
-    expect(within(sidebar).getByRole('button', { name: '지원사업 새검색' }).getAttribute('aria-current')).toBeNull()
+    const link = await screen.findByRole('link', { name: program.title })
+    const reads = browse.mock.calls.length
+    fireEvent.click(link)
+    // 대화에서 연 상세와 같은 시트로 엽니다. 관심 공고함은 시트 뒤에 그대로 있어 필터 · 스크롤이 남고, 시트가 열린 동안 보조기기 · 포커스에서 빠집니다.
+    const sheet = screen.getByRole('dialog', { name: '공고 상세' })
+    await within(sheet).findByRole('heading', { name: program.title })
+    expect(link.isConnected).toBe(true)
+    expect(link.closest('[inert]')).not.toBeNull()
     expect(screen.queryByRole('tablist', { name: '지원사업 검색 방식' })).toBeNull()
 
     // 저장 버튼은 책갈피 아이콘 하나이고 이름·눌림 상태로 담김 여부를 알립니다.
@@ -175,6 +174,11 @@ describe('관심 공고함', () => {
     expect(screen.getByRole('link', { name: '이 공고로 신청 문서 작성' }).getAttribute('href')).toBe(
       `/app/application-preparations/new?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id })}`,
     )
+    // 닫으면 같은 관심 공고함으로 돌아가고, 시트에서 바꿨을 수 있는 담김 상태를 다시 읽습니다.
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }))
+    expect(screen.queryByRole('dialog', { name: '공고 상세' })).toBeNull()
+    expect(screen.getByRole('link', { name: program.title })).toBe(link)
+    await waitFor(() => expect(browse.mock.calls.length).toBeGreaterThan(reads))
   })
 
   it('작업 채팅에서 연 상세는 지원사업 찾기로 돌아간다', async () => {

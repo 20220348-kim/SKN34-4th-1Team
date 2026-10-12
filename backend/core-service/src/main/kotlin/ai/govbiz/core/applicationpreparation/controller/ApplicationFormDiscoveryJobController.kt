@@ -10,6 +10,7 @@ import jakarta.validation.constraints.Min
 import java.net.URI
 import org.springframework.http.CacheControl
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -34,6 +35,13 @@ class ApplicationFormDiscoveryJobController(private val service: ApplicationForm
     @GetMapping
     fun list(account: Account): ResponseEntity<List<ApplicationFormDiscoveryJobResponse>> =
         ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.list(account).map(ApplicationFormDiscoveryJobResponse::from))
+
+    /** 끝난 분석을 신청 문서 작성 목록에서 지운다. 기록은 남고 응답의 `dismissed`만 바뀐다. 진행 중이면 409다. */
+    @DeleteMapping("/{id}")
+    fun dismiss(account: Account, @PathVariable @Min(1) id: Long): ResponseEntity<Void> {
+        service.dismiss(account, id)
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+    }
 
     /** 한 공고의 끝난 분석 결과를 확인한 것으로 표시한다. 화면이 그 공고의 새 문서 화면을 열 때 부른다. */
     @PostMapping("/seen")

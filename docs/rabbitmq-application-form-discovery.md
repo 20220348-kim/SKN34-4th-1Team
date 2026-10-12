@@ -36,7 +36,8 @@ Worker는 **실행 시점의 최신 카탈로그·공식 첨부·AI 설정**을 
 |---|---|
 | `POST /api/v1/application-preparations/forms/discovery-jobs` | `{requestKey, sourceCode, sourceProgramId}` 접수. 새 작업과 동일 키 재조회 모두 202 |
 | `GET .../forms/discovery-jobs/{id}` | 본인 작업 상태·결과 조회. 타인 작업과 없는 작업은 동일한 404 |
-| `GET .../forms/discovery-jobs` | 본인의 최근 20개 작업 요약, ID 내림차순. 큰 결과는 상세 GET에서 조회 |
+| `GET .../forms/discovery-jobs` | 본인의 최근 20개 작업 요약, ID 내림차순. 큰 결과는 상세 GET에서 조회. 목록에서 지운 작업도 `dismissed: true`로 포함 |
+| `DELETE .../forms/discovery-jobs/{id}` | 본인의 끝난(SUCCEEDED·FAILED) 작업을 목록 카드에서 지움(V64 `dismissed_at`). 기록·결과는 남고 진행 중·결과 불명은 409, 반복 호출도 204 |
 | `GET /api/v1/admin/queues` | 관리자 전용 읽기 전용 큐 운영 현황 |
 
 모든 응답은 `Cache-Control: no-store`다. 분석 결과는 `result.items`, `result.warnings`, `result.cached`에 반환한다.

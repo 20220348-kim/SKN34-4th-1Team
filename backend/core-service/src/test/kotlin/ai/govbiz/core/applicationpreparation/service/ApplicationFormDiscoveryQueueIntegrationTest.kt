@@ -204,6 +204,25 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
     }
 
     @Test
+    fun dismissHidesOnlyFinishedAnalysisFromTheListAndKeepsTheRecord() {
+        val job = enqueue()
+        val cookie = cookie(account)
+        fun dismiss(id: Long, session: Cookie = cookie) = mvc.perform(delete("$BASE/$id").cookie(session).header("Origin", "http://localhost:5173"))
+        mvc.perform(delete("$BASE/${job.id}")).andExpect(status().isUnauthorized)
+        // 진행 중인 분석은 지울 수 없고, 다른 계정의 분석은 없는 것과 같습니다.
+        dismiss(job.id).andExpect(status().isConflict)
+        dismiss(job.id, cookie(newAccount())).andExpect(status().isNotFound)
+        jdbc.update("UPDATE application_form_discovery_job SET status = 'FAILED', failure_code = 'APPLICATION_FORM_NO_FORM', finished_at = created_at WHERE id = ?", job.id)
+        mvc.perform(get(BASE).cookie(cookie)).andExpect(jsonPath("$[0].dismissed").value(false)).andExpect(jsonPath("$[0].seen").value(false))
+        repeat(2) { dismiss(job.id).andExpect(status().isNoContent).andExpect(header().string("Cache-Control", "no-store")) }
+        // 기록은 남아 목록 응답에 그대로 있고, 지운 표시와 함께 확인한 것으로도 바뀝니다.
+        mvc.perform(get(BASE).cookie(cookie)).andExpect(jsonPath("$[0].id").value(job.id))
+            .andExpect(jsonPath("$[0].dismissed").value(true)).andExpect(jsonPath("$[0].seen").value(true))
+        assertEquals("FAILED", state(job.id))
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_discovery_job WHERE id = ? AND dismissed_at IS NOT NULL", Int::class.java, job.id))
+    }
+
+    @Test
     fun confirmedValidationFailureReleasesTheProgramWithoutAutomaticallyRepeatingAi() {
         doAnswer { invocation ->
             invocation.getArgument<() -> Unit>(2).invoke()

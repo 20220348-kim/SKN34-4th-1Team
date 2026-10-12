@@ -169,6 +169,7 @@ class MobileApplicationPreparationRepository implements ApplicationPreparationRe
   recentDocumentJobs(signal?: AbortSignal) { return this.request('/documents/jobs', z.array(applicationDocumentGenerationJobSchema).max(20), 'GET', undefined, signal) }
   markDocumentJobsSeen(id: number, signal?: AbortSignal) { return this.request(`/${id}/documents/jobs/seen`, z.undefined(), 'POST', undefined, signal) }
   markDiscoveryJobsSeen(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) { return this.request('/forms/discovery-jobs/seen', z.undefined(), 'POST', { sourceCode, sourceProgramId }, signal) }
+  dismissDiscoveryJob(id: number, signal?: AbortSignal) { return this.request(`/forms/discovery-jobs/${id}`, z.undefined(), 'DELETE', undefined, signal) }
   async confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string, signal?: AbortSignal) {
     const result = await this.request(`/${id}/documents/mapping-migration/confirm`, applicationDocumentMigrationConfirmationSchema, 'POST', { expectedRevision, approvalToken }, signal)
     if (result.preparationId !== id || result.inputRevision !== expectedRevision) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')

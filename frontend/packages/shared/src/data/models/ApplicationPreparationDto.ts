@@ -111,6 +111,7 @@ export const applicationFormDiscoveryJobSchema = z.object({
   failureCode: z.string().min(1).max(64).nullable(),
   createdAt: time,
   seen: z.boolean().optional(),
+  dismissed: z.boolean().optional(),
 }).superRefine((job, context) => {
   if (job.programSourceUrl !== null && !isOfficialSupportProgramSourceUrl(job.sourceCode, job.programSourceUrl)) {
     context.addIssue({ code: 'custom', path: ['programSourceUrl'], message: '분석 작업의 공식 공고 URL이 올바르지 않습니다.' })

@@ -298,6 +298,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | `POST /api/v1/application-preparations/forms/discovery-jobs` | UUID requestKey·공고 식별자로 V26 계정별 수동 작업 접수. 기존 API이며 현재 작성 화면에서는 호출하지 않음 |
 | `GET /api/v1/application-preparations/forms/discovery-jobs` | 본인의 최근 20개 분석 작업을 공고명·공식 원문 URL과 함께 요약 |
 | `GET /api/v1/application-preparations/forms/discovery-jobs/{id}` | 본인 작업의 공고명·공식 원문 URL·상태·결과 조회 |
+| `DELETE /api/v1/application-preparations/forms/discovery-jobs/{id}` | 본인의 끝난 분석(SUCCEEDED·FAILED)을 신청 문서 작성 목록에서 지움(V64 `dismissed_at`, 확인한 것으로도 표시). 기록은 남아 목록 응답의 `dismissed`만 true가 되고 최근 분석 판단·사용량에는 그대로 쓰임. 진행 중·결과 불명은 409, 204·멱등 |
 | `POST /api/v1/application-preparations` | 공고·양식 버전·지원 분야를 검증해 본인 준비 건 생성. 201·Location·상세 반환 |
 | `GET /api/v1/application-preparations?size=20&beforeId=123&status=in_progress` | 본인 준비 건 목록을 생성 ID 내림차순으로 조회. 각 항목에 필수 문항 중 저장된 답변 수(`answeredRequired`/`requiredTotal`), 현재 입력 버전의 문서 유무(`hasCurrentDocument`), 카탈로그의 접수 기간·마감일(`applicationPeriod`/`applicationEndDate`, 공고가 없으면 null)을 더한다. `status=in_progress|done`은 현재 버전 문서 유무로 서버에서 거르고, 다른 값은 400 |
 | `GET /api/v1/application-preparations/{id}` | 본인 준비 건과 선택한 버전의 양식 문항 조회. 타인 건과 없는 건은 같은 404 |

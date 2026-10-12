@@ -9,8 +9,8 @@ import { EvidenceQuestionFeedback } from './EvidenceQuestionFeedback'
 import { supportProgramEvidenceQuestionStyles as q } from './SupportProgramEvidenceQuestionPage.styles'
 
 /**
- * 공고 상세 위에 겹쳐 열리는 원문 질문 옆 패널입니다(화면 통일안 17). 넓은 화면은 오른쪽 400px 패널로 상세를 가리지 않고,
- * 좁은 화면은 아래 시트(최대 86%)가 됩니다. 머리(제목 · 공고 이름 · ✕) → 본문 스크롤(안내 · 질문·답 · 예시 · 입력) → 바닥([취소][질문 보내기]).
+ * 공고 상세의 원문 질문 패널입니다(화면 통일안 17). 넓은 화면(1024px 이상)은 상세의 오른쪽 칸(할 일 카드 자리)에 들어가
+ * 본문을 가리지 않고, 좁은 화면은 아래 시트(최대 86%)가 됩니다. 머리(제목 · 공고 이름 · ✕) → 본문 스크롤(안내 · 질문·답 · 예시 · 입력) → 바닥([취소][질문 보내기]).
  * 열리면 입력에 포커스가 가고, Esc로 닫습니다. 답을 기다리는 중의 [취소]는 패널을 닫지 않고 요청만 멈춥니다.
  */
 export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
@@ -44,7 +44,7 @@ export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
       className={q.panel}
       role="region"
       aria-labelledby="support-program-ask-title"
-      // 오른쪽 옆 패널(좁은 화면은 아래 시트)이 도우미 런처 자리와 [질문 보내기]를 덮으므로 열려 있는 동안 런처를 숨깁니다.
+      // 오른쪽 칸 패널(좁은 화면은 아래 시트)의 [질문 보내기]가 도우미 런처 자리와 겹치므로 열려 있는 동안 런처를 숨깁니다.
       {...assistantCover.always}
       onSubmit={handleSubmit}
       onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}

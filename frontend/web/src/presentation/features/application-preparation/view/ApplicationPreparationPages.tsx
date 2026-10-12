@@ -6,6 +6,7 @@ import { useAppSelector } from '../../../../app/hooks'
 import { assistantCover, assistantLift } from '../../../shared/assistant/assistantPlacement'
 import {
   applicationServiceFieldLabels,
+  type ApplicationFormDiscoveryJob,
   type ApplicationFormField,
   type ApplicationFormSection,
   type ApplicationPreparationListStatus,
@@ -16,6 +17,7 @@ import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { planUsageView } from '../../../shared/plan-usage/planUsageView'
 import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { CardDeleteButton } from '../../../shared/workspace/CardDeleteButton'
 import { EmptyState } from '../../../shared/workspace/EmptyState'
 import { DocumentIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
@@ -597,30 +599,6 @@ function deadlineBadge(item: ApplicationPreparationSummary) {
   if (days < 0) return { label: programStatusLabels.CLOSED, className: s.badgeDeadline }
   return { label: formatDday(days), className: `${s.badgeDday} ${ddayToneClassNames[ddayTone(days)]}` }
 }
-/** 카드의 [⋯] 메뉴입니다. 공고 상세로 가거나(돌아오면 이 목록 · 같은 필터) 삭제 확인을 엽니다. 바깥 클릭·Esc로 닫힙니다. */
-function PreparationMenu({ item, returnTo, disabled, onDelete }: { item: ApplicationPreparationSummary; returnTo: string; disabled: boolean; onDelete: () => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const floating = useFloatingPopover({ open, placement: 'bottom-end' })
-  useEffect(() => {
-    if (!open) return
-    const close = (event: Event) => { if (!(event.target instanceof Node) || !ref.current?.contains(event.target)) setOpen(false) }
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', onKey) }
-  }, [open])
-  return <div ref={ref} className="relative">
-    <button ref={floating.reference} type="button" className={s.menuButton} aria-label={`문서 메뉴: ${item.programTitle}`} aria-haspopup="menu" aria-expanded={open}
-      onClick={() => setOpen((current) => !current)}>⋯</button>
-    {open && <div ref={floating.floating} style={floating.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴">
-      <Link className={e.menuItem} role="menuitem" to={supportProgramDetailPath({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId }, true)}
-        state={{ searchReturnTo: returnTo }} onClick={() => setOpen(false)}>공고 보기</Link>
-      <button type="button" className={`${e.menuItem} ${s.menuItemDanger}`} role="menuitem" disabled={disabled} onClick={() => { setOpen(false); onDelete() }}>삭제</button>
-    </div>}
-  </div>
-}
-
 /**
  * 분석 상태별 배지 · 한 줄 설명 · 버튼입니다. 버튼은 그 공고의 새 문서 화면으로 가고, 거기서 할 일을 이름으로 알립니다:
  * 분석 중은 진행 카드, 결과 확인 중은 확인 안내, 완료·결과 확인됨은 조회한 양식입니다. 실패는 이유를 카드에 바로 적고 [다시 분석]을
@@ -664,7 +642,9 @@ function NewResultMark() {
   return <span className={s.newResult}><span className={s.newResultDot} aria-hidden="true" />새 결과</span>
 }
 
-function FormAnalysisCard({ row, readAt, unseen }: { row: FormAnalysisRow; readAt: number; unseen: boolean }) {
+function FormAnalysisCard({ row, readAt, unseen, returnTo, deleteDisabled, onDelete }: {
+  row: FormAnalysisRow; readAt: number; unseen: boolean; returnTo: string; deleteDisabled: boolean; onDelete: () => void
+}) {
   const { job, state } = row
   const view = analysisCardView(row)
   const to = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: job.sourceCode, sourceProgramId: job.sourceProgramId })}`
@@ -677,6 +657,8 @@ function FormAnalysisCard({ row, readAt, unseen }: { row: FormAnalysisRow; readA
       <span className={s.badgeAnalysis}>양식 분석</span>
       <span className={view.tone}>{analyzing && <ButtonSpinner />}{view.badge}</span>
       {unseen && <NewResultMark />}
+      {/* 끝난 분석만 목록에서 지울 수 있습니다. 진행 중 · 결과 확인 중에는 두지 않습니다. */}
+      {state !== 'active' && state !== 'unknown' && <CardDeleteButton label={`삭제: ${job.programTitle}`} disabled={deleteDisabled} onClick={onDelete} />}
     </div>
     <Link className={`${s.listLink} min-w-0`} to={to}>
       <strong className={s.listTitle}>{job.programTitle}</strong>
@@ -689,6 +671,8 @@ function FormAnalysisCard({ row, readAt, unseen }: { row: FormAnalysisRow; readA
     <div className={s.cardFooter}>
       <span className={s.cardStamp}>{state === 'active' || state === 'unknown' ? `${clockTime(job.createdAt)} 시작` : `${shortDate(job.createdAt)} 분석`}</span>
       <div className={s.cardActions}>
+        <Link className={workspacePageStyles.cardTextLink} to={supportProgramDetailPath({ sourceCode: job.sourceCode, sourceProgramId: job.sourceProgramId }, true)}
+          state={{ searchReturnTo: returnTo }}>공고 보기<span className="sr-only">: {job.programTitle}</span></Link>
         {view.sourceUrl
           ? <a className={s.secondarySm} href={view.sourceUrl} target="_blank" rel="noreferrer">{view.action}<span className="sr-only">: {job.programTitle} (새 창)</span></a>
           : <Link className={s.secondarySm} to={to}>{view.action}<span className="sr-only">: {job.programTitle}</span></Link>}
@@ -700,6 +684,7 @@ function FormAnalysisCard({ row, readAt, unseen }: { row: FormAnalysisRow; readA
 function ApplicationPreparationList() {
   const vm = useApplicationPreparationListViewModel()
   const [confirming, setConfirming] = useState<ApplicationPreparationSummary | null>(null)
+  const [confirmingAnalysis, setConfirmingAnalysis] = useState<ApplicationFormDiscoveryJob | null>(null)
   // 스켈레톤은 보여 줄 목록이 아직 없을 때(처음 들어왔을 때)만, 300ms가 넘으면 띄웁니다.
   // 필터를 바꿨을 때는 기존 카드를 흐리게 둔 채 새 결과로 바로 바꿉니다. 화면이 한 번만 바뀌고, 탭에는 따로 표시를 붙이지 않습니다.
   const refreshing = vm.isInitialLoading && vm.page !== null
@@ -730,7 +715,8 @@ function ApplicationPreparationList() {
         action={{ label: '신청 문서 시작하기', to: appPaths.applicationPreparationNew }} />}
       {items.length + vm.analyses.length > 0 && <ul className={`${s.cardGrid} ${refreshing ? k.stale : ''}`} aria-label="신청 준비 목록" aria-busy={refreshing || vm.isLoadingMore}>
         {/* 양식만 분석해 둔 공고는 신청 문서 카드 앞에 "양식 분석" 카드로 둡니다. */}
-        {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} readAt={vm.analysesReadAt} unseen={vm.isAnalysisUnseen(row.job)} />)}
+        {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} readAt={vm.analysesReadAt} unseen={vm.isAnalysisUnseen(row.job)}
+          returnTo={returnTo} deleteDisabled={vm.dismissingAnalysisId !== null} onDelete={() => setConfirmingAnalysis(row.job)} />)}
         {items.map((item) => {
           const deadline = deadlineBadge(item)
           const done = item.hasCurrentDocument === true
@@ -751,6 +737,8 @@ function ApplicationPreparationList() {
                 : <span className={done ? s.badgeDone : s.badgeProgress}>{done ? '완료' : '작성 중'}</span>}
               {deadline && <span className={deadline.className}>{deadline.label}</span>}
               {unseen && <NewResultMark />}
+              {/* 초안을 만드는 중이거나 결과를 확인하는 중에는 삭제를 막습니다. 끝나면 다시 지울 수 있습니다. */}
+              <CardDeleteButton label={`삭제: ${item.programTitle}`} disabled={vm.deletingId !== null || working || jobState?.kind === 'unknown'} onClick={() => setConfirming(item)} />
             </div>
             <Link className={`${s.listLink} min-w-0`} to={to}>
               <strong className={s.listTitle}>{item.programTitle}</strong>
@@ -771,8 +759,8 @@ function ApplicationPreparationList() {
               <span className={s.cardStamp}>{jobState && jobState.kind !== 'failed' ? `${clockTime(jobState.job.createdAt)} 시작`
                 : done ? `초안 있음 · ${shortDate(item.updatedAt)}` : `${shortDate(item.updatedAt)} 수정`}</span>
               <div className={s.cardActions}>
-                {/* 초안을 만드는 중이거나 결과를 확인하는 중에는 삭제를 막습니다. 끝나면 다시 지울 수 있습니다. */}
-                <PreparationMenu item={item} returnTo={returnTo} disabled={vm.deletingId !== null || working || jobState?.kind === 'unknown'} onDelete={() => setConfirming(item)} />
+                <Link className={workspacePageStyles.cardTextLink} to={supportProgramDetailPath({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId }, true)}
+                  state={{ searchReturnTo: returnTo }}>공고 보기<span className="sr-only">: {item.programTitle}</span></Link>
                 <Link className={s.secondarySm} to={to}>{job ? job.action : done ? '문서 보기' : unseen ? '결과 보기' : '이어서 작성'}{job && <span className="sr-only">: {item.programTitle}</span>}</Link>
               </div>
             </div>
@@ -797,6 +785,16 @@ function ApplicationPreparationList() {
           if (confirming === null) return
           void vm.deletePreparation(confirming.id).then((deleted) => { if (deleted) setConfirming(null) })
         }}>{vm.deletingId !== null && <ButtonSpinner />}{vm.deletingId !== null ? '삭제 중…' : '삭제'}</button>
+      </div>
+    </WorkspaceModal>
+    <WorkspaceModal isOpen={confirmingAnalysis !== null} title="양식 분석을 목록에서 지울까요?" tone="danger" onClose={() => setConfirmingAnalysis(null)}
+      description={confirmingAnalysis ? `${confirmingAnalysis.programTitle}의 분석 카드를 목록에서 지워요. 찾은 양식은 새 문서 화면에서 다시 볼 수 있어요.` : undefined}>
+      <div className="flex flex-wrap justify-end gap-2">
+        <button className={s.button} disabled={vm.dismissingAnalysisId !== null} type="button" onClick={() => setConfirmingAnalysis(null)}>취소</button>
+        <button className={s.dangerSolid} disabled={vm.dismissingAnalysisId !== null} aria-busy={vm.dismissingAnalysisId !== null} type="button" onClick={() => {
+          if (confirmingAnalysis === null) return
+          void vm.dismissAnalysis(confirmingAnalysis.id).then((dismissed) => { if (dismissed) setConfirmingAnalysis(null) })
+        }}>{vm.dismissingAnalysisId !== null && <ButtonSpinner />}{vm.dismissingAnalysisId !== null ? '삭제 중…' : '삭제'}</button>
       </div>
     </WorkspaceModal>
     <WorkspaceToast notice={vm.toast} onClose={vm.dismissToast} />

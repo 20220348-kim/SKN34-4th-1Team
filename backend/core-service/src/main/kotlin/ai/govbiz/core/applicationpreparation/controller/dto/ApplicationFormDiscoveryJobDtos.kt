@@ -31,12 +31,14 @@ data class ApplicationFormDiscoveryJobResponse(
     val createdAt: OffsetDateTime,
     /** 끝난 결과를 사용자가 확인했는지. 진행 중·결과 불명 작업에서는 뜻이 없다. */
     val seen: Boolean,
+    /** 사용자가 신청 문서 작성 목록에서 지운 분석인지. 화면은 목록 카드만 숨기고, 최근 분석 판단에는 그대로 쓴다. */
+    val dismissed: Boolean,
 ) {
     companion object {
         fun from(job: ApplicationFormDiscoveryJob) = ApplicationFormDiscoveryJobResponse(
             job.id, job.sourceCode, job.sourceProgramId, job.programTitle, job.programSourceUrl, job.status.name,
             job.result?.let(DiscoveredApplicationFormsResponse::from), job.failureCode,
-            job.createdAt.atZone(ZoneId.of("Asia/Seoul")).toOffsetDateTime(), job.seenAt != null,
+            job.createdAt.atZone(ZoneId.of("Asia/Seoul")).toOffsetDateTime(), job.seenAt != null, job.dismissedAt != null,
         )
     }
 }

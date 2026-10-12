@@ -59,15 +59,16 @@ export const supportProgramEvidenceQuestionStyles = {
   evidenceFeedbackCompact: 'm-0 rounded-[0.85rem] bg-surface-muted px-3.5 py-2.5 text-[0.8125rem] leading-[1.55] text-ink',
   evidenceErrorCompact: 'm-0 rounded-[0.85rem] border border-danger-line bg-danger-soft px-3.5 py-2.5 text-[0.8125rem] leading-[1.55] text-danger',
   evidenceAnswerCompact: 'rounded-[0.85rem] border border-line bg-surface px-3.5 py-3 text-[0.875rem]',
-  // 공고 상세 위에 겹치는 옆 패널(화면 통일안 17)입니다. 넓은 화면은 오른쪽 400px 세로 패널, 좁은 화면은 아래 시트(최대 86%)입니다.
+  // 원문 질문 패널입니다(화면 통일안 17). 넓은 화면(1024px 이상)은 상세의 오른쪽 칸(할 일 카드 자리)에 들어가 본문을 가리지 않고,
+  // 스크롤해도 화면에 남습니다(대화 · 목록 위 시트 안에서도 시트 안에 머묾). 그보다 좁은 화면은 아래 시트(최대 86%)로 덮습니다.
   panel: classes(
-    'fixed inset-y-0 right-0 z-20 flex w-[400px] max-w-full flex-col border-l border-line bg-surface shadow-[-18px_0_40px_rgb(32_33_36_/_12%)]',
-    'max-[599px]:inset-x-0 max-[599px]:top-auto max-[599px]:bottom-0 max-[599px]:w-auto max-[599px]:max-h-[86dvh] max-[599px]:rounded-t-[22px] max-[599px]:border-0 max-[599px]:shadow-[0_-12px_32px_rgb(32_33_36_/_12%)]',
+    'sticky top-4 z-[2] flex max-h-[calc(100dvh-7rem)] min-h-[26rem] flex-col overflow-hidden rounded-2xl border border-line bg-surface',
+    'max-[1023px]:fixed max-[1023px]:inset-x-0 max-[1023px]:top-auto max-[1023px]:bottom-0 max-[1023px]:z-20 max-[1023px]:max-h-[86dvh] max-[1023px]:min-h-0 max-[1023px]:rounded-none max-[1023px]:rounded-t-[22px] max-[1023px]:border-0 max-[1023px]:shadow-[0_-12px_32px_rgb(32_33_36_/_12%)]',
   ),
-  panelScrim: 'hidden max-[599px]:block max-[599px]:fixed max-[599px]:inset-0 max-[599px]:z-[19] max-[599px]:cursor-default max-[599px]:border-0 max-[599px]:bg-black/35 max-[599px]:p-0',
-  panelHeader: 'relative flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 pt-4 pb-3 max-[599px]:pt-5',
+  panelScrim: 'hidden max-[1023px]:block max-[1023px]:fixed max-[1023px]:inset-0 max-[1023px]:z-[19] max-[1023px]:cursor-default max-[1023px]:border-0 max-[1023px]:bg-black/35 max-[1023px]:p-0',
+  panelHeader: 'relative flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 pt-4 pb-3 max-[1023px]:pt-5',
   // 좁은 화면의 시트 손잡이입니다.
-  panelGrab: 'hidden max-[599px]:block max-[599px]:absolute max-[599px]:top-2 max-[599px]:left-1/2 max-[599px]:h-1 max-[599px]:w-9 max-[599px]:-translate-x-1/2 max-[599px]:rounded-full max-[599px]:bg-line-strong',
+  panelGrab: 'hidden max-[1023px]:block max-[1023px]:absolute max-[1023px]:top-2 max-[1023px]:left-1/2 max-[1023px]:h-1 max-[1023px]:w-9 max-[1023px]:-translate-x-1/2 max-[1023px]:rounded-full max-[1023px]:bg-line-strong',
   panelHeading: 'flex min-w-0 flex-col gap-0.5',
   panelTitle: 'm-0 text-[1rem] font-bold text-ink',
   panelSubtitle: 'm-0 truncate text-[0.8125rem] text-ink-muted',
@@ -77,7 +78,7 @@ export const supportProgramEvidenceQuestionStyles = {
   panelThread: 'flex flex-col gap-3',
   panelField: 'flex shrink-0 flex-col gap-1.5',
   panelLabel: 'text-[0.8125rem] font-semibold text-ink',
-  panelFooter: 'flex shrink-0 items-center gap-2 border-t border-line px-5 py-3 max-[599px]:pb-[calc(0.75rem+env(safe-area-inset-bottom))]',
+  panelFooter: 'flex shrink-0 items-center gap-2 border-t border-line px-5 py-3 max-[1023px]:pb-[calc(0.75rem+env(safe-area-inset-bottom))]',
   panelGhostButton: 'inline-flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent px-4 text-[0.9375rem] font-semibold text-ink-muted hover:bg-surface-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-[599px]:flex-1',
   panelSubmitButton: classes(
     'inline-flex h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-full border-0 bg-brand-primary px-5 text-[0.9375rem] font-semibold text-white',

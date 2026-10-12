@@ -77,6 +77,8 @@ export const workspacePageStyles = {
     'px-[0.8rem] py-[0.55rem] text-[0.74rem] font-extrabold text-white hover:bg-[#873140]',
   ),
   quietLink: 'text-[0.74rem] font-bold text-brand-primary no-underline hover:text-brand-hover',
+  // 목록 카드 아래쪽 줄의 보조 링크(공고 보기 · 입력 수정)입니다. 주 버튼 옆에 두되 글자만 둬서 주 동작보다 옅게 보입니다.
+  cardTextLink: 'inline-flex min-h-8 items-center px-1.5 text-[0.8125rem] font-semibold text-ink-muted no-underline underline-offset-2 hover:text-brand-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   mutedLink: 'text-[0.74rem] font-bold text-ink-muted no-underline hover:text-ink',
   dangerLink: 'text-[0.74rem] font-bold text-danger no-underline hover:text-[#7d2f3a]',
   // 아직 화면이 없는 이동은 링크로 만들지 않고 이 스타일로 "준비 중"임을 보여줍니다.

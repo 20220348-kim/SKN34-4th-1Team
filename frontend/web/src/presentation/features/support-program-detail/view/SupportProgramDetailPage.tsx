@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 
 import { assistantCover, assistantLift } from '../../../shared/assistant/assistantPlacement'
@@ -178,8 +178,15 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
   const combinationReviewPath = `${appPaths.combinationReviewNew}?${new URLSearchParams(identity)}`
   // 구글 설문으로 신청하는 공고는 신청 문서 작성 대신 설문 답변 미리 채우기로 보냅니다.
   const googleFormUrl = program.applicationRoute.type === 'GOOGLE_FORMS' ? program.applicationRoute.url : null
-  // 원문 질문은 상세를 떠나지 않고 위에 겹치는 옆 패널(좁은 화면은 아래 시트)로 엽니다. 열림은 `?ask=1`로 주소에 남겨 뒤로가기·새로고침이 그대로 됩니다.
+  // 원문 질문은 상세를 떠나지 않고 오른쪽 할 일 칸 자리의 패널(좁은 화면은 아래 시트)로 엽니다. 열림은 `?ask=1`로 주소에 남겨 뒤로가기·새로고침이 그대로 됩니다.
   const isAsking = searchParams.get('ask') === '1' && save.isAuthenticated && program.evidenceQuestionSupported
+  // 패널을 닫으면 포커스를 [원문에 질문하기]로 돌려, 키보드로 이어 쓰거나 시트를 Esc로 닫을 수 있게 합니다.
+  const askButtonRef = useRef<HTMLButtonElement>(null)
+  const wasAsking = useRef(isAsking)
+  useEffect(() => {
+    if (wasAsking.current && !isAsking) askButtonRef.current?.focus({ preventScroll: true })
+    wasAsking.current = isAsking
+  }, [isAsking])
   const openAsk = () => {
     const next = new URLSearchParams(searchParams)
     next.set('ask', '1')
@@ -223,7 +230,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
 
   // 원문 질문은 회원 기능입니다. 회원은 패널을 열고, 비로그인은 로그인 뒤 작업 화면의 질문 화면으로 이어집니다.
   const questionControl = !program.evidenceQuestionSupported ? null : save.isAuthenticated ? (
-    <button type="button" className={s.primaryAction} onClick={openAsk} aria-expanded={isAsking} aria-controls="support-program-ask">
+    <button ref={askButtonRef} type="button" className={s.primaryAction} onClick={openAsk} aria-expanded={isAsking} aria-controls="support-program-ask">
       <Icon name="chat" />원문에 질문하기
     </button>
   ) : (
@@ -259,7 +266,8 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
             ? <button type="button" className={workspaceToastActionClassName} disabled={save.isBusy} onClick={() => void save.toggle()}>되돌리기</button>
             : null} />
 
-      <div className={s.layout}>
+      {/* 원문 질문을 열면 넓은 화면은 오른쪽 할 일 칸이 질문 패널로 바뀌고(본문은 가리지 않음), 좁은 화면은 아래 시트가 됩니다. */}
+      <div className={isAsking ? `${s.layout} ${s.layoutAsking}` : s.layout}>
         {/* 본문은 화면 통일안 18번처럼 요약 hero → 한눈에 보기 → 공고 내용 세 카드로 나눕니다. */}
         <article className={s.article} aria-labelledby="support-program-title">
           <header className={s.heading}>
@@ -330,7 +338,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
         </article>
 
         {/* 좁은 화면의 아래 동작 바 위로 도우미 런처를 올리고, [더 보기]로 바를 펼친 동안에는 런처를 숨깁니다. */}
-        <aside className={s.aside} aria-label="이 공고로 할 일" {...assistantLift.narrow} {...(moreOpen ? assistantCover.narrow : {})}>
+        <aside className={isAsking ? `${s.aside} ${s.asideAsking}` : s.aside} aria-label="이 공고로 할 일" {...assistantLift.narrow} {...(moreOpen ? assistantCover.narrow : {})}>
           {/* 넓은 화면은 관심 공고 → 질문 → 설명 순서로 세로로, 좁은 화면은 동작 바 한 줄(관심 공고 · 더 보기 · 질문)로 다시 정렬됩니다. */}
           <div className={s.asideBar}>
             {saveControl}
@@ -383,13 +391,12 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
             </div>
           </div>
         </aside>
+        {/* 좁은 화면의 아래 시트는 뒤를 어둡게 덮고, 덮개를 누르면 닫힙니다. 넓은 화면에는 덮개가 없습니다. */}
+        {isAsking ? <>
+          <button type="button" className={q.panelScrim} aria-label="닫기" onClick={closeAsk} />
+          <EvidenceQuestionPanel identity={identity} programTitle={program.title} onClose={closeAsk} />
+        </> : null}
       </div>
-
-      {/* 원문 질문 옆 패널은 상세 위에 겹칩니다. 좁은 화면은 아래 시트라 뒤를 어둡게 덮고, 덮개를 누르면 닫힙니다. */}
-      {isAsking ? <>
-        <button type="button" className={q.panelScrim} aria-label="닫기" onClick={closeAsk} />
-        <EvidenceQuestionPanel identity={identity} programTitle={program.title} onClose={closeAsk} />
-      </> : null}
     </main>
   )
 }

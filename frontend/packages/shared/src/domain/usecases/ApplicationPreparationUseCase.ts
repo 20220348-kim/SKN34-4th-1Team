@@ -91,6 +91,10 @@ export class ApplicationPreparationUseCase {
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('삭제할 신청 준비 건이 올바르지 않습니다.')
     return this.repository.delete(id, signal)
   }
+  dismissDiscoveryJob(id: number, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('삭제할 양식 분석이 올바르지 않습니다.')
+    return this.repository.dismissDiscoveryJob(id, signal)
+  }
   get(id: number, signal?: AbortSignal) {
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('올바른 신청 준비 주소가 아닙니다.')
     return this.repository.get(id, signal)

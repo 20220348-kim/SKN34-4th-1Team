@@ -33,7 +33,7 @@ function analysisJob(overrides: Partial<ApplicationFormDiscoveryJob>): Applicati
     result: null, failureCode: null, createdAt: recent, seen: false, ...overrides }
 }
 
-const useCase = { discoveryJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn() }
+const useCase = { discoveryJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn(), dismissDiscoveryJob: vi.fn() }
 const original = appContainer.resolve('applicationPreparationUseCase')
 
 beforeEach(() => {

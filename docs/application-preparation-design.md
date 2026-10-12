@@ -186,6 +186,7 @@ AI가 답변에서 추출한 값은 제안이며 사용자 확인 전에는 초�
 | GET `/application-preparations/forms` | 기존 검수 기준 양식 조회. 이전 작업 호환용이며 새 작성 진입에서는 자동 호출하지 않음 |
 | POST `/application-preparations/forms/discovery-jobs` | UUID 요청 키와 선택한 공고를 202로 접수. Worker가 공식 PDF/HWP/HWPX 문항을 추출하고 버전 스냅샷 저장·재사용 |
 | GET `/application-preparations/forms/discovery-jobs` 및 `/{id}` | 본인 최근 분석 작업의 공고명·공식 원문 URL·상태 요약과 선택한 작업의 결과 복원. [V26 비동기 계약·구형 API 제한](rabbitmq-application-form-discovery.md) |
+| DELETE `/application-preparations/forms/discovery-jobs/{id}` | 끝난 분석을 신청 문서 작성 목록 카드에서 지움. 기록은 남아(`dismissed`) 새 문서 화면의 최근 분석 판단에 그대로 쓰임 |
 | POST `/application-preparations` | 공고·지원 분야·양식 버전으로 신청 준비 건 생성 |
 | GET `/application-preparations` | 본인 신청 준비 목록 |
 | GET `/application-preparations/{id}` | 본인 현재 입력·문항·작성 상태 조회 |

@@ -207,6 +207,8 @@ export type ApplicationFormDiscoveryJob = {
   createdAt: string
   /** 끝난 결과를 사용자가 확인했는지입니다. 이 값을 주지 않는 서버 응답에는 없습니다. */
   seen?: boolean
+  /** 신청 문서 작성 목록에서 지운 분석인지입니다. 목록 카드만 숨기고, 새 문서 화면의 최근 분석 판단에는 그대로 씁니다. */
+  dismissed?: boolean
 }
 
 export function validateNewApplicationPreparation(input: NewApplicationPreparation): NewApplicationPreparation {

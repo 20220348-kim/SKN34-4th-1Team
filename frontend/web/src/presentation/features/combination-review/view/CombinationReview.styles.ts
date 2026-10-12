@@ -24,10 +24,6 @@ export const reviewStyles = {
   slotFoot: 'mt-auto flex w-full flex-wrap items-center justify-between gap-2 pt-1',
   // 목록 카드 · 단계 이동 바 · 결과 카드 (화면 통일안 27–29)
   secondarySm: `inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border border-line-strong bg-white px-3 text-[0.8125rem] font-bold text-ink no-underline hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
-  menuButton: `grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-base leading-none text-ink-muted hover:text-ink ${focus}`,
-  menu: 'z-30 flex min-w-[180px] flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_rgb(32_33_36_/_12%)]',
-  menuItem: `flex w-full cursor-pointer items-center gap-3 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[0.8125rem] font-semibold text-ink no-underline hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
-  menuItemDanger: 'text-red-800 hover:bg-red-50',
   dangerSolid: `inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-danger px-4 py-2 text-sm font-semibold text-white hover:bg-[#7f2d39] disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 내용 위에 떠 있는 흰 바입니다. 회색 띠는 아래 카드와 구분이 약해 흰 바탕 · 테두리 · 그림자로 경계를 만듭니다.
   stepBar: 'sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[2] flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white px-4 py-3 shadow-[0_8px_28px_rgb(32_33_36_/_14%)] max-[599px]:px-3',

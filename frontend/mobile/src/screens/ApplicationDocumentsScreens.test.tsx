@@ -24,7 +24,7 @@ jest.mock('../api/combinationReviews', () => ({ listReviewSavedPrograms: jest.fn
 jest.mock('../api/applicationDocumentFiles', () => ({ shareApplicationFile: jest.fn() }))
 jest.mock('../auth/preparationPending', () => ({ readPendingPreparation: jest.fn(), savePendingPreparation: jest.fn().mockResolvedValue(undefined), clearPendingPreparation: jest.fn().mockResolvedValue(undefined) }))
 const api = {
-  list: jest.fn(), recentDocumentJobs: jest.fn(), discoveryJobs: jest.fn(), delete: jest.fn(), availability: jest.fn(), markDiscoveryJobsSeen: jest.fn(),
+  list: jest.fn(), recentDocumentJobs: jest.fn(), discoveryJobs: jest.fn(), delete: jest.fn(), availability: jest.fn(), markDiscoveryJobsSeen: jest.fn(), dismissDiscoveryJob: jest.fn(),
   discover: jest.fn(), create: jest.fn(), get: jest.fn(), documents: jest.fn(), documentJobs: jest.fn(), documentJob: jest.fn(), markDocumentJobsSeen: jest.fn(),
   submitDocumentJob: jest.fn(), downloadDocument: jest.fn(), downloadDocumentArchive: jest.fn(), confirmDocumentMappingMigration: jest.fn(),
 }
