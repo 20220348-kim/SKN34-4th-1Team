@@ -482,8 +482,10 @@ Expo config plugin으로 관리합니다. store 등록 전 bundle identifier `ai
 `frontend/mobile`에서 `pnpm dlx eas-cli@latest build --platform android --profile preview`로 빌드한 APK를
 Firebase App Distribution 콘솔에 올려 팀원 확인 후 참석자 초대 링크·QR로 제공합니다.
 Expo 프로젝트는 `@seop1026/govbiz`이며 실제 프로젝트 UUID는 환경변수에서 읽습니다.
-Android 패키지는 `ai.govbiz.mobile`, 현재 버전은 `0.1.0`/`versionCode=2`이며 업데이트마다 versionCode를 올립니다.
-기본 아이콘과 Android adaptive icon은 최초 선택한 G 모노그램 원본인 `assets/icon.png`를 사용합니다.
+Android 패키지는 `ai.govbiz.mobile`, 현재 버전은 `0.1.0`/`versionCode=3`이며 업데이트마다 versionCode를 올립니다.
+기본 아이콘은 최초 선택한 G 모노그램 원본인 `assets/icon.png`를 사용합니다. Android adaptive icon은
+G를 줄이고 투명 여백을 늘린 전용 전경 `assets/adaptive-icon.png`와 배경색 `#E7F6ED`를 합칩니다.
+아이콘 변경은 새 APK 빌드·설치 후 실제 런처에서 확인하며, JavaScript 업데이트만으로 적용되지 않습니다.
 
 먼저 [.env.preview.example](.env.preview.example)의 실제 API HTTPS origin과 Expo 프로젝트 UUID를 준비해
 EAS 프로젝트의 `preview` 환경에 등록하세요. `.env.local`은 클라우드 빌드에 전달되지 않습니다.
