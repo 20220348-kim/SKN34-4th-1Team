@@ -24,7 +24,9 @@ def session(password):
     status, _, raw = artifacts.response(client, BASE + "/api/v1/ops/session")
     value = json.loads(raw)
     assert status == 200 and value["live_enabled"] is False
-    dataset = next(item for item in value["datasets"] if item["id"] == DATASET)
+    status, _, raw = artifacts.response(client, BASE + "/api/v1/ops/evaluation-catalog")
+    assert status == 200
+    dataset = next(item for item in json.loads(raw)["datasets"] if item["id"] == DATASET)
     return client, value["csrf_token"], dataset["execution_profiles"]["replay"]
 
 

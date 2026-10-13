@@ -474,7 +474,7 @@ class SupportProgramControllerTest {
                     ),
                 ),
             ),
-        ).`when`(evidenceService).answer("BIZINFO", "PBLN_TEST", "신청 방법은?")
+        ).`when`(evidenceService).answer("BIZINFO", "PBLN_TEST", "신청 방법은?", sampleProduction = true)
 
         mockMvc.perform(
             post(EVIDENCE_ANSWER_PATH)
@@ -492,6 +492,22 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.citations[0].excerpt").value("신청 방법: 온라인 접수"))
             .andExpect(jsonPath("$.citations[0].sourceLabel").value("기업마당 상세 본문"))
             .andExpect(jsonPath("$.citations[0].chunkOrder").value(2))
+        Mockito.verify(evidenceService).answer("BIZINFO", "PBLN_TEST", "신청 방법은?", sampleProduction = true)
+    }
+
+    @Test
+    fun markedEvaluationRequestsDoNotBecomeProductionSamples() {
+        Mockito.doReturn(
+            SupportProgramEvidenceAnswerResult("근거가 부족합니다.", SupportProgramEvidenceAnswerStatus.INSUFFICIENT_EVIDENCE, emptyList()),
+        ).`when`(evidenceService).answer("BIZINFO", "PBLN_TEST", "질문", sampleProduction = false)
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer $MEMBER_TOKEN")
+                .header("X-GovBiz-Evaluation", "true")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"sourceCode":"BIZINFO","sourceProgramId":"PBLN_TEST","question":"질문"}"""),
+        ).andExpect(status().isOk())
+        Mockito.verify(evidenceService).answer("BIZINFO", "PBLN_TEST", "질문", sampleProduction = false)
     }
 
     @Test
@@ -537,7 +553,7 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
 
         Mockito.doThrow(SupportProgramEvidenceNotSupportedException()).`when`(evidenceService)
-            .answer("OTHER", "PBLN_TEST", "질문")
+            .answer("OTHER", "PBLN_TEST", "질문", sampleProduction = true)
         mockMvc.perform(
             post(EVIDENCE_ANSWER_PATH)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer $MEMBER_TOKEN")
@@ -549,7 +565,7 @@ class SupportProgramControllerTest {
 
         Mockito.doThrow(SupportProgramEvidenceUnavailableException(IllegalStateException("private detail")))
             .`when`(evidenceService)
-            .answer("BIZINFO", "PBLN_TEST", "잠시 후")
+            .answer("BIZINFO", "PBLN_TEST", "잠시 후", sampleProduction = true)
         mockMvc.perform(
             post(EVIDENCE_ANSWER_PATH)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer $MEMBER_TOKEN")
@@ -570,7 +586,7 @@ class SupportProgramControllerTest {
                 answerStatus = SupportProgramEvidenceAnswerStatus.INSUFFICIENT_EVIDENCE,
                 citations = emptyList(),
             ),
-        ).`when`(evidenceService).answer("BIZINFO", maximumSourceProgramId, "질문")
+        ).`when`(evidenceService).answer("BIZINFO", maximumSourceProgramId, "질문", sampleProduction = true)
 
         mockMvc.perform(
             post(EVIDENCE_ANSWER_PATH)

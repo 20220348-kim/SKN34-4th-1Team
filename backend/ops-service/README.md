@@ -38,7 +38,74 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 저장하지 않습니다. 이전 Django 운영자 세션이나 `is_staff` 값으로는 API에 접근할 수 없습니다.
 회원 DB·JWT 서명 키는 Core만 소유하고 쓰기 요청에는 Django CSRF 검증도 적용합니다.
 
+`GET /api/v1/ops/session`은 사용자·CSRF·실행 허용 여부·추적 링크만 반환합니다.
+평가 자료·비교 기준·벡터 상태는 인증된 `GET /api/v1/ops/evaluation-catalog`로 분리하고,
+웹의 새 평가·정기 실행 화면에서만 조회합니다. 자료 조회 실패는 해당 화면에 재시도를 표시하며
+운영 표본·사용량·이력·예산 조회나 쓰기 전 세션 재확인을 막지 않습니다. 두 API 모두 매번 Core 권한을 확인합니다.
+
+배포 Gunicorn은 worker 2개·worker당 스레드 4개로 요청을 처리해, 일부 요청의 외부 I/O 대기가
+다른 세션 요청까지 모두 점유하지 않도록 합니다. 동시 처리 용량을 넘는 요청은 여전히 대기할 수 있습니다.
+WSGI 시작 시 URL 설정과 view 모듈도 읽어 첫 관리자 요청이 모듈 초기화를 수행하지 않게 합니다.
+이 과정은 인증·DB 조회를 하지 않으며, 서버 준비 전 들어온 요청의 시작 대기까지 없애지는 않습니다.
+접근 로그의 `duration_us`는 worker가 처리한 시간이며 소켓 대기시간을 포함하지 않습니다.
+`ops_admin_auth` 로그는 Core 왕복(`core_ms`)과 Ops의 CSRF·사용자 DB 조회(`local_ms`)를 구분합니다.
+쿠키·토큰·이메일·예외 본문은 기록하지 않습니다. `CORE_AUTH_TIMEOUT_SECONDS`와 웹의 15초 제한은 유지합니다.
+
 ## LLMOps 운영 화면
+
+### 운영 표본 품질
+
+React `/ops/production-quality`는 **상세 공고 근거 답변의 성공 응답 중 수신·저장한 표본**을
+검토합니다. 고정 평가 대시보드와 다른 모집단이며 전체 서비스 정답률·검색 재현율·전체 요청 수를
+나타내지 않습니다. 생성 실패·검색 이전 실패, 도우미·추천·문서 생성은 포함하지 않습니다.
+추출 비율·일별 상한·전송 실패로 편향될 수 있어 표본 수와 사람 검토 수를 함께 표시합니다.
+
+`Core 최종 검증 → 비동기 HTTP 전송 → Django 표본 DB → 기존 ops-sync 무료 구조 검사
+→ 관리자 사람 검토 → 회귀 후보 저장·JSON 내보내기`로 처리합니다. 새 서비스·패키지·유료 평가 호출은
+없습니다. 본문 없는 Langfuse 추적은 유지하고 질문·검색 청크·답변만 Ops에 별도로 보관합니다.
+
+| 설정 | 기본값·의미 |
+|---|---|
+| Core `LLMOPS_PRODUCTION_SAMPLE_RATE_BPS` | 0(수집 안 함), 100=1%, 10000=100% |
+| Core `LLMOPS_PRODUCTION_SAMPLE_URL` | Ops origin. 분리 Compose 예: `http://host.docker.internal:18001` |
+| Core `LLMOPS_PRODUCTION_SAMPLE_REQUEST_TIMEOUT` | 전체 응답 대기 `15s`, 허용 `1s`~`30s`. 연결 대기는 별도 2초 |
+| Core·Ops `LLMOPS_PRODUCTION_SAMPLE_TOKEN` | 별도 공유 비밀값 32자 이상. 예산·브라우저 토큰 재사용 금지 |
+| Ops `LLMOPS_PRODUCTION_SAMPLES_ENABLED` | false. 활성화는 배포 설정으로 관리 |
+| Ops `LLMOPS_PRODUCTION_SAMPLE_DAILY_LIMIT` | 서울 날짜 기준 100건, 설정 범위 1~10000 |
+| Ops `LLMOPS_PRODUCTION_SAMPLE_RETENTION_DAYS` | 수신 시각 기준 14일, 설정 범위 1~30 |
+
+클러스터 내부 URL 예는 `http://ops-service.govbiz-msa.svc.cluster.local:8000`이며 실제 네트워크 정책도
+허용해야 합니다. 동시 접수의 일별 상한은 DB 잠금으로 지키고 같은 ID·내용의 재전송은 중복 저장하지 않습니다.
+Core는 최대 8건을 비동기 전송하고 자동 재시도하지 않습니다. Ops는 DB 저장 완료 후 `201`(동일 표본은 `200`)을 반환합니다.
+Core의 `production_quality_sample_delivery_unknown` 로그는 시간 초과·통신 오류로 저장 응답을 못 받은 상태입니다.
+저장 실패로 단정하지 않고 로그의 `sample_id`를 운영 상세 화면·DB의 ID와 대조합니다. 성공 응답 로그는
+`production_quality_sample_accepted`이며 본문·인증정보는 기록하지 않습니다.
+`sync_evaluations --watch`가 만료 표본과 연결된 검토·후보를 정리합니다. 필요한 검토 완료 후보는 만료 전에
+내려받아 접근이 제한된 평가 자료로 관리합니다. 수집 중지 후에도 기존 표본 검사·보존 정리는 계속됩니다.
+
+이메일·전화번호·주민번호·알려진 토큰 형식을 가리며 계정 ID·쿠키·기업 프로필은 수집하지 않습니다.
+패턴 마스킹은 자유 문장의 모든 개인정보를 제거한다는 보장이 아닙니다. 운영 활성화 전에 수집 안내와
+접근·보존 정책을 적용하고, 내보내는 후보 자료도 사람이 확인해야 합니다.
+
+자동 검사는 인용 ID·응답 상태 등 구조만 확인합니다. **검사 완료는 의미적 품질 합격이 아닙니다.**
+사람이 질문·검색 근거·답변의 근거 일치·관련성·완전성을 검토하고 사유를 남깁니다. 미검토·보류를 합격으로
+세지 않으며 일별 표본·검토·적합·문제·보류 건수를 제공합니다. 검토는 자료 해시·버전·요청 ID로 중복과
+동시 수정을 확인하고 이력을 추가합니다. 별도로 확인한 기대 답변·상태·인용을 갖춘 검토만 회귀 후보로
+저장할 수 있습니다. `production-regression-candidate-v1` JSON은 비공개 후보 자료이며 기존 고정 평가에
+자동 등록하거나 비교 기준 지정·모델 재실행을 하지 않습니다. 편입 시 별도 검토·자료 버전 고정이 필요합니다.
+
+직접 Service 평가의 수집은 기본 꺼짐입니다. Core HTTP 평가 도구는 `X-GovBiz-Evaluation: true`로 제외하고
+평가 환경의 비율도 0으로 유지합니다. 헤더를 생략한 HTTP 평가는 실제 요청과 구별할 수 없습니다.
+
+관리자 API는 `GET /api/v1/ops/production-quality`, `GET /{id}`, `POST /{id}/review`,
+`GET·POST /{id}/regression-candidate`입니다(뒤 경로도 같은 prefix). 기존 관리자 세션·CSRF를 적용합니다.
+`POST /internal/llmops/production-samples`는 별도 Bearer 토큰 전용입니다. 추가 migration
+`0029_production_quality`로 표본·접수 한도·검토·후보 테이블을 만들며 기존 평가 기록은 변경하지 않습니다.
+
+검증은 `test_production_quality`의 계약·권한·실제 MySQL 동시 접수/검토/후보 충돌·보존 정리와
+`test_production_worker`의 수집 중지 후 후처리, 기존 `test_sync` 회귀를 포함합니다.
+로컬 격리 MySQL 8.4에서 관련 44개 검사가 통과했습니다. Core 관련 96개, Web 관련 137개,
+평가 HTTP 수집 제외 1개도 통과했으며 실제 운영 트래픽의 품질 측정·활성화·배포 완료를 뜻하지 않습니다.
 
 ### 성능 대시보드 조회
 
@@ -915,7 +982,7 @@ Prefect의 [상태 변경 API](https://reference.prefect.io/prefect/server/api/f
 
 ## 접수 시 실행 명세 고정
 
-새 접수는 session의 `datasets[].execution_profiles.replay` 또는 `.live`를
+새 접수는 `evaluation-catalog` 응답의 `datasets[].execution_profiles.replay` 또는 `.live`를
 `execution_profile`로 전송합니다. 현재 서버 명세와 다르면 DB 생성·Prefect 전송 전에 `400`입니다.
 같은 UUID에 다른 명세를 보내면 `409`이며, 접수 응답 유실 후 재전송은 최초 명세를 유지합니다.
 React가 쓰기 직전 세션을 다시 조회해도 사용자가 확인한 명세를 최신 값으로 자동 교체하지 않습니다.
@@ -952,7 +1019,7 @@ Ops는 결과의 명세·평가기·선택 사례·입력 해시를 확인한 �
 [등록 Core 캡처 안내](../../evaluation/support-program-evidence/README.md#등록된-core-캡처의-ops-재평가)를 따릅니다.
 
 새 실행 명세는 `schema_version=2`이며 자료별 `evaluation_scope`를 프로필 해시에 포함합니다.
-session의 `datasets[].evaluation_scope`와 실행 응답의 `evaluation_scope`로 접수 전후 범위를
+`evaluation-catalog`의 `datasets[].evaluation_scope`와 실행 응답의 `evaluation_scope`로 접수 전후 범위를
 확인합니다. 고정 근거 답변은 `fixed-answer-context-only`, 위 무료 RAG 재평가는
 `source-chunks-retrieval-answer`입니다. 두 경로 모두 새 원문 수집·청킹·색인·검색을 실행하지 않습니다.
 고정 근거의 인용 재현율을 검색 재현율로 해석하지 않습니다.
@@ -1268,7 +1335,8 @@ Kubernetes liveness/readiness와 분리되어 있으며, 결과에는 검사 범
 | `GET /api/v1/health/ready` | `200`, `database: UP, schema: UP` | DB 실패는 `database: DOWN`, 미적용 migration·이력 불일치·실제 테이블/컬럼 누락은 `schema: DOWN`으로 `503`; 내부 정보 비노출 |
 | `GET /api/v1/ops/runtime` | `200`, 설정 검사 PASS와 검증 범위 | 구성·자료·Prefect·선택한 결과 검증 실패 `503`; 잘못된 run_id `400`; 관리자 인증 필수 |
 | `GET /api/v1/ops/evaluations/live-readiness` | `200`, 선택 자료의 최대 예약량·잔여 한도·차단/주의 사유 | `dataset_id`, `execution_profile` 필수; 입력 오류 `400`, 미인증 `401`, 비관리자 `403`, 설정 변경 `409`, 계획 확인 실패 `503`; 조회만 수행 |
-| `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
+| `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 실행 허용 여부, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
+| `GET /api/v1/ops/evaluation-catalog` | 평가 자료·실행 명세·비교 기준 목록 | 인증·권한 오류 `401/403`, 자료·벡터 저장소 장애 `503` |
 | `GET /api/v1/ops/traces` | Langfuse의 실행 시작 단계 목록; `name`, `from_time`, `to_time`, `cursor` 조회 조건 | 인증·권한 오류 `401/403`, 조회 조건 `400`, 추적 서버 장애·설정 누락 `503` |
 | `GET /api/v1/ops/traces/{trace_id}` | 같은 trace ID의 단계·입출력·사용량; `cursor`로 다음 페이지 조회 | 인증·권한 오류 `401/403`, 없음 `404`, 추적 서버 장애 `503` |
 | `GET /api/v1/ops/evaluations/{UUID}/report` | `200`, CSP sandbox가 적용된 HTML | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없거나 훼손된 보고서 `404` |
@@ -1286,7 +1354,7 @@ Vite는 `/api/v1/ops`를 Core보다 먼저 라우팅하고 Host와 Origin을 보
 
 가상 6건 재현은 `request_id`, `dataset_id: "target-coverage-20260907-v1"`와 해당 자료의
 `execution_profiles.replay` 값을 `execution_profile`로 전송합니다.
-프롬프트 변경 비교 요청은 다음과 같습니다. 선택 가능한 자료·사례·캡처 목록은 session 응답의 `datasets`에 있습니다.
+프롬프트 변경 비교 요청은 다음과 같습니다. 선택 가능한 자료·사례·캡처 목록은 `evaluation-catalog` 응답의 `datasets`에 있습니다.
 
 ```json
 {
@@ -1294,7 +1362,7 @@ Vite는 `/api/v1/ops`를 Core보다 먼저 라우팅하고 Host와 Origin을 보
   "dataset_id": "fixed-context-e01-v1",
   "reference_capture_id": "fixed-context-20260906-diagnostic-v1",
   "candidate_capture_id": "fixed-context-20260907-index-v1",
-  "execution_profile": "<session에서 확인한 해당 자료의 execution_profiles.replay>"
+  "execution_profile": "<evaluation-catalog에서 확인한 해당 자료의 execution_profiles.replay>"
 }
 ```
 
@@ -1396,6 +1464,7 @@ scripts/check-image.py   배포 이미지 기본 명령·격리·상태 확인 �
 - `API_PORT`, `MYSQL_PORT`: Compose가 호스트에 공개하는 포트
 - `MYSQL_ROOT_PASSWORD`: 개발용 MySQL 초기화 비밀번호
 - `CORE_API_URL`: Django에서 접근하는 Core 주소; 호스트 기본 `http://127.0.0.1:8080`
+- `CORE_AUTH_TIMEOUT_SECONDS`: Core 관리자 인증의 연결·읽기 제한시간; 정수 `1..10`, 기본 `3`초. 리소스가 부족한 로컬 Compose에서만 필요에 따라 늘립니다. 모든 요청에서 Core 권한을 확인하며, 시간 초과는 계속 `503`을 반환합니다. 재시도·인증 캐시는 사용하지 않습니다.
 - `OPS_CORE_API_URL`: Compose에서 위 주소를 지정; 기본 `http://host.docker.internal:8080`
 - `OPS_WEB_URL`: 이전 Django 화면 주소의 React 이동 대상; 기본 `http://localhost:5173`
 - `PREFECT_API_URL`: Django에서 접근하는 Prefect API; 기본 `http://127.0.0.1:14200/api`
@@ -1444,7 +1513,8 @@ Argo CD가 이 서비스의 Deployment를 동기화했습니다. 교육기관 �
 잠갔으며 개인 포크 연결은 별도입니다. 이미지 발행만으로 관리자 인증·업무 기능이 추가되는 것은 아닙니다.
 
 - 이미지 기본 명령은 `gunicorn config.wsgi:application`, 내부 포트는 `8000`입니다.
-  worker 2개, worker 응답 정지 제한 30초, 종료 유예 25초이며 stdout/stderr로 로그를 냅니다.
+  `gthread` worker 2개·각 4스레드, worker 응답 감시 제한 30초, 종료 유예 25초이며
+  stdout/stderr로 로그를 냅니다. 30초는 개별 HTTP 요청의 제한시간이 아니며 외부 호출의 제한은 별도로 적용합니다.
 - UID/GID는 `10001:10001`입니다. Kubernetes에서 `runAsNonRoot: true`,
   `readOnlyRootFilesystem: true`를 사용하고 `/tmp`에 쓰기 가능한 작은 `emptyDir`를
   마운트합니다. Gunicorn heartbeat 임시 파일이 필요하므로 `/tmp`까지 읽기 전용이면

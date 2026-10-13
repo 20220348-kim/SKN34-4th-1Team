@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { cancelEvaluation, getEvaluation, getOpsSession, listEvaluations, OpsApiError, recoverEvaluation, submitEvaluation } from '../../../data/ops/opsApi'
+import { cancelEvaluation, getEvaluation, getEvaluationCatalog, getOpsSession, listEvaluations, OpsApiError, recoverEvaluation, submitEvaluation } from '../../../data/ops/opsApi'
 import { appContainer } from '../../../app/appContainer'
 import { useAppDispatch } from '../../../app/hooks'
 import { signedOut } from '../../shared/auth/state/authSlice'
 import { loginPathFor } from '../../shared/auth/returnPath'
 import { readPendingEvaluation, storePendingEvaluation, clearPendingEvaluation } from '../../../data/ops/pendingEvaluation'
-import type { EvaluationPage, EvaluationRun, OpsSession, EvaluationSubmission } from '../../../data/ops/opsApi'
+import type { EvaluationPage, EvaluationRun, EvaluationCatalog, OpsSession, EvaluationSubmission } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 import { RagComparisonResult } from './RagComparisonResult'
 import { RagMaterialPanel } from './RagMaterialPanel'
@@ -21,6 +21,7 @@ import { EvaluationReport } from './EvaluationReport'
 import { AdminAiCostsPage } from '../admin/view/AdminAiCostsPage'
 import { EvaluationLogsPanel } from './EvaluationLogsPanel'
 import { TraceDetailPage, TraceListPage } from './TracePages'
+import { ProductionQualityPage } from './ProductionQualityPage'
 
 const dashboardPath = '/ops/dashboard'
 const listPath = '/ops/evaluations'
@@ -59,7 +60,7 @@ export function OpsApp() {
     }).catch((reason) => {
       if (controller.signal.aborted) return
       if (reason instanceof OpsApiError && reason.status === 401) {
-        dispatch(signedOut()); setSession({ user: null, csrf_token: '', datasets: [], live_enabled: false, rag_live_enabled: false, search_traces_url: null })
+        dispatch(signedOut()); setSession({ user: null, csrf_token: '', live_enabled: false, rag_live_enabled: false, search_traces_url: null })
       } else { setError(message(reason)); setDenied(reason instanceof OpsApiError && reason.status === 403) }
     })
     return () => controller.abort()
@@ -94,12 +95,13 @@ export function OpsApp() {
 }
 
 type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string; model: string }
-const liveOptions = (dataset: OpsSession['datasets'][number] | undefined) => dataset?.live_options
+const liveOptions = (dataset: EvaluationCatalog['datasets'][number] | undefined) => dataset?.live_options
   ?? (dataset?.live_config && dataset.execution_profiles.live ? [{ live_config: dataset.live_config, execution_profile: dataset.execution_profiles.live }] : [])
 const opsPages = [
   { path: dashboardPath, label: '성능 대시보드', description: '현재 지표와 변화 추이' },
   { path: '/ops/usage', label: '실사용 모니터링', description: '서비스 AI 사용량과 비용' },
   { path: '/ops/traces', label: 'AI 실행 추적', description: '실행 단계·입출력·오류' },
+  { path: '/ops/production-quality', label: '운영 표본 품질', description: '저장 표본의 근거·답변 검토' },
   { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
   { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
   { path: '/ops/budget', label: '예산 관리', description: '사용량과 한도 관리' },
@@ -136,6 +138,7 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
         <Route path={dashboardPath} element={<PerformanceDashboard onExpired={onExpired} />} />
         <Route path="/ops/traces" element={<TraceListPage onExpired={onExpired} />} />
         <Route path="/ops/traces/:traceId" element={<TraceDetailPage key={location.pathname} onExpired={onExpired} />} />
+        <Route path="/ops/production-quality" element={<ProductionQualityPage owner={session.user!.id} onExpired={onExpired} />} />
         <Route path="/ops/usage" element={<AdminAiCostsPage title="실사용 모니터링" onExpired={onExpired}>
           <section className={styles.card} aria-label="서비스 사용량과 실행 추적">
             <h2 className={styles.cardTitle}>서비스 사용량과 실행 추적</h2>
@@ -147,15 +150,44 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
         </AdminAiCostsPage>} />
         <Route path="/ops" element={<Navigate replace to={dashboardPath} />} />
         <Route path="/ops/evaluations" element={<EvaluationList onExpired={onExpired} />} />
-        <Route path="/ops/evaluations/new" element={<EvaluationCreate owner={session.user!.id} datasets={session.datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />} />
+        <Route path="/ops/evaluations/new" element={<EvaluationCatalogContent key="new" title="새 평가" onExpired={onExpired}>{(datasets) => <EvaluationCreate owner={session.user!.id} datasets={datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />}</EvaluationCatalogContent>} />
         <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
         <Route path="/ops/evaluations/:runId/report" element={<EvaluationReport key={location.pathname} onExpired={onExpired} />} />
         <Route path="/ops/budget" element={<><WorkspacePageHeader title="예산 관리" /><div className={styles.content}><p className="text-sm text-ink-muted">누적·일별 한도와 예약·사용 내역을 확인하고 관리합니다.</p><BudgetOverview onExpired={onExpired} refreshKey={0} operatorId={session.user!.id} /></div></>} />
-        <Route path="/ops/schedules" element={<><WorkspacePageHeader title="정기 실행" /><div className={styles.content}><EvaluationSchedulesPanel owner={session.user!.id} datasets={session.datasets} onExpired={onExpired} refreshKey={0} /></div></>} />
+        <Route path="/ops/schedules" element={<EvaluationCatalogContent key="schedules" title="정기 실행" onExpired={onExpired}>{(datasets) => <><WorkspacePageHeader title="정기 실행" /><div className={styles.content}><EvaluationSchedulesPanel owner={session.user!.id} datasets={datasets} onExpired={onExpired} refreshKey={0} /></div></>}</EvaluationCatalogContent>} />
         <Route path="*" element={<Navigate replace to={dashboardPath} />} />
       </Routes>}
     </main>
   </div>
+}
+
+// 자료가 필요한 화면에 진입할 때만 조회한다. 경로·계정이 바뀌면 진행 중인 조회를 취소한다.
+function EvaluationCatalogContent({ title, onExpired, children }: {
+  title: string; onExpired: () => void; children: (datasets: EvaluationCatalog['datasets']) => ReactNode;
+}) {
+  const [catalog, setCatalog] = useState<EvaluationCatalog | null>(null)
+  const [error, setError] = useState('')
+  const [revision, setRevision] = useState(0)
+  const expiry = useRef(onExpired); expiry.current = onExpired
+  useEffect(() => {
+    const controller = new AbortController()
+    setCatalog(null); setError('')
+    getEvaluationCatalog(controller.signal).then((value) => {
+      if (!controller.signal.aborted) setCatalog(value)
+    }).catch((reason) => {
+      if (controller.signal.aborted) return
+      if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) expiry.current()
+      else setError(message(reason))
+    })
+    return () => controller.abort()
+  }, [revision])
+  if (catalog) return children(catalog.datasets)
+  return <><WorkspacePageHeader title={title} /><div className={styles.content}>
+    {error ? <section className={styles.card} aria-label="평가 자료 조회 오류">
+      <p role="alert">평가 자료를 불러오지 못했습니다. {error}</p>
+      <button className={`${styles.secondaryButton} mt-3`} onClick={() => setRevision((value) => value + 1)}>평가 자료 다시 불러오기</button>
+    </section> : <p role="status">평가 자료와 실행 조건을 불러오고 있습니다. 다른 운영 메뉴는 이용할 수 있습니다.</p>}
+  </div></>
 }
 
 function EvaluationList({ onExpired }: { onExpired: () => void }) {
@@ -205,7 +237,7 @@ function EvaluationList({ onExpired }: { onExpired: () => void }) {
 }
 
 function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveEnabled, onExpired, draft, onDraftChange }: {
-  owner: string; datasets: OpsSession['datasets']; liveEnabled: boolean; ragLiveEnabled: boolean; onExpired: () => void;
+  owner: string; datasets: EvaluationCatalog['datasets']; liveEnabled: boolean; ragLiveEnabled: boolean; onExpired: () => void;
   draft: EvaluationDraft | null; onDraftChange: (draft: EvaluationDraft) => void;
 }) {
   const [restored] = useState(() => {

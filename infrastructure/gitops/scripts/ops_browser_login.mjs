@@ -80,6 +80,8 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
     assert.ok(core.status === 200 && core.body.email === email && core.body.role === 'ADMIN' && Number.isInteger(core.body.accountId), 'Core admin session differs')
     assert.ok(ops.status === 200 && ops.body.user?.id === 'core:' + core.body.accountId && ops.body.user.username === email, 'Ops did not authenticate the Core principal')
     assert.ok(ops.body.live_enabled === false && ops.body.rag_live_enabled === false, 'Browser verification requires disabled paid evaluation')
+    const catalog = await read('/api/v1/ops/evaluation-catalog')
+    assert.ok(catalog.status === 200 && Array.isArray(catalog.body.datasets) && catalog.body.datasets.length > 0, 'Evaluation catalog is unavailable')
     progress('RELOAD')
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(email, { exact: true }).waitFor()
@@ -160,7 +162,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
     await form.waitFor()
     assert.ok(!(await context.cookies(origin)).some((item) => item.name === 'govbiz_session'), 'Core session cookie survived logout')
     const protectedPaths = [
-      '/api/v1/admin/session',
+      '/api/v1/admin/session', '/api/v1/ops/evaluation-catalog',
       ...listings.map((_, index) => `/api/v1/ops/evaluations?page=${index + 1}`),
       ...ids.flatMap((id) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${id}${suffix}`)),
       ...ragPaths,

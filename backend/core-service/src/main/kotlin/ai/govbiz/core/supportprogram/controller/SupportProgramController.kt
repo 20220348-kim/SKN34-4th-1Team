@@ -115,6 +115,8 @@ class SupportProgramController(
                     sourceCode = request.sourceCode,
                     sourceProgramId = request.sourceProgramId,
                     question = request.question,
+                    // 평가 HTTP 호출은 표시만으로 수집을 제외한다. 권한·업무 실행 조건은 바뀌지 않는다.
+                    sampleProduction = httpRequest.getHeader("X-GovBiz-Evaluation") == null,
                 ),
             )
         }

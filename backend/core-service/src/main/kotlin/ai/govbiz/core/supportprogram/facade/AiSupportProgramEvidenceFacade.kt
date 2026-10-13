@@ -2,6 +2,9 @@ package ai.govbiz.core.supportprogram.facade
 
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramEvidenceClient
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityChunkRequest
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityMaterialRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceAnswerRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceChunkRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceIndexRequest
@@ -19,12 +22,14 @@ import org.springframework.stereotype.Component
 class AiSupportProgramEvidenceFacade(
     private val client: AiSupportProgramEvidenceClient,
     private val tracing: SupportProgramEvidenceTracingHelper = SupportProgramEvidenceTracingHelper(),
+    private val productionQualityClient: ProductionQualityClient? = null,
 ) {
     fun answer(
         question: String,
         chunks: List<SupportProgramEvidenceChunk>,
         sourceUrl: String,
         sourceLabel: String,
+        sampleProduction: Boolean = false,
     ): SupportProgramEvidenceAnswerResult {
         require(question.isNotBlank()) { "evidence question must not be blank" }
         require(chunks.isNotEmpty() && chunks.size <= MAX_CHUNKS) { "invalid evidence chunk count" }
@@ -59,9 +64,23 @@ class AiSupportProgramEvidenceFacade(
                 question = question, chunks = retrieved.map { chunk -> toChunkRequest(chunk).answerInput() },
             ))
         }
-        return tracing.observe("core.validate") {
+        val result = tracing.observe("core.validate") {
             validateAnswer(answered.answer, answered.answerStatus, answered.citationChunkIds, retrieved, sourceUrl, sourceLabel)
         }
+        // 직접 Service 평가와 도우미 호출은 기본 제외하며, 최종 검증을 마친 답변만 표본 후보로 보낸다.
+        if (sampleProduction) {
+            productionQualityClient?.record(
+                material = ProductionQualityMaterialRequest(
+                    question = question,
+                    chunks = retrieved.map { ProductionQualityChunkRequest(it.id, it.documentId, it.order, it.text) },
+                    answer = result.answer,
+                    answerStatus = result.answerStatus.name,
+                    citationChunkIds = requireNotNull(answered.citationChunkIds).filterNotNull(),
+                ),
+                traceId = SupportProgramEvidenceTracingHelper.currentTraceParent()?.split('-')?.get(1),
+            )
+        }
+        return result
     }
 
     /** 청크를 색인만 합니다. 도우미 관심 공고 질문과 원문 선수집이 검색 전에 부릅니다. */

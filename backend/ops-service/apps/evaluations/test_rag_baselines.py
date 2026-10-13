@@ -89,7 +89,7 @@ class RagBaselineTests(BaselineFixture, TestCase):
         self.assertEqual(EvaluationBaselineChange.objects.count(), 1)
         choice = baseline_choices()[self.run.dataset_id]
         self.assertEqual((choice["id"], choice["version"]), (f"run:{self.run.pk}", 1))
-        session = self.client.get("/api/v1/ops/session").json()
+        session = self.client.get("/api/v1/ops/evaluation-catalog").json()
         self.assertEqual(
             next(row for row in session["datasets"] if row["id"] == self.run.dataset_id)[
                 "baseline"

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { createEvaluationSchedule, getEvaluationSchedules, getLiveReadiness, OpsApiError, pauseEvaluationSchedule } from '../../../data/ops/opsApi'
-import type { EvaluationSchedule, LiveReadiness, OpsSession, ScheduleInput, SchedulesPage } from '../../../data/ops/opsApi'
+import type { EvaluationSchedule, LiveReadiness, EvaluationCatalog, ScheduleInput, SchedulesPage } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles } from '../../shared/workspace/WorkspacePage.styles'
 
 const field = 'min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm'
@@ -52,7 +52,7 @@ function ScheduleRow({ row, label, owner, onSaved, onError }: { row: EvaluationS
   </article>
 }
 
-export function EvaluationSchedulesPanel({ owner, datasets, onExpired, refreshKey }: { owner: string; datasets: OpsSession['datasets']; onExpired: () => void; refreshKey: number }) {
+export function EvaluationSchedulesPanel({ owner, datasets, onExpired, refreshKey }: { owner: string; datasets: EvaluationCatalog['datasets']; onExpired: () => void; refreshKey: number }) {
   const eligible = datasets.filter((item) => item.baseline && item.live_config && item.execution_profiles.live)
   const [datasetId, setDatasetId] = useState(eligible[0]?.id ?? '')
   const selected = eligible.find((item) => item.id === datasetId)

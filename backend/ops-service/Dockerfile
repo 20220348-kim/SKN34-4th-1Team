@@ -28,4 +28,4 @@ COPY --chown=govbiz:govbiz apps ./apps
 USER 10001:10001
 EXPOSE 8000
 # 개발 Compose만 runserver로 재정의합니다. DB migration은 별도 배포 작업입니다.
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "30", "--graceful-timeout", "25", "--worker-tmp-dir", "/tmp", "--access-logfile", "-", "--error-logfile", "-"]
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "gthread", "--threads", "4", "--timeout", "30", "--graceful-timeout", "25", "--worker-tmp-dir", "/tmp", "--access-logfile", "-", "--error-logfile", "-", "--access-logformat", "%(t)s %(m)s %(U)s status=%(s)s duration_us=%(D)s"]

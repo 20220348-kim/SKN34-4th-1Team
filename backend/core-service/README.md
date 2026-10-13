@@ -8,6 +8,25 @@ Expo Push Service로 보내고 FCM/APNs receipt를 확인합니다. `DAILY_REPOR
 Gradle·Spring 애플리케이션 이름과 health 응답은 `govbiz-core-service`로 통일했습니다.
 현재 운영 환경은 없으며, 이전 런타임 이름으로의 별칭은 제공하지 않습니다.
 
+## 운영 근거 답변의 품질 표본
+
+상세 공고 질문 API가 수집을 허용하면 최종 검증된 답변의 질문·검색 청크·답변을
+`LLMOPS_PRODUCTION_SAMPLE_RATE_BPS` 비율로 추출해 Ops에 비동기 전송합니다. 기본은 0(수집 안 함)입니다.
+`LLMOPS_PRODUCTION_SAMPLE_URL`은 Ops origin, `LLMOPS_PRODUCTION_SAMPLE_TOKEN`은 별도 공유 비밀값입니다.
+동시에 최대 8건을 전송하며 연결 대기는 2초, 전체 응답 대기는
+`LLMOPS_PRODUCTION_SAMPLE_REQUEST_TIMEOUT`(기본 `15s`, 허용 `1s`~`30s`)로 제한합니다.
+HTTP 성공 응답은 `production_quality_sample_accepted`, 응답을 못 받은 시간 초과·통신 오류는
+`production_quality_sample_delivery_unknown`으로 구분하고 표본 ID·소요시간을 기록합니다.
+`delivery_unknown`은 Ops에 이미 저장됐을 수 있다는 의미이며 저장 실패로 단정하지 않습니다.
+HTTP 거절은 상태 코드와 함께 기록하며 본문·토큰·예외 내용은 로그에 남기지 않습니다.
+전송은 자동 재시도하지 않고 사용자 응답을 기다리게 하거나 바꾸지 않습니다.
+프로세스 종료·전송 실패 때 표본이 누락될 수 있어 수신 건수를 전체 요청 수로 해석하지 않습니다.
+새 모델 호출·업무 DB 쓰기는 없으며 Langfuse에는 계속 본문을 기록하지 않습니다.
+
+직접 Service 호출은 수집하지 않습니다. Core HTTP 평가 요청은 `X-GovBiz-Evaluation` 헤더로 제외하고
+평가 환경의 샘플 비율도 0으로 둡니다. 헤더는 인증을 대신하지 않으며 헤더 없는 평가와 일반 요청은
+구별할 수 없습니다. 보존·마스킹·검토·회귀 후보는 [Ops 운영 표본 품질](../ops-service/README.md#운영-표본-품질)을 참고하세요.
+
 ## 공고 카탈로그 독립 서비스 전환
 
 루트 Compose의 기본 분리 경로에서 `backend/catalog-service`가 공고 원본 DB·제공처 수집·색인 게시를 소유합니다.

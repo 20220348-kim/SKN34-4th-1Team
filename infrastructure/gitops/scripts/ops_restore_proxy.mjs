@@ -114,10 +114,12 @@ export async function withRestoreProxy(responses, verify, reports = {}) {
     assert.equal(health.status, 200)
     assert.deepEqual(await health.json(), { service: 'restore-proxy-core-fixture' })
     for (const [session, status] of [[null, 401], ['govbiz_session=invalid-fixture', 401], ['govbiz_session=member-fixture', 403]]) {
-      const denied = await request('/api/v1/ops/session', session)
-      assert.equal(denied.status, status)
-      assert.equal(denied.headers.get('cache-control'), 'private, no-store')
-      assert.deepEqual(await denied.json(), {})
+      for (const path of ['/api/v1/ops/session', '/api/v1/ops/evaluation-catalog']) {
+        const denied = await request(path, session)
+        assert.equal(denied.status, status)
+        assert.equal(denied.headers.get('cache-control'), 'private, no-store')
+        assert.deepEqual(await denied.json(), {})
+      }
     }
     globalThis.fetch = async (path, options = {}) => {
       assert.ok(!options.method || options.method === 'GET', 'Restore web contract must only read')

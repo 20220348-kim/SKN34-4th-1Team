@@ -9,6 +9,8 @@ export async function checkRestoreBrowser(origin, responses, expected, reports, 
   const channel = process.env.RESTORE_BROWSER_CHANNEL
   assert.ok(channel === undefined || ['chrome', 'msedge'].includes(channel), 'Use bundled Chromium or an installed Chrome/Edge channel')
   const session = responses['/api/v1/ops/session']
+  const catalog = responses['/api/v1/ops/evaluation-catalog']
+  assert.ok(Array.isArray(catalog?.datasets) && catalog.datasets.length > 0, 'Missing captured evaluation catalog')
   const count = responses['/api/v1/ops/evaluations?page=1'].count
   assert.ok(Number.isInteger(count) && count > 0 && count <= 1000)
   assert.ok(typeof session.user?.username === 'string' && session.user.username)

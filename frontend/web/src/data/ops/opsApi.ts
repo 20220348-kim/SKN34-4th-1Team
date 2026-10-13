@@ -1,6 +1,36 @@
 import { z } from 'zod'
 
 const base = '/api/v1/ops'
+const productionDecisionSchema = z.enum(['yes', 'no', 'unknown'])
+const productionAnswerStatusSchema = z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE'])
+const productionReviewSchema = z.object({
+  id: z.uuid(), verdict: z.enum(['acceptable', 'issue', 'unassessable']),
+  grounded: productionDecisionSchema, relevant: productionDecisionSchema, complete: productionDecisionSchema,
+  note: z.string(), reference_answer: z.string(), expected_status: productionAnswerStatusSchema.nullable(),
+  expected_citation_ids: z.array(z.string()), reviewer: z.string(), created_at: z.iso.datetime({ offset: true }),
+}).refine((value) => value.verdict === ([value.grounded, value.relevant, value.complete].includes('no') ? 'issue'
+  : [value.grounded, value.relevant, value.complete].every((decision) => decision === 'yes') ? 'acceptable' : 'unassessable'))
+const productionSampleSchema = z.object({
+  id: z.uuid(), captured_at: z.iso.datetime({ offset: true }), source_document_id: z.string(), sample_rate_bps: z.number().int().min(0).max(10000),
+  checks_status: z.enum(['pending', 'checked', 'error']), check_codes: z.array(z.string()), review_version: z.number().int().nonnegative(),
+  review: productionReviewSchema.nullable(), regression_candidate_id: z.uuid().nullable(),
+})
+const productionQualitySchema = z.object({
+  scope: z.literal('support-program-evidence-answer'), enabled: z.boolean(), retention_days: z.number().int().positive(), daily_limit: z.number().int().positive(),
+  summary: z.object({ stored: z.number().int().nonnegative(), checked: z.number().int().nonnegative(), pending: z.number().int().nonnegative(), reviewed: z.number().int().nonnegative(), issues: z.number().int().nonnegative(), unassessable: z.number().int().nonnegative() }),
+  days: z.array(z.object({ date: z.iso.date(), samples: z.number().int().nonnegative(), reviewed: z.number().int().nonnegative(), acceptable: z.number().int().nonnegative(), issues: z.number().int().nonnegative(), unassessable: z.number().int().nonnegative() })
+    .refine((value) => value.reviewed <= value.samples && value.reviewed === value.acceptable + value.issues + value.unassessable)),
+  results: z.array(productionSampleSchema), count: z.number().int().nonnegative(), next: z.boolean(), page: z.number().int().positive(),
+})
+const productionDetailSchema = productionSampleSchema.extend({
+  material: z.object({ question: z.string(), chunks: z.array(z.object({ id: z.string(), document_id: z.string(), order: z.number().int().nonnegative(), text: z.string() })), answer: z.string(), answer_status: productionAnswerStatusSchema, citation_chunk_ids: z.array(z.string()) }),
+  material_sha256: z.string().regex(/^[a-f0-9]{64}$/), redacted: z.boolean(),
+  trace_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable(), release: z.string().nullable(), scope: z.literal('support-program-evidence-answer'),
+  review_history: z.array(productionReviewSchema).default([]),
+})
+export type ProductionQuality = z.infer<typeof productionQualitySchema>
+export type ProductionSample = z.infer<typeof productionDetailSchema>
+export type ProductionReviewInput = Pick<NonNullable<ProductionSample['review']>, 'grounded' | 'relevant' | 'complete' | 'note' | 'reference_answer' | 'expected_status' | 'expected_citation_ids'> & { request_id: string; version: number; material_sha256: string }
 const dashboardMetricsSchema = z.object({ status: z.number().min(0).max(1).nullable(), citation: z.number().min(0).max(1).nullable(), retrieval: z.number().min(0).max(1).nullable(), latency: z.number().nonnegative().nullable(), input_tokens: z.number().nonnegative().nullable(), output_tokens: z.number().nonnegative().nullable() })
 const dashboardSamplesSchema = z.object({ status: z.number().int().nonnegative().nullable(), citation: z.number().int().nonnegative().nullable(), retrieval: z.number().int().nonnegative().nullable(), latency: z.number().int().nonnegative().nullable(), input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable() })
 const dashboardCoverageSchema = z.object({ status: z.string().nullable(), citation: z.string().nullable(), retrieval: z.string().nullable(), latency: z.string().nullable(), input_tokens: z.string().nullable(), output_tokens: z.string().nullable() })
@@ -56,6 +86,8 @@ const sessionSchema = z.object({
   live_enabled: z.boolean(),
   rag_live_enabled: z.boolean().default(false),
   search_traces_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable().default(null),
+})
+const evaluationCatalogSchema = z.object({
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
     selection_guide: z.object({
@@ -518,6 +550,7 @@ const liveReadinessSchema = z.object({
 
 export type LiveReadiness = z.infer<typeof liveReadinessSchema>
 export type OpsSession = z.infer<typeof sessionSchema>
+export type EvaluationCatalog = z.infer<typeof evaluationCatalogSchema>
 const scheduleSchema = z.object({
   id: z.uuid(), dataset_id: z.string(), requested_by: z.string(),
   request: z.object({
@@ -596,6 +629,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
       : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT', 'SCHEDULE_DISABLED', 'SCHEDULE_BUDGET_UNAVAILABLE', 'EXECUTION_PROFILE_CHANGED', 'REVIEWED_BASELINE_REQUIRED', 'ACTIVE_SCHEDULE_EXISTS'].includes(error?.code) && typeof error?.detail === 'string'
         ? error.detail
+      : path === '/evaluation-catalog' && error?.code === 'VECTOR_CACHE_UNAVAILABLE' ? '평가 자료에 연결된 저장 벡터를 확인할 수 없습니다. 잠시 후 다시 조회하세요.'
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
       : error?.code === 'INVALID_RAG_REFERENCE_REVIEW' ? '전체 대상 자료의 확인과 참조 검토 근거를 입력하세요.'
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
@@ -605,6 +639,9 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       : error?.code === 'PREFECT_RUN_NOT_SUBMITTED' ? '아직 Prefect에 접수된 실행이 없습니다. 실행 상태를 다시 확인하세요.'
       : response.status === 401 ? '로그인이 만료되었습니다.'
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
+      : path.startsWith('/production-quality') && response.status === 404 ? '운영 표본 또는 회귀 후보를 찾을 수 없습니다. 보존 기간과 저장 상태를 확인하세요.'
+      : path.startsWith('/production-quality') && response.status === 409 ? '운영 표본이나 검토 기록이 변경되었습니다. 상세 새로고침 후 다시 확인하세요.'
+      : path.startsWith('/production-quality') && response.status === 400 ? '검토 근거와 참조 답변·기대 상태·인용 조건을 확인하세요.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
       : response.status === 404 ? '평가 실행을 찾을 수 없습니다.'
       : response.status === 409 ? '평가 조건이나 검토 기록이 변경되었습니다. 새로고침 후 확인하세요.'
@@ -618,6 +655,12 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 }
 
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
+export const getEvaluationCatalog = (signal?: AbortSignal) => request('/evaluation-catalog', evaluationCatalogSchema, { signal })
+export const getProductionQuality = (page: number, signal?: AbortSignal) => request(`/production-quality?page=${page}`, productionQualitySchema.refine((value) => value.page === page), { signal })
+export const getProductionSample = (id: string, signal?: AbortSignal) => request(`/production-quality/${encodeURIComponent(id)}`, productionDetailSchema.refine((value) => value.id === id), { signal })
+export const saveProductionReview = (id: string, data: ProductionReviewInput, owner: string) => post(`/production-quality/${encodeURIComponent(id)}/review`, data, productionDetailSchema.refine((value) => value.id === id && value.review?.reviewer === owner), false, owner)
+export const saveProductionRegressionCandidate = (id: string, data: { request_id: string; version: number; material_sha256: string }, owner: string) => post(`/production-quality/${encodeURIComponent(id)}/regression-candidate`, data, productionDetailSchema.refine((value) => value.id === id && value.regression_candidate_id !== null), false, owner)
+export const getProductionRegressionCandidate = (id: string, signal?: AbortSignal) => request(`/production-quality/${encodeURIComponent(id)}/regression-candidate`, z.object({ schemaVersion: z.literal('production-regression-candidate-v1'), sample_id: z.uuid(), fixture_registered: z.literal(false), baseline_eligible: z.literal(false) }).passthrough().refine((value) => value.sample_id === id), { signal })
 export const getEvaluationSchedules = (page = 1, signal?: AbortSignal) => request(`/schedules?page=${page}`, schedulesPageSchema, { signal })
 export const createEvaluationSchedule = (data: ScheduleInput, owner: string) => post('/schedules', data,
   scheduleSchema.refine((value) => value.id === data.request_id && value.requested_by === owner

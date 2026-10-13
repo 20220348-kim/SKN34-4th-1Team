@@ -58,10 +58,10 @@ class ManagementTests(unittest.TestCase):
             "/api/v1/ops/session": {
                 "user": {"id": "core:1", "username": self.principal["email"]},
                 "csrf_token": "live-test-csrf",
-                "datasets": [{"id": "test"}],
                 "live_enabled": False,
                 "rag_live_enabled": False,
             },
+            "/api/v1/ops/evaluation-catalog": {"datasets": [{"id": "test"}]},
             "/api/v1/ops/budget/reservations?page=1": {
                 "results": [],
                 "summary": {"state": "consistent"},
@@ -91,7 +91,7 @@ class ManagementTests(unittest.TestCase):
     def response(self, route, token=None):
         self.calls.append((route, token))
         if token is None and route.endswith("/session"):
-            return 200, {}, b'{"user":null,"datasets":[]}'
+            return 200, {}, b'{"user":null}'
         if token != "admin-token":
             return (403 if token == "member-token" else 401), {}, b"{}"
         if route.startswith("/api/v1/ops/evaluations?page="):
@@ -136,7 +136,7 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["matched_details"], 3)
         self.assertFalse(result["evidence"]["browser_rendered"])
         self.assertNotIn("live-test-csrf", json.dumps(result))
-        self.assertEqual(len(result["responses"]), 13)
+        self.assertEqual(len(result["responses"]), 14)
         for row in self.rows[:3]:
             route = "/api/v1/ops/evaluations/" + row["id"] + "/review"
             self.assertIn((route, "member-token"), self.calls)
@@ -300,16 +300,30 @@ class ManagementTests(unittest.TestCase):
             ("live_enabled", True),
             ("csrf_token", ""),
         ):
+            session.clear()
             session.update(original)
             session[key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.verify()
+        session.clear()
         session.update(original)
         self.routes["/api/v1/ops/evaluations/" + next(iter(self.expected))][
             "status"
         ] = "RUNNING"
         with self.assertRaisesRegex(ValueError, "detail differs"):
             self.verify()
+
+    def test_catalog_is_separate_and_rejects_all_unauthorized_reads(self):
+        result = self.verify()
+        route = "/api/v1/ops/evaluation-catalog"
+        self.assertEqual(result["responses"][route], {"datasets": [{"id": "test"}]})
+        for token in (None, "invalid-fixture", "member-token", "admin-token"):
+            self.assertIn((route, token), self.calls)
+        self.assertNotIn("datasets", result["responses"]["/api/v1/ops/session"])
+        for value in ({}, {"datasets": []}, {"datasets": None}):
+            self.routes[route] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "catalog"):
+                self.verify()
 
     def test_api_failure_cacheable_json_and_paid_budget_cannot_pass(self):
         for self.fail_status, self.cache in ((500, "no-store"), (None, "public")):

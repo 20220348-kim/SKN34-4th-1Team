@@ -77,17 +77,7 @@ ERROR_MESSAGES = {
 @permission_classes([AllowAny])
 def api_session(request):
     operator = request.user.is_authenticated
-    baselines = baseline_choices() if operator else {}
-    try:
-        datasets = public_datasets() if operator else []
-    except (ResultsUnavailable, OSError, ValueError):
-        return Response(
-            {
-                "code": "VECTOR_CACHE_UNAVAILABLE",
-                "detail": "평가 벡터 저장소를 확인하지 못했습니다. 잠시 후 다시 조회하세요.",
-            },
-            status=503,
-        )
+    # 인증·CSRF 조회가 평가 결과 파일이나 벡터 저장소의 지연·장애를 기다리지 않게 한다.
     return Response(
         {
             "user": {
@@ -97,6 +87,32 @@ def api_session(request):
             if operator
             else None,
             "csrf_token": get_token(request),
+            "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,
+            "rag_live_enabled": settings.LLMOPS_LIVE_ENABLED and settings.LLMOPS_RAG_LIVE_ENABLED
+            if operator
+            else False,
+            "search_traces_url": f"{settings.OPS_WEB_URL}/ops/traces" if operator else None,
+        }
+    )
+
+
+@never_cache
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def api_evaluation_catalog(request):
+    try:
+        baselines = baseline_choices()
+        datasets = public_datasets()
+    except (ResultsUnavailable, OSError, ValueError):
+        return Response(
+            {
+                "code": "VECTOR_CACHE_UNAVAILABLE",
+                "detail": "평가 자료·벡터 저장소를 확인하지 못했습니다. 잠시 후 다시 조회하세요.",
+            },
+            status=503,
+        )
+    return Response(
+        {
             "datasets": [
                 {
                     **item,
@@ -104,14 +120,7 @@ def api_session(request):
                     "baseline": baselines.get(item["id"]),
                 }
                 for item in datasets
-            ]
-            if operator
-            else [],
-            "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,
-            "rag_live_enabled": settings.LLMOPS_LIVE_ENABLED and settings.LLMOPS_RAG_LIVE_ENABLED
-            if operator
-            else False,
-            "search_traces_url": f"{settings.OPS_WEB_URL}/ops/traces" if operator else None,
+            ],
         }
     )
 

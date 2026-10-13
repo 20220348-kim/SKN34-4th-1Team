@@ -2,7 +2,7 @@
 // Real Vite and an isolated browser consume captured restore responses.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules, getRagReviews, getRagMaterial } from '../../../frontend/web/src/data/ops/opsApi.ts'
+import { getEvaluationCatalog, getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules, getRagReviews, getRagMaterial } from '../../../frontend/web/src/data/ops/opsApi.ts'
 
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
@@ -17,6 +17,9 @@ try {
     assert.ok(session.user)
     assert.equal(session.live_enabled, false)
     assert.equal(session.rag_live_enabled, false)
+    stage = 'CATALOG'
+    const catalog = await getEvaluationCatalog()
+    assert.ok(catalog.datasets.length > 0)
     stage = 'SCHEDULES'
     assert.equal((await getEvaluationSchedules()).enabled, false)
     const runs = new Map()
@@ -26,7 +29,7 @@ try {
       assert.equal(value.count, totalRuns)
       for (const run of value.results) {
         assert.ok(!runs.has(run.id), 'Repeated evaluation in parsed listing')
-        assert.ok(session.datasets.some((dataset) => dataset.id === run.dataset_id), 'Listing contains an unregistered dataset')
+        assert.ok(catalog.datasets.some((dataset) => dataset.id === run.dataset_id), 'Listing contains an unregistered dataset')
         runs.set(run.id, run)
       }
     }

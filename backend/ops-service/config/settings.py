@@ -47,6 +47,25 @@ TEMPLATES = [
 ]
 OPS_WEB_URL = env("OPS_WEB_URL", default="http://localhost:5173").rstrip("/")
 CORE_API_URL = env("CORE_API_URL", default="http://127.0.0.1:8080").rstrip("/")
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"auth_console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "apps.evaluations.authentication": {
+            "handlers": ["auth_console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
+# 리소스가 제한된 로컬 환경에서만 늘릴 수 있는 Core 인증 연결·읽기 제한시간이다.
+try:
+    CORE_AUTH_TIMEOUT_SECONDS = env.int("CORE_AUTH_TIMEOUT_SECONDS", default=3)
+except (TypeError, ValueError) as error:
+    raise ImproperlyConfigured("CORE_AUTH_TIMEOUT_SECONDS must be an integer in 1..10") from error
+if not 1 <= CORE_AUTH_TIMEOUT_SECONDS <= 10:
+    raise ImproperlyConfigured("CORE_AUTH_TIMEOUT_SECONDS must be an integer in 1..10")
 # 로컬 복제본은 원본 core:<id> 검토자와 새 Core의 같은 숫자 ID를 구별한다.
 # 생성 후 변경하지 않는다. 원본 환경은 빈 값으로 기존 계정 연결을 유지한다.
 CORE_ACCOUNT_NAMESPACE = env("CORE_ACCOUNT_NAMESPACE", default="")
@@ -78,6 +97,19 @@ LLMOPS_LIVE_ENABLED = env.bool("LLMOPS_LIVE_ENABLED", default=False)
 LLMOPS_LOCAL_SEED_ENABLED = env.bool("LLMOPS_LOCAL_SEED_ENABLED", default=False)
 LLMOPS_RAG_LIVE_ENABLED = env.bool("LLMOPS_RAG_LIVE_ENABLED", default=False)
 LLMOPS_SCHEDULES_ENABLED = env.bool("LLMOPS_SCHEDULES_ENABLED", default=False)
+# 운영 본문 표본은 별도 동의한 배포에서만 수집한다. 평가 실행기 토큰과 분리한다.
+LLMOPS_PRODUCTION_SAMPLES_ENABLED = env.bool("LLMOPS_PRODUCTION_SAMPLES_ENABLED", default=False)
+LLMOPS_PRODUCTION_SAMPLE_TOKEN = env("LLMOPS_PRODUCTION_SAMPLE_TOKEN", default="")
+LLMOPS_PRODUCTION_SAMPLE_DAILY_LIMIT = env.int("LLMOPS_PRODUCTION_SAMPLE_DAILY_LIMIT", default=100)
+LLMOPS_PRODUCTION_SAMPLE_RETENTION_DAYS = env.int(
+    "LLMOPS_PRODUCTION_SAMPLE_RETENTION_DAYS", default=14
+)
+if not 1 <= LLMOPS_PRODUCTION_SAMPLE_DAILY_LIMIT <= 10000:
+    raise ImproperlyConfigured("LLMOPS_PRODUCTION_SAMPLE_DAILY_LIMIT must be 1..10000")
+if not 1 <= LLMOPS_PRODUCTION_SAMPLE_RETENTION_DAYS <= 30:
+    raise ImproperlyConfigured("LLMOPS_PRODUCTION_SAMPLE_RETENTION_DAYS must be 1..30")
+if LLMOPS_PRODUCTION_SAMPLES_ENABLED and len(LLMOPS_PRODUCTION_SAMPLE_TOKEN) < 32:
+    raise ImproperlyConfigured("Production sample collection requires a dedicated token")
 LLMOPS_RESULTS_DIR = Path(
     env("LLMOPS_RESULTS_DIR", default=str(BASE_DIR.parent.parent / "work/llmops-ops"))
 ).resolve()
