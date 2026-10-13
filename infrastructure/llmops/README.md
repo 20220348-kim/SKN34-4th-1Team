@@ -857,6 +857,8 @@ Web은 Node.js 24.19.0과 pnpm 11.22.0을 사용했다.
 사용량 누락을 0으로 바꾸지 않는 동작과 본문·비밀 키 미수집을 검사합니다.
 `assistant.classify` 아래 `assistant.model`은 `GENERATION`이며, 나머지는 `SPAN`입니다.
 모델명·호출 표식·미확정 사용량도 확인해 실제 호출을 일반 단계로 잘못 기록하면 실패합니다.
+모델명은 Observations v2 응답의 `model` 필드로 확인합니다. 집계 API의 차원 이름인
+`providedModelName`을 관측 응답 필드로 사용하지 않습니다.
 
 ```bash
 # 저장소 루트. 기존 로컬 Langfuse 프로젝트·네트워크만 명시적으로 공유합니다.

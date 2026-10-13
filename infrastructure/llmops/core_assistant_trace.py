@@ -62,7 +62,8 @@ def verify_observations(observations, trace_id, scenario, private_values):
     )
     generation = matched["assistant.model"]
     require(generation["metadata"].get("record_kind") == "model_call", "Missing assistant model call marker")
-    require(isinstance(generation.get("providedModelName"), str) and bool(generation["providedModelName"]),
+    # Observations v2 exposes `model`; `providedModelName` is a metrics dimension.
+    require(isinstance(generation.get("model"), str) and bool(generation["model"].strip()),
             "Missing assistant model name")
     require(generation["metadata"].get("usage_reported") is False, "Unknown model usage lost")
     require(generation.get("usageDetails") in (None, {}), "Unknown model usage became a number")
