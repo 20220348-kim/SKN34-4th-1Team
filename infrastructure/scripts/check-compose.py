@@ -470,9 +470,20 @@ print('PASS: ordinary Compose restart preserved local revocation and result file
             if not args.bootstrap_only:
                 # The /app layout is not a repository checkout. Reuse the validated,
                 # read-only source mount only for the producer/consumer contract tests.
+                # Compose overrides CMD with runserver; inspect the built image's
+                # default CMD to retain the deployment concurrency regression test.
+                container = run(base + ["ps", "--quiet", "ops-service"],
+                                environment, capture=True).stdout.strip()
+                image = run(["docker", "inspect", "--format", "{{.Image}}", container],
+                            environment, capture=True).stdout.strip()
+                gunicorn_command = run(
+                    ["docker", "image", "inspect", "--format", "{{json .Config.Cmd}}", image],
+                    environment, capture=True,
+                ).stdout.strip()
                 run(
                     base + ["exec", "-T", "--env",
                             "OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py",
+                            "--env", "OPS_TEST_GUNICORN_COMMAND=" + gunicorn_command,
                             "ops-service", "python", "manage.py", "test", "--noinput"],
                     environment,
                 )

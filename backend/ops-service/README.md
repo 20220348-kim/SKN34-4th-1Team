@@ -1395,8 +1395,16 @@ uv run --locked python manage.py test --noinput
 Docker 안에서도 테스트할 수 있습니다.
 
 ```powershell
-docker compose exec -T --env OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py ops-service python manage.py test --noinput
+$opsTestContainer = docker compose ps --quiet ops-service
+$opsTestImage = docker inspect --format '{{.Image}}' $opsTestContainer
+$opsTestCommand = docker image inspect --format '{{json .Config.Cmd}}' $opsTestImage
+docker compose exec -T --env "OPS_TEST_GUNICORN_COMMAND=$opsTestCommand" --env OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py ops-service python manage.py test --noinput
 ```
+
+WSGI 동시성 테스트는 로컬에서 Dockerfile의 기본 CMD를 사용합니다. Dockerfile이 없는
+컨테이너에서는 실제 이미지의 `Config.Cmd`를 `OPS_TEST_GUNICORN_COMMAND`로 전달합니다.
+Compose의 `runserver` 재정의와 무관하게 배포 기본 Gunicorn 설정을 검증하며, 입력이 없거나
+잘못되면 생략하지 않고 실패합니다. 이 변수 역시 테스트 전용이며 CI 검증 도구가 자동 전달합니다.
 
 사용량 증거의 실행기→Ops 계약 테스트는 기본적으로 `LLMOPS_EVIDENCE_DIR/budget_client.py`의
 실제 실행기 코드를 읽습니다. 로컬 기본값은 저장소의 `evaluation/support-program-evidence`이며,
@@ -1417,7 +1425,7 @@ GitHub Actions는 모노레포 루트의
 수행합니다. Core API·AI Service나 외부 AI API는 기동·호출하지 않습니다.
 `python3 -B backend/ops-service/scripts/check-image.py`는 모노레포 루트에서 기본 Gunicorn
 이미지를 별도로 검증합니다. 네트워크·DB·실제 환경 파일을 연결하지 않고 non-root,
-읽기 전용 파일시스템, 정상 liveness, DB 장애 readiness, Host 거절, SIGTERM 종료를
+읽기 전용 파일시스템, 정상 liveness, DB 장애 readiness, Host 거절, 동시 요청 처리, SIGTERM 종료를
 확인합니다. Ops 소스 마운트 없이 이미지 자체의 `/app` 테스트를 실행하고, 실행기의
 `budget_client.py` 한 파일만 테스트 입력으로 읽기 전용 마운트합니다. DB 없이 사용량 증거의
 생성·서명·변조·심볼릭 링크 검증과 입력 누락 시 명시적 실패를 확인합니다. 운영 이미지에

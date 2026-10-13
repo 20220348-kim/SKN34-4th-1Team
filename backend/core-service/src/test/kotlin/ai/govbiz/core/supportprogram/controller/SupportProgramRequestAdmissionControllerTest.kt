@@ -124,7 +124,7 @@ class SupportProgramRequestAdmissionControllerTest {
     fun admittedEvidenceFailuresStillConsumeTheSharedRateQuota() {
         val mvc = mvc()
         Mockito.doThrow(SupportProgramEvidenceNotSupportedException())
-            .`when`(evidence).answer("BIZINFO", "PBLN_TEST", "신청 대상은?")
+            .`when`(evidence).answer("BIZINFO", "PBLN_TEST", "신청 대상은?", sampleProduction = true)
         mvc.perform(answerRequest()).andExpect(status().isUnprocessableContent())
         mvc.perform(searchRequest()).andExpect(status().isTooManyRequests())
         Mockito.verifyNoInteractions(search)
@@ -220,7 +220,7 @@ class SupportProgramRequestAdmissionControllerTest {
             release.countDown()
             first.get(5, TimeUnit.SECONDS)
             Mockito.doThrow(SupportProgramEvidenceNotSupportedException())
-                .`when`(evidence).answer("BIZINFO", "PBLN_TEST", "신청 대상은?")
+                .`when`(evidence).answer("BIZINFO", "PBLN_TEST", "신청 대상은?", sampleProduction = true)
             mvc.perform(answerRequest()).andExpect(status().isUnprocessableContent())
         } finally {
             release.countDown()
