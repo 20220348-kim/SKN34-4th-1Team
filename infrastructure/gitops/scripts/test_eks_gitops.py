@@ -409,10 +409,18 @@ class EksGitOpsTests(unittest.TestCase):
 
     def test_application_preserves_env_and_pvc_without_hiding_image_updates(self):
         runtime = self.runtime()
+        core = next(r for r in runtime["items"] if r["metadata"]["name"] == "core-service")
+        core_env = core["spec"]["template"]["spec"]["containers"][0]["env"]
+        core_env[:] = [item for item in core_env if item["name"] != gitops.DOCUMENT_JOBS_FLAG]
+        core_env.extend([
+            {"name": gitops.DOCUMENT_JOBS_FLAG, "value": "false"},
+            {"name": "PRIVATE_CORE_TOKEN", "valueFrom": {"secretKeyRef": {"name": "core-runtime", "key": "token"}}},
+        ])
         ops = next(r for r in runtime["items"] if r["metadata"]["name"] == "ops-service")
         for c in ops["spec"]["template"]["spec"]["containers"]:
             c["env"].append({"name": "SAFE_RUNTIME_MARKER", "value": "preserved"})
         project, app = gitops.application(runtime)
+        self.assertIn({"name": gitops.DOCUMENT_JOBS_FLAG, "value": "false"}, core_env)
         gitops.check_application(app)
         self.assertEqual(project["spec"]["clusterResourceWhitelist"], [])
         with tempfile.TemporaryDirectory() as temp:
@@ -436,6 +444,78 @@ class EksGitOpsTests(unittest.TestCase):
                 if row["kind"] == "Deployment":
                     for c in row["spec"]["template"]["spec"]["containers"]:
                         self.assertIn(c["image"], self.record["images"].values())
+                    if row["metadata"]["name"] == "core-service":
+                        environment = row["spec"]["template"]["spec"]["containers"][0]["env"]
+                        self.assertEqual(
+                            [item for item in environment if item["name"] == gitops.DOCUMENT_JOBS_FLAG],
+                            [{"name": gitops.DOCUMENT_JOBS_FLAG, "value": "true"}],
+                        )
+                        self.assertIn(core_env[-1], environment)
+
+    def disabled_document_jobs_application(self):
+        app, _, _ = self.success()
+        app["metadata"]["resourceVersion"] = "42"
+        patches = app["spec"]["source"]["kustomize"]["patches"]
+        core = next(p for p in patches if p["target"]["name"] == "core-service")
+        operations = json.loads(core["patch"])
+        environment = next(op["value"] for op in operations if op["path"].endswith("/env"))
+        next(item for item in environment if item["name"] == gitops.DOCUMENT_JOBS_FLAG)["value"] = "false"
+        core["patch"] = json.dumps(operations)
+        return app
+
+    def test_document_jobs_recovery_changes_only_the_flag_and_requires_the_exported_version(self):
+        app = self.disabled_document_jobs_application()
+        before = copy.deepcopy(app)
+        patch = gitops.document_jobs_patch(app)
+        self.assertEqual(app, before)
+        self.assertEqual(patch["metadata"], {"resourceVersion": "42"})
+        self.assertEqual(set(patch["spec"]), {"source"})
+        self.assertEqual(set(patch["spec"]["source"]), {"kustomize"})
+        updated = copy.deepcopy(app)
+        updated["spec"]["source"]["kustomize"] = patch["spec"]["source"]["kustomize"]
+        gitops.check_application(updated)
+        for original, changed in zip(
+            before["spec"]["source"]["kustomize"]["patches"],
+            updated["spec"]["source"]["kustomize"]["patches"],
+            strict=True,
+        ):
+            self.assertEqual(original["target"], changed["target"])
+            original_ops, changed_ops = json.loads(original["patch"]), json.loads(changed["patch"])
+            if original["target"]["name"] == "core-service":
+                for operations in (original_ops, changed_ops):
+                    for op in operations:
+                        if op["path"].endswith("/env"):
+                            op["value"] = [item for item in op["value"] if item["name"] != gitops.DOCUMENT_JOBS_FLAG]
+            self.assertEqual(original_ops, changed_ops)
+        for mutation in (
+            lambda a: a["metadata"].pop("resourceVersion"),
+            lambda a: a.update(operation={"sync": {}}),
+            lambda a: a["status"]["operationState"].update(phase="Running"),
+            lambda a: a["spec"]["source"].update(repoURL="https://github.com/other/project.git"),
+        ):
+            wrong = copy.deepcopy(app)
+            mutation(wrong)
+            with self.assertRaises(ValueError):
+                gitops.document_jobs_patch(wrong)
+
+    def test_disabled_preserved_document_jobs_cannot_authorize_a_release(self):
+        app = self.disabled_document_jobs_application()
+        with self.assertRaisesRegex(ValueError, "Enable document jobs"):
+            gitops.check_application(app)
+
+    def test_live_disabled_document_jobs_block_preflight_and_success(self):
+        app, record, deployments = self.success()
+        environment = deployments["core-service"]["spec"]["template"]["spec"]["containers"][0]["env"]
+        next(item for item in environment if item["name"] == gitops.DOCUMENT_JOBS_FLAG)["value"] = "false"
+        self.assertFalse(gitops.synced(app, record, deployments))
+        with (
+            patch.object(gitops, "connect"),
+            patch.object(gitops, "kube", side_effect=lambda ns, *args: app if ns == "argocd" else deployments[args[1]]),
+            patch.object(gitops.subprocess, "run") as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "document jobs to be enabled"):
+                gitops.preflight()
+            run.assert_not_called()
 
     def test_adoption_rejects_wrong_cluster_selector_ownership_and_failed_release(self):
         for mutate in (

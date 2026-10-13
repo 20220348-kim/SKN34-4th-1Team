@@ -138,6 +138,8 @@ Core·AI는 HPA가 replica 수를 관리하므로 Application의 해당 두 Depl
    이미지·실행 명령은 Git에서 갱신되도록 보존 patch에서 제외합니다.
    업무 서비스의 환경변수 배열은 최초 인계 patch가 보존하므로 이후 환경 설정 변경은 해당 patch도
    함께 검토·갱신해야 합니다. 운영 Secret 값은 Git 배포 태그에 포함하지 않습니다.
+   문서 생성은 EKS values와 Core 보존 patch에서 `APPLICATION_DOCUMENT_JOBS_ENABLED=true`로
+   명시합니다. 최초 인계 도구는 이 값만 활성화하고 다른 환경변수와 Secret 참조를 보존합니다.
 5. 생성한 AppProject·Application을 검토해 적용합니다. DB·PVC·Secret·StatefulSet과
    Prefect·Langfuse·API Gateway는 이 Application이 소유하지 않습니다.
    `automated.enabled=true`, `prune=false`, `selfHeal=false`, `FailOnSharedResource=true`를 유지합니다.
@@ -152,6 +154,50 @@ Core·AI는 HPA가 replica 수를 관리하므로 Application의 해당 두 Depl
    앱 6개 동기화와 Healthy 이후 PostSync가 평가 연결을 검증하고 자기 접수 중지만 복구합니다.
    CodeBuild는 Git revision·hook 성공·앱 generation·Ready·컨테이너 digest를 읽어 대조합니다.
    이후 Vercel 운영 전환과 관리자 로그인·기존 평가 이력·보고서 보존을 확인합니다.
+
+## 문서 생성 비활성화 복구
+
+`503 APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE`는 Core가 작업 접수 전에 문서 생성 비활성화를
+확인해 반환하는 오류입니다. 이 상태에서는 새 작업·파일이 생성되지 않습니다. 웹·모바일은 같은
+Core 생성 서비스를 사용하므로 APK 재설치나 모바일 API 주소 변경으로 해결되지 않습니다.
+기존 Core 환경변수 배열이 Application의 비공개 Kustomize patch에 보존되어 있으면 새 이미지나
+Helm values만 변경해도 `false`가 계속 적용될 수 있습니다.
+
+운영 담당자는 먼저 현재 Application의 배포 대상 커밋·필수 CI·이미지와 진행 중인 동기화가 없는지
+확인합니다. 다음 명령은 현재 Application을 읽어 **문서 생성 플래그만 바꾸는 merge patch 파일**을
+준비합니다. 다른 환경변수·Secret 참조·이미지·명령·PVC·노드 배치·배포 revision은 변경하지 않으며,
+도구 자체는 클러스터에 접근하거나 적용하지 않습니다. 출력에는 기존 비공개 설정이 포함되므로
+Git·이슈·CI artifact에 올리지 않습니다.
+
+```sh
+umask 077
+# 실제 운영 전용 kubeconfig 경로를 지정한다. 다른 클러스터에 적용하지 않는다.
+GOVBIZ_EKS_KUBECONFIG=/path/to/eks-kubeconfig
+kubectl --kubeconfig "$GOVBIZ_EKS_KUBECONFIG" config current-context
+mkdir -p .data/document-jobs
+kubectl --kubeconfig "$GOVBIZ_EKS_KUBECONFIG" -n argocd get application govbiz-eks -o json \
+  > .data/document-jobs/application.json
+python -B infrastructure/eks/gitops.py enable-document-jobs \
+  --application .data/document-jobs/application.json --output .data/document-jobs/enable.patch.json
+```
+
+검토한 patch를 관리자 권한으로 적용하면 기존 Argo 자동 동기화가 Core 설정을 반영합니다.
+읽은 뒤 Application이 바뀌면 `resourceVersion` 충돌로 적용을 거절하므로 새로 조회해 준비합니다.
+이 절차를 위해 CodeBuild에 쓰기 권한을 추가하지 않습니다.
+
+```sh
+kubectl --kubeconfig "$GOVBIZ_EKS_KUBECONFIG" -n argocd patch application govbiz-eks \
+  --type merge --patch-file .data/document-jobs/enable.patch.json
+kubectl --kubeconfig "$GOVBIZ_EKS_KUBECONFIG" -n govbiz-msa rollout status deployment/core-service --timeout=300s
+kubectl --kubeconfig "$GOVBIZ_EKS_KUBECONFIG" -n govbiz-msa get deployment core-service \
+  -o 'jsonpath={.spec.template.spec.containers[0].env[?(@.name=="APPLICATION_DOCUMENT_JOBS_ENABLED")].value}'
+```
+
+최종 값이 `true`이고 Argo의 해당 revision 동기화·Core 교체가 끝났는지 확인합니다. 기존 작업은
+worker의 만료 규칙으로 정리되는지 확인하고 DB에서 임의 삭제하지 않습니다. 승인된 QA 작성본으로
+접수 202 → 실행 → 완료/명시적인 실패 → 파일 다운로드·실제 열기까지 별도 확인합니다. 설정·Pod
+Ready만으로 실제 파일 생성 성공을 선언하지 않습니다. 배포 preflight와 완료 확인도 비공개 Core
+patch와 실제 Deployment의 생성 활성화 값을 대조하며 비활성화 상태를 성공으로 처리하지 않습니다.
 
 ## 실패 시
 
