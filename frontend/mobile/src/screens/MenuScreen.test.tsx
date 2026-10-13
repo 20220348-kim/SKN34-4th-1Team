@@ -25,11 +25,13 @@ test('mobile assistant entry is offered only to a signed-in account', () => {
   expect(screen.queryByLabelText('GovBiz 도우미')).toBeNull()
 })
 
-test('policy drafts and help can be opened before login without requesting an account destination', () => {
+test.each([false, true])('unconfirmed service information is hidden in the menu with signedIn=%s', signedIn => {
+  auth(signedIn ? { email: 'owner@example.test', company: null } : null)
   const open = jest.fn()
   render(<MenuScreen onOpen={open} />)
-  fireEvent.press(screen.getByLabelText('도움말·문의'))
-  expect(screen.getByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeTruthy()
+  for (const label of ['개인정보 처리방침', '이용약관', '도움말·문의', '문의처 열기']) expect(screen.queryByLabelText(label)).toBeNull()
+  expect(screen.queryByText('문서 초안 · 운영 문서 확정 전')).toBeNull()
+  expect(screen.queryByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeNull()
   expect(open).not.toHaveBeenCalled()
 })
 afterEach(() => { serviceContact.email = null; serviceContact.url = null; jest.restoreAllMocks() })
@@ -121,22 +123,20 @@ test.each([
   expect(open).toHaveBeenCalledWith(destination)
 })
 
-test('policy documents remain public when session restoration is unavailable', () => {
+test('unconfirmed service information stays hidden when session restoration is unavailable', () => {
   jest.mocked(useAuth).mockReturnValue({ status: 'unavailable', session: null, restoreError: '복원 실패' } as unknown as ReturnType<typeof useAuth>)
   const open = jest.fn()
   render(<MenuScreen onOpen={open} />)
-  fireEvent.press(screen.getByLabelText('개인정보 처리방침'))
-  expect(screen.getByText('문서 초안 · 운영 문서 확정 전')).toBeTruthy()
-  fireEvent.press(screen.getAllByLabelText('닫기')[0])
+  for (const label of ['개인정보 처리방침', '이용약관', '도움말·문의']) expect(screen.queryByLabelText(label)).toBeNull()
+  expect(screen.queryByText('문서 초안 · 운영 문서 확정 전')).toBeNull()
   expect(screen.getByText('복원 실패')).toBeTruthy()
-  fireEvent.press(screen.getByLabelText('도움말·문의'))
-  expect(screen.getByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeTruthy()
+  expect(screen.getByLabelText('로그인 상태 확인')).toBeTruthy()
   expect(open).not.toHaveBeenCalled()
 })
 
-test('a configured contact updates the public menu guidance', () => {
+test('setting a contact alone does not restore the unconfirmed menu entry', () => {
   serviceContact.email = 'help@example.test'
   render(<MenuScreen onOpen={jest.fn()} />)
-  expect(screen.getByLabelText('도움말·문의').props.accessibilityHint).toBe('도움말 · 문의처')
+  expect(screen.queryByLabelText('도움말·문의')).toBeNull()
   expect(screen.queryByText('도움말 · 문의처 준비 중')).toBeNull()
 })
