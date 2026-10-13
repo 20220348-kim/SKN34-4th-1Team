@@ -33,11 +33,13 @@ def documents(scenario, trace_id=TRACE_ID):
     nodes = [("total", None), ("core.request", 1), ("agent", 2), ("classify", 3)]
     if scenario == "ok":
         nodes += [("finalize", 3), ("core.validate", 1)]
+    nodes += [("model", 4)]
     rows = [
         {
             "id": f"{number:016x}",
             "traceId": trace_id,
             "name": "assistant." + name,
+            "type": "GENERATION" if name == "model" else "SPAN",
             "parentObservationId": f"{parent:016x}" if parent else None,
             "endTime": "2026-09-30T00:00:00Z",
             "level": "DEFAULT" if scenario == "ok" else "ERROR",
@@ -46,6 +48,8 @@ def documents(scenario, trace_id=TRACE_ID):
         for number, (name, parent) in enumerate(nodes, 1)
     ]
     rows[2]["metadata"].update(model_calls=1, usage_unknown_calls=1, usage_complete=False)
+    rows[-1].update(providedModelName="test-model", usageDetails={})
+    rows[-1]["metadata"].update(record_kind="model_call", usage_reported=False)
     return rows
 
 
@@ -72,6 +76,12 @@ def test_complete_wire_trace(scenario):
         lambda rows: rows[0]["metadata"].update(outcome="completed"),
         lambda rows: rows[0].update(input="PRIVATE"),
         lambda rows: rows[2]["metadata"].update(error="PRIVATE"),
+        lambda rows: rows[-1].update(type="SPAN"),
+        lambda rows: rows[-1].update(providedModelName=None),
+        lambda rows: rows[-1].update(parentObservationId=rows[2]["id"]),
+        lambda rows: rows[-1]["metadata"].update(record_kind="processing"),
+        lambda rows: rows[-1]["metadata"].update(usage_reported=True),
+        lambda rows: rows[-1].update(usageDetails={"input": 0, "output": 0}),
     ],
 )
 def test_broken_wire_trace_is_rejected(mutation):
@@ -197,6 +207,9 @@ def test_real_ai_router_sdk_and_offline_http_fixture(trace_environment, monkeypa
                     "id": f"{span.context.span_id:016x}",
                     "traceId": f"{span.context.trace_id:032x}",
                     "name": span.name,
+                    "type": span.attributes.get("langfuse.observation.type", "span").upper(),
+                    "providedModelName": span.attributes.get("langfuse.observation.model.name"),
+                    "usageDetails": json.loads(span.attributes.get("langfuse.observation.usage_details", "{}")),
                     "parentObservationId": f"{span.parent.span_id:016x}",
                     "endTime": span.end_time,
                     "level": span.attributes.get("langfuse.observation.level", "DEFAULT"),
