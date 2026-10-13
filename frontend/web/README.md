@@ -1,5 +1,9 @@
 # GovBiz Web
 
+운영 평가 상세의 **Prefect 실행 로그**는 관리자 로그인 상태에서 같은 origin의 Ops API로 조회합니다.
+최신순 100개씩 페이지를 이동할 수 있고 새로고침으로 새 로그를 확인합니다. 개인 PC의 Prefect 터널 없이
+사용하며, 배포 시 `/api/v1/ops/evaluations/{id}/logs`를 제공하는 Ops 이미지도 함께 반영해야 합니다.
+
 지원사업을 AI 대화 또는 직접 선택한 필터로 검색하고 공고의 상세 조건과 원문을 연결하는 웹 화면입니다.
 React·TypeScript·Vite·Tailwind CSS를 사용합니다. 전체 기술 구성은
 [프로젝트 기술 문서](../../docs/technology.md), 기능별 완료·미구현 범위는

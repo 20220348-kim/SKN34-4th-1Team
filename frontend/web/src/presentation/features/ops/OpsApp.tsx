@@ -17,6 +17,7 @@ import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 import { PerformanceDashboard } from './PerformanceDashboard'
 import { EvaluationReport } from './EvaluationReport'
+import { EvaluationLogsPanel } from './EvaluationLogsPanel'
 
 const dashboardPath = '/ops/dashboard'
 const listPath = '/ops/evaluations'
@@ -442,9 +443,9 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
           {run.report_url && <a className={styles.primaryButton} href={`${listPath}/${run.id}/report`} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.trace_links.map((trace) => <a key={trace.case_id} className={styles.secondaryButton} href={trace.url} target="_blank" rel="noopener noreferrer">Langfuse {trace.case_id} 추적·점수</a>)}
           {run.langfuse_url && <a className={styles.secondaryButton} href={run.langfuse_url} target="_blank" rel="noopener noreferrer">Langfuse 평가 점수</a>}
-          {run.prefect_url && <a className={styles.secondaryButton} href={run.prefect_url} target="_blank" rel="noopener noreferrer">Prefect 실행 로그</a>}
-          {!run.report_url && !run.prefect_url && <p className="text-sm text-ink-muted">평가가 접수되면 실행 기록을 확인할 수 있습니다.</p>}
+          {!run.report_url && !run.prefect_flow_run_id && <p className="text-sm text-ink-muted">평가가 접수되면 실행 기록을 확인할 수 있습니다.</p>}
         </div></section>
+        {run.prefect_flow_run_id && <EvaluationLogsPanel key={`${run.id}:${run.prefect_flow_run_id}`} runId={run.id} flowId={run.prefect_flow_run_id} onExpired={onExpired} />}
       </>}
     </div>
   </>

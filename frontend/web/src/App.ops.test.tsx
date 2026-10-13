@@ -76,6 +76,18 @@ function open(path = '/ops/evaluations/new') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('실행 상세의 Prefect 로그 버튼은 localhost 대신 관리자 API로 조회한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === `/api/v1/ops/evaluations/${id}/logs?offset=0`
+      ? Promise.resolve(json({ run_id: id, prefect_flow_run_id: flowId, offset: 0, next_offset: null, results: [] }))
+      : original(path, options))
+    open(`/ops/evaluations/${id}`)
+    fireEvent.click(await screen.findByRole('button', { name: 'Prefect 실행 로그' }))
+    await screen.findByText('이 페이지에 저장된 실행 로그가 없습니다.')
+    expect(screen.queryByRole('link', { name: 'Prefect 실행 로그' })).toBeNull()
+    expect(fetchMock.mock.calls.some(([path]) => path.startsWith('http://localhost:14200'))).toBe(false)
+  })
+
   it.each([['limits', false], ['legacy', false], ['limits', true], ['daily', false], ['daily', true]] as const)('%s 저장 후 이전 사전 점검을 지우며 늦은 조회=%s도 무시한다', async (kind, delayed) => {
     const at = '2026-10-03T01:00:00Z'
     const readiness = {
