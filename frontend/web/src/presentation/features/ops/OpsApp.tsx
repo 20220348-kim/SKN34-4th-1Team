@@ -18,6 +18,7 @@ import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 import { PerformanceDashboard } from './PerformanceDashboard'
 import { EvaluationReport } from './EvaluationReport'
 
+const dashboardPath = '/ops/dashboard'
 const listPath = '/ops/evaluations'
 const notice = '저장된 과거 평가 결과를 비교합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
 const liveNotice = '선택한 평가 자료의 질문·고정 근거 청크와 답변 지침을 OpenAI에 전송해 새 응답을 생성합니다. 검색·임베딩은 실행하지 않으며 API 비용이 발생합니다.'
@@ -73,7 +74,7 @@ export function OpsApp() {
   return <div className="flex min-h-dvh flex-col bg-[#f7f9f8] text-ink">
     <a href="#ops-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:p-3">본문으로 건너뛰기</a>
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-white px-[clamp(1rem,5vw,4.5rem)] py-4">
-      <Link to={listPath} className="text-lg font-extrabold tracking-tight text-brand-primary">GovBiz <span className="ml-2 text-sm font-semibold text-ink-muted">LLMOps</span></Link>
+      <Link to={dashboardPath} className="text-lg font-extrabold tracking-tight text-brand-primary">GovBiz <span className="ml-2 text-sm font-semibold text-ink-muted">LLMOps</span></Link>
       <nav aria-label="운영 메뉴" className="flex flex-wrap items-center gap-4 text-sm">
         <Link to="/" className={styles.mutedLink}>서비스 홈</Link>
         {session?.user && session.search_traces_url && <a href={session.search_traces_url} target="_blank" rel="noopener noreferrer" className={styles.mutedLink} title="Langfuse에서 support-program-search, assistant-agent, support-program-evidence 이름으로 필터하세요. 별도 로그인이 필요합니다.">AI 실행 추적 ↗</a>}
@@ -82,7 +83,7 @@ export function OpsApp() {
     </header>
     {error && <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4" role="alert">{error} {!session && <button className={styles.secondaryButton} onClick={() => { setError(''); setReload((value) => value + 1) }}>연결 다시 확인</button>}</div>}
     {!session ? (!error && <p className="p-8" role="status">운영자 세션을 확인하고 있습니다.</p>)
-      : !session.user ? <Navigate replace to={loginPathFor(location.pathname === '/ops/login' ? listPath : location.pathname + location.search + location.hash)} />
+      : !session.user ? <Navigate replace to={loginPathFor(location.pathname === '/ops/login' ? dashboardPath : location.pathname + location.search + location.hash)} />
         : <OpsWorkspace key={session.user.id} session={session} onExpired={expired} onReviewChanged={() => setReload((value) => value + 1)} />}
 
   </div>
@@ -90,7 +91,7 @@ export function OpsApp() {
 
 type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string }
 const opsPages = [
-  { path: '/ops/dashboard', label: '성능 대시보드', description: '현재 지표와 변화 추이' },
+  { path: dashboardPath, label: '성능 대시보드', description: '현재 지표와 변화 추이' },
   { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
   { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
   { path: '/ops/budget', label: '예산 관리', description: '사용량과 한도 관리' },
@@ -124,15 +125,15 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
     </aside>
     <main id="ops-main" tabIndex={-1} className="min-w-0 focus-visible:outline-2 focus-visible:outline-brand-primary">
       {legacyPath ? <Navigate replace to={legacyPath} /> : <Routes>
-        <Route path="/ops/dashboard" element={<PerformanceDashboard onExpired={onExpired} />} />
-        <Route path="/ops" element={<Navigate replace to="/ops/dashboard" />} />
+        <Route path={dashboardPath} element={<PerformanceDashboard onExpired={onExpired} />} />
+        <Route path="/ops" element={<Navigate replace to={dashboardPath} />} />
         <Route path="/ops/evaluations" element={<EvaluationList onExpired={onExpired} />} />
         <Route path="/ops/evaluations/new" element={<EvaluationCreate owner={session.user!.id} datasets={session.datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />} />
         <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
         <Route path="/ops/evaluations/:runId/report" element={<EvaluationReport key={location.pathname} onExpired={onExpired} />} />
         <Route path="/ops/budget" element={<><WorkspacePageHeader title="예산 관리" /><div className={styles.content}><p className="text-sm text-ink-muted">누적·일별 한도와 예약·사용 내역을 확인하고 관리합니다.</p><BudgetOverview onExpired={onExpired} refreshKey={0} operatorId={session.user!.id} /></div></>} />
         <Route path="/ops/schedules" element={<><WorkspacePageHeader title="정기 실행" /><div className={styles.content}><EvaluationSchedulesPanel owner={session.user!.id} datasets={session.datasets} onExpired={onExpired} refreshKey={0} /></div></>} />
-        <Route path="*" element={<Navigate replace to={listPath} />} />
+        <Route path="*" element={<Navigate replace to={dashboardPath} />} />
       </Routes>}
     </main>
   </div>
