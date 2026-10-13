@@ -10,7 +10,7 @@ const slides = [
   { title: '궁금한 조건은', highlight: '공고에 직접 물어보세요', description: '로그인 후 지원되는 기업마당·K-Startup 공고의\n상세 본문에서 근거를 찾아 답해 드려요' },
   { title: '담아 두면', highlight: '신청 준비까지 이어져요', description: '로그인하면 관심 공고함부터\n신청 문서 · 중복 검토까지 한곳에서' },
 ]
-const autoAdvanceDelay = 1000
+const autoAdvanceDelay = 5000
 
 export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse, onLogin, onSignup }: {
   busy: boolean; error: string | null; autoAdvancePaused?: boolean; onBrowse(): void; onLogin(): void; onSignup(): void
@@ -64,7 +64,7 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
         <OnboardingPreview step={step} />
       </ScrollView>)}
     </ScrollView>
-    <Text style={local.swipeHint}>{index === slides.length - 1 ? '좌우로 밀어서 다시 볼 수 있어요' : '1초마다 자동으로 넘어가요 · 좌우로 밀어볼 수 있어요'}</Text>
+    <Text style={local.swipeHint}>{index === slides.length - 1 ? '좌우로 밀어서 다시 볼 수 있어요' : '5초마다 자동으로 넘어가요 · 좌우로 밀어볼 수 있어요'}</Text>
     <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 16), gap: 6 }}>
       <Button label="회원가입하고 시작하기" busy={busy} onPress={onSignup} size="large" />
       <View style={local.footerLinks}>

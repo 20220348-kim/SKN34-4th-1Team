@@ -5,6 +5,7 @@ services:
     resources:
       requests: {cpu: 100m, memory: 512Mi}
     env:
+      APPLICATION_DOCUMENT_JOBS_ENABLED: "true"
       ACCOUNT_OAUTH_FRONTEND_BASE_URL: https://govbiz.vercel.app
       DAILY_REPORT_FRONTEND_BASE_URL: https://govbiz.vercel.app
       SERVER_SHUTDOWN: graceful

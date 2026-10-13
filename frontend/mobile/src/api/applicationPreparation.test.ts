@@ -54,6 +54,15 @@ test('keeps an active document job deletion conflict as an error without retryin
   expect(fetchApi).toHaveBeenCalledTimes(1)
   expect(fetchApi).toHaveBeenCalledWith(expect.stringMatching(/\/application-preparations\/9$/), expect.objectContaining({ method: 'DELETE' }))
 })
+
+test('preserves the confirmed document-generation rejection code without retrying the POST', async () => {
+  fetchApi.mockResolvedValue(response({ code: 'APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE' }, 503))
+  await expect(applicationPreparationUseCase('owned').submitDocumentJob(9, 1, undefined, '11111111-1111-4111-8111-111111111111'))
+    .rejects.toMatchObject({ status: 503, code: 'APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE' })
+  expect(fetchApi).toHaveBeenCalledTimes(1)
+  expect(fetchApi).toHaveBeenCalledWith(expect.stringMatching(/\/application-preparations\/9\/documents\/jobs$/),
+    expect.objectContaining({ method: 'POST' }))
+})
 beforeEach(() => { fetchApi.mockReset(); jest.mocked(createApiFetch).mockReturnValue(fetchApi); jest.mocked(clearPendingPreparationIfUnchanged).mockReset().mockResolvedValue(true) })
 test('uses authenticated mobile transport and rejects another preparation identity', async () => {
   fetchApi.mockResolvedValue(response(documentPreparation))

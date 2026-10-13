@@ -85,7 +85,10 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
     } catch (cause) {
       if (!controller.signal.aborted) {
         setActionError(cause instanceof Error ? cause.message : '문서 생성 요청을 확인하지 못했어요.')
-        if (cause instanceof ApplicationPreparationError && cause.status >= 400 && cause.status < 500 && cause.status !== 408) {
+        if (cause instanceof ApplicationPreparationError && (
+          cause.status >= 400 && cause.status < 500 && cause.status !== 408
+          || cause.status === 503 && cause.code === 'APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE'
+        )) {
           await clearPendingPreparation(base, email).then(() => setHasPending(false)).catch(error => setActionError(error instanceof Error ? error.message : '보관 요청을 확인하지 못했어요.'))
         }
       }

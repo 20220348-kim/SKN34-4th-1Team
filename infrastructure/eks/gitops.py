@@ -3,6 +3,7 @@
 # CLI entry point imports the existing deployment tools from their source directories.
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -45,6 +46,54 @@ SOURCE_PATHS = (
     PREFIX + "environments/evaluation",
     "infrastructure/eks/gitops-values.yaml",
 )
+DOCUMENT_JOBS_FLAG = "APPLICATION_DOCUMENT_JOBS_ENABLED"
+
+
+def document_jobs_patches(patches):
+    """Enable only document generation in the private Core environment patch."""
+    patches = copy.deepcopy(patches)
+    environments = [
+        op
+        for patch in patches
+        if patch.get("target") == {
+            "kind": "Deployment", "name": "core-service", "namespace": "govbiz-msa"
+        }
+        for op in json.loads(patch["patch"])
+        if op.get("path") == "/spec/template/spec/containers/0/env"
+    ]
+    release.require(len(environments) == 1, "Review the single Core environment patch before enabling document jobs")
+    for patch in patches:
+        if patch.get("target") != {
+            "kind": "Deployment", "name": "core-service", "namespace": "govbiz-msa"
+        }:
+            continue
+        operations = json.loads(patch["patch"])
+        for op in operations:
+            if op.get("path") == "/spec/template/spec/containers/0/env":
+                release.require(isinstance(op.get("value"), list), "Core environment must be an array")
+                op["value"] = [item for item in op["value"] if item.get("name") != DOCUMENT_JOBS_FLAG]
+                op["value"].append({"name": DOCUMENT_JOBS_FLAG, "value": "true"})
+        patch["patch"] = json.dumps(operations)
+    return patches
+
+
+def document_jobs_patch(app):
+    """Prepare a version-checked merge patch; do not contact or change the cluster."""
+    release.require(
+        not app.get("operation")
+        and app.get("status", {}).get("operationState", {}).get("phase") != "Running",
+        "Finish the existing Argo operation before enabling document jobs",
+    )
+    version = app.get("metadata", {}).get("resourceVersion")
+    release.require(bool(version), "Export the current Argo Application with its resourceVersion")
+    updated = copy.deepcopy(app)
+    source = updated["spec"]["source"]
+    source["kustomize"]["patches"] = document_jobs_patches(source["kustomize"]["patches"])
+    check_application(updated)
+    return {
+        "metadata": {"resourceVersion": version},
+        "spec": {"source": {"kustomize": {"patches": source["kustomize"]["patches"]}}},
+    }
 
 
 def read_settings(root=None, sha=None):
@@ -338,9 +387,9 @@ def application(runtime, settings=None):
             == node_selector(settings, name),
             "Unexpected EKS workload placement",
         )
-    patches = runtime_patches(
+    patches = document_jobs_patches(runtime_patches(
         runtime, WORKLOADS, preserve_placement=True, replica_bounds=bounds
-    )
+    ))
     return [
         {
             "apiVersion": "argoproj.io/v1alpha1",
@@ -468,12 +517,17 @@ def check_application(app, settings=None):
     allowed = re.compile(
         r"/spec/template/spec/(?:containers/[01]/env|nodeSelector|volumes/0/persistentVolumeClaim/claimName)"
     )
+    document_jobs = []
     for patch in source.get("kustomize", {}).get("patches", []):
         for op in json.loads(patch["patch"]):
             release.require(
                 op.get("op") in {"add", "replace"} and allowed.fullmatch(op.get("path", "")),
                 "Argo runtime patch must not override release images or commands",
             )
+            if patch.get("target") == {
+                "kind": "Deployment", "name": "core-service", "namespace": "govbiz-msa"
+            } and op["path"] == "/spec/template/spec/containers/0/env":
+                document_jobs.extend(item for item in op["value"] if item.get("name") == DOCUMENT_JOBS_FLAG)
             if op["path"] == "/spec/template/spec/nodeSelector":
                 target = patch.get("target", {})
                 name = target.get("name")
@@ -492,6 +546,10 @@ def check_application(app, settings=None):
                     op.get("value") in permitted,
                     "Argo node selector must preserve the configured workload boundary",
                 )
+    release.require(
+        document_jobs == [{"name": DOCUMENT_JOBS_FLAG, "value": "true"}],
+        "Enable document jobs in the preserved Core environment before publishing; use enable-document-jobs",
+    )
 
 
 def preflight():
@@ -512,6 +570,13 @@ def preflight():
             running_replicas(row, bounds),
             "A stopped or out-of-bounds workload must not be changed by a release",
         )
+        if name == "core-service":
+            release.require(
+                [item for item in row["spec"]["template"]["spec"]["containers"][0].get("env", [])
+                 if item.get("name") == DOCUMENT_JOBS_FLAG]
+                == [{"name": DOCUMENT_JOBS_FLAG, "value": "true"}],
+                "Wait for Core document jobs to be enabled before publishing",
+            )
         release.require(
             not row["metadata"].get("annotations", {}).get("govbiz.io/release-in-progress"),
             "Recover the unfinished direct deployment before GitOps",
@@ -634,6 +699,11 @@ def synced(app, record, deployments, settings=None):
         ):
             return False
         images = {c["name"]: c["image"] for c in pod["spec"]["containers"]}
+        if name == "core-service" and [
+            item for item in pod["spec"]["containers"][0].get("env", [])
+            if item.get("name") == DOCUMENT_JOBS_FLAG
+        ] != [{"name": DOCUMENT_JOBS_FLAG, "value": "true"}]:
+            return False
         if any(images.get(c) != record["images"][image] for c, image in mapping.items()):
             return False
         if name == "ops-artifacts":
@@ -673,10 +743,11 @@ def wait(sha, receipt, timeout=1200):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("application", "preflight", "publish", "wait"))
+    parser.add_argument("command", choices=("application", "enable-document-jobs", "preflight", "publish", "wait"))
     parser.add_argument("--sha")
     parser.add_argument("--receipt", type=Path)
     parser.add_argument("--runtime", type=Path)
+    parser.add_argument("--application", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.command == "application":
@@ -685,6 +756,14 @@ def main():
         with os.fdopen(fd, "w") as out:
             yaml.safe_dump_all(resources, out, sort_keys=False)
         print("Prepared private Argo adoption configuration; cluster unchanged.")
+    elif args.command == "enable-document-jobs":
+        if not args.application or not args.output:
+            parser.error("enable-document-jobs requires --application and --output")
+        patch = document_jobs_patch(json.loads(args.application.read_text(encoding="utf-8")))
+        fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            json.dump(patch, out)
+        print("Prepared private document-jobs patch; cluster unchanged.")
     elif args.command == "preflight":
         preflight()
     elif args.command == "publish":
