@@ -58,6 +58,10 @@ const sessionSchema = z.object({
   search_traces_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable().default(null),
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
+    selection_guide: z.object({
+      category: z.enum(['quality', 'development', 'historical']),
+      title: z.string().min(1), purpose: z.string().min(1), material: z.string().min(1), limitations: z.string().min(1),
+    }).nullish(),
     evaluation_scope: z.string().nullable().default(null),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
     baseline: z.object({ id: z.string(), label: z.string(), version: z.number().int().nonnegative() }).nullable(),

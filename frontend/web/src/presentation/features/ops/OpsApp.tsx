@@ -11,6 +11,7 @@ import { workspacePageStyles as styles, workspaceTagClassName } from '../../shar
 import { RagComparisonResult } from './RagComparisonResult'
 import { RagMaterialPanel } from './RagMaterialPanel'
 import { EvaluationReviewPanel } from './EvaluationReviewPanel'
+import { EvaluationDatasetPicker } from './EvaluationDatasetPicker'
 import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { LiveReadinessPanel } from './LiveReadinessPanel'
 import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
@@ -308,11 +309,11 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
       <p className="text-sm text-ink-muted">평가 자료·모델과 비교 대상을 선택한 뒤 실행하세요. 메뉴를 오가도 선택값은 유지되며, 유료 실행 확인과 예산 점검은 다시 해야 합니다.</p>
       <section id="new-evaluation" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행">
         <h2 className={styles.cardTitle}>평가 자료와 실행 방식</h2>
-        <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice(liveConfig) : mode === 'live' ? liveNotice : notice}</p>
-        {selected && <p className="text-sm" role="status">평가 범위: {ragLive ? '등록 원문·청크의 검색·새 답변' : `${scopeLabel(selected.evaluation_scope)}. ${scopeNotice(selected.evaluation_scope)}`}</p>}
         <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void submit() }}>
+          <EvaluationDatasetPicker datasets={datasets} value={dataset} disabled={busy || requestId.current !== null} onChange={changeDataset} />
           <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live" disabled={!canGenerate}>새 응답 생성 · 유료 모델 호출</option></select></label>
-          <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <p className="text-sm leading-6 text-ink-muted md:col-span-2">{ragLive ? ragLiveNotice(liveConfig) : mode === 'live' ? liveNotice : notice}</p>
+          {selected && <p className="text-sm md:col-span-2" role="status">평가 범위: {ragLive ? '등록 원문·청크의 검색·새 답변' : `${scopeLabel(selected.evaluation_scope)}. ${scopeNotice(selected.evaluation_scope)}`}</p>}
           {mode === 'live' && <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">평가 모델<select className={field} value={model} disabled={busy || requestId.current !== null} onChange={(event) => { setModel(event.target.value); setApproved(false) }}>
             {!selectedOption && <option value={model} disabled>{model ? `${model} · ${pending ? '보관한 요청의 모델' : '현재 선택 불가'}` : '평가할 모델을 선택하세요'}</option>}
             {options.map((option) => <option key={option.live_config.model} value={option.live_config.model}>{option.live_config.model}</option>)}
