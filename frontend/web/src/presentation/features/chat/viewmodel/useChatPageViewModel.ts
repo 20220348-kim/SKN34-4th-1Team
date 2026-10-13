@@ -233,8 +233,11 @@ export function useChatPageViewModel() {
     /** 공고를 고르지 않아 답하지 못한 요청입니다. 공고를 고른 동안만 [방금 질문을 이 공고로 묻기] 칩으로 다시 보냅니다. */
     govPendingQuestion: chat.isGovAgent && chat.govProgram ? chat.govPendingQuestion : null,
     setReturnToGovChat: chat.setReturnToGovChat,
-    /** 선택 공고 막대 둘째 줄의 작업 칩(신청서 쓰기·중복 검토·파트너 찾기)입니다. 원문 질문 한도와 관계없고, 입력 중에는 두지 않습니다. */
-    govTools: chat.isGovAgent && chat.govProgram && chat.draft.trim().length === 0
+    /**
+     * 선택 공고 막대 둘째 줄의 작업 칩(신청 문서 쓰기·중복 검토·파트너 찾기)입니다. 공고를 고르기 전에도 같은 자리에 두고(누르면 고르기 안내),
+     * 원문 질문 한도와 관계없으며 입력 중에는 두지 않습니다.
+     */
+    govTools: chat.isGovAgent && chat.draft.trim().length === 0
       ? (['APPLICATION', 'COMBINATION_REVIEW', 'PARTNERS'] as const) : [],
     handleStartGovTool: chat.startGovTool,
     isRestoredHistory: chat.isRestoredHistory,

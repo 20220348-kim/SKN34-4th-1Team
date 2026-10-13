@@ -83,6 +83,8 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const isLandingIntro = layout === 'landing' && conversationCount === 0
   const isDockedLanding = layout === 'landing' && !isLandingIntro
   const isGuest = layout === 'landing'
+  // 로그인 뒤 대화의 입력칸입니다. 키보드 안내(Enter·Shift+Enter)는 화면에 두지 않고 화면 낭독기에만 알립니다.
+  const isWorkspaceComposer = !isLandingIntro && !isDockedLanding
   // 가장 최근 업무 카드만 활성화합니다. 이전 기록은 저장된 결과를 여는 링크로 남깁니다.
   const latestToolMessageId = messages.findLast((message) => message.govApplication || message.govReview || message.govPartners)?.id
   const [workRefresh, setWorkRefresh] = useState(0)
@@ -92,10 +94,23 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const refreshWork = useCallback(() => setWorkRefresh((value) => value + 1), [])
   // 카드 버튼으로 연 시트를 닫으면 대화는 그대로이므로, 카드가 상태를 다시 읽게 합니다.
   const cardRefresh = workRefresh + useChatSheetClosedCount()
-  // 신청 문서는 신청 문서 화면에서 만들어지므로, 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾아 지금 상태를 보여 줍니다.
+  // 신청 문서는 신청 문서 화면에서 만들어지므로, 카드와 [신청 문서 쓰기] 칩은 공고로 내 신청 준비를 찾아 지금 상태를 보여 줍니다.
   const preparations = useProgramPreparations(isGovAgent && layout === 'workspace'
     && (govProgram !== null || messages.some((message) => message.govApplication)), cardRefresh)
   const selectedPreparation = govProgram && preparations?.phase === 'ready' ? preparations.byProgram.get(programKey(govProgram)) ?? null : null
+  // 공고를 고르기 전에 작업 칩을 누르면 최근 검색 결과의 [이 공고로 작업]에 고리를 두르고 먼저 할 일을 알립니다.
+  // 그 결과에서 공고를 고르면 누른 칩을 막대에서 한 번 강조하고, 실행은 사용자가 칩을 다시 눌러야 합니다(신청 문서 쓰기는 유료 분석이 바로 시작될 수 있음).
+  const latestResultsId = messages.findLast((message) => Boolean(message.programs?.length))?.id ?? null
+  const [selectCue, setSelectCue] = useState<{ count: number; tool: GovAgentTool; resultsId: string | null } | null>(null)
+  const [cuedTool, setCuedTool] = useState<{ tool: GovAgentTool; program: string } | null>(null)
+  const activeSelectCue = !govProgram && selectCue?.resultsId === latestResultsId ? selectCue : null
+  const selectCueMessage = !activeSelectCue ? ''
+    : activeSelectCue.resultsId ? '[이 공고로 작업]을 눌러 공고를 골라 주세요.' : '먼저 지원사업을 검색해 주세요.'
+  const isCuedTool = (tool: GovAgentTool) => cuedTool?.tool === tool && govProgram !== null && cuedTool.program === programKey(govProgram)
+  function cueProgramSelection(tool: GovAgentTool) {
+    setSelectCue((current) => ({ count: (current?.count ?? 0) + 1, tool, resultsId: latestResultsId }))
+    if (!latestResultsId) composerInputRef.current?.focus()
+  }
   // Gov 대화를 카드 · 시트에서 떠나면 그때 연 신청 문서 · 중복 검토 · 파트너 화면이 [대화로 돌아가기]를 보입니다(사이드바 메뉴로 옮기면 두지 않음).
   // 환영 인사뿐인 대화면 두지 않습니다.
   const hasConversation = useRef(false)
@@ -126,6 +141,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const navigate = useNavigate()
   function startGovTool(tool: GovAgentTool) {
     if (!govProgram) return
+    setCuedTool(null)
     handleStartGovTool(tool)
     const params = new URLSearchParams({ sourceCode: govProgram.sourceCode, sourceProgramId: govProgram.sourceProgramId })
     if (tool === 'APPLICATION') navigate(`${appPaths.applicationPreparationNew}?${params}&analyze=1`)
@@ -166,9 +182,11 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
 
   const composerFooter = (
     <div className={isDockedLanding ? chatPageStyles.guestComposerFooter : chatPageStyles.composerFooter}>
-      <small className={`${chatPageStyles.composerHint} ${isDockedLanding ? chatPageStyles.dockedComposerHint : ''}`}>
-        Enter로 전송 · Shift+Enter로 줄바꿈
-      </small>
+      {!isWorkspaceComposer ? (
+        <small className={`${chatPageStyles.composerHint} ${isDockedLanding ? chatPageStyles.dockedComposerHint : ''}`}>
+          Enter로 전송 · Shift+Enter로 줄바꿈
+        </small>
+      ) : null}
       {/* AI 대화 검색 이용량입니다. 한도를 정하지 않은 요금제는 그리지 않습니다. */}
       {aiSearchUsage ? (
         <PlanUsageLine
@@ -185,7 +203,8 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           ref={composerInputRef}
           className={isDockedLanding ? chatPageStyles.guestComposerInput : `${chatPageStyles.composerInput} ${isLandingIntro ? chatPageStyles.landingComposerInput : chatPageStyles.workspaceComposerInput}`}
           aria-label="지원사업 검색어"
-          aria-describedby={hasReadinessNotice ? 'support-program-search-readiness' : undefined}
+          aria-describedby={[hasReadinessNotice ? 'support-program-search-readiness' : null, isWorkspaceComposer ? 'chat-composer-keys' : null]
+            .filter(Boolean).join(' ') || undefined}
           value={draft}
           disabled={isInterpreting}
           onChange={handleDraftChange}
@@ -199,6 +218,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           rows={isLandingIntro ? 3 : 1}
         />
         {!isDockedLanding ? composerFooter : null}
+        {isWorkspaceComposer ? <span id="chat-composer-keys" className="sr-only">Enter로 전송, Shift+Enter로 줄바꿈</span> : null}
         {isBusy ? (
           <button
             key="cancel"
@@ -373,8 +393,12 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
               ) : null}
               {message.programs?.length ? (
                 <ProgramResults programs={message.programs} totalCount={message.totalCount} resultToken={message.resultToken} interests={interests}
+                  selectCue={activeSelectCue?.resultsId === message.id ? activeSelectCue.count : undefined}
                   onSelectProgram={isGovAgent && !isBusy ? (program) => {
-                    selectGovProgram({ sourceCode: program.sourceCode, sourceProgramId: program.id, title: program.title })
+                    const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id }
+                    selectGovProgram({ ...identity, title: program.title })
+                    setCuedTool(activeSelectCue ? { tool: activeSelectCue.tool, program: programKey(identity) } : null)
+                    setSelectCue(null)
                     composerInputRef.current?.focus()
                   } : undefined} />
               ) : zeroResultHelp?.messageId === message.id ? (
@@ -434,11 +458,14 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           {timeline}
           <form className={chatPageStyles.composerWorkspace} onSubmit={handleSubmit}>
             {isGovAgent ? <div className="px-3 py-2 text-sm text-ink-muted">
-              {/* 선택 공고 막대는 두 줄입니다. 첫 줄: 제목(길면 줄이고 마우스를 올리면 전체) · 원문 질문 남은 횟수 · 해제(✕). 둘째 줄: 작업 칩. */}
+              {/* 선택 공고 막대는 두 줄입니다. 첫 줄: 제목(길면 줄이고 마우스를 올리면 전체) · 원문 질문 남은 횟수 · 해제(✕). 둘째 줄: 작업 칩.
+                  공고를 고르기 전에는 막대 배경과 첫 줄 없이 같은 모양·크기의 작업 칩만 막대 안과 같은 들여쓰기로 둡니다. */}
               {govProgram ? <div className={chatPageStyles.govProgramBar} role="region" aria-label="선택한 공고">
                 <div className={chatPageStyles.govProgramHeader}>
                   <span className={chatPageStyles.govProgramTitle}>선택한 공고: <strong className="text-ink" title={govProgram.title}>{govProgram.title}</strong></span>
-                  {evidenceUsage ? <PlanUsageLine view={evidenceUsage} className={chatPageStyles.govProgramUsage} /> : null}
+                  {/* 원문 질문 남은 횟수는 적게 남았거나 다 썼을 때만 알립니다(다 쓰면 이어 묻기 칩이 사라지는 이유). */}
+                  {evidenceUsage && (evidenceUsage.isNearLimit || evidenceUsage.isLimitReached)
+                    ? <PlanUsageLine view={evidenceUsage} className={chatPageStyles.govProgramUsage} /> : null}
                   <button type="button" disabled={isBusy} className={chatPageStyles.govProgramClearButton} aria-label="선택 해제" title="선택 해제"
                     onClick={() => selectGovProgram(null)}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -446,27 +473,39 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
                     </svg>
                   </button>
                 </div>
-                {/* 둘째 줄은 작업 칩 [신청서 쓰기] · [중복 검토] · [파트너 찾기]입니다. 원문 질문 기본 질문은 대화 안 이어 묻기 칩으로 둡니다.
+                {/* 둘째 줄은 작업 칩 [신청 문서 쓰기] · [중복 검토] · [파트너 찾기]입니다. 원문 질문 기본 질문은 대화 안 이어 묻기 칩으로 둡니다.
                     작업 칩은 질문 칩과 색을 달리해 누르면 일이 시작된다는 것을 구분하고, 경로 선택 없이 작업 카드를 만들어 대화 안에 펼칩니다.
-                    이 공고로 이미 쓰는 신청 문서가 있으면 [신청서 쓰기] 대신 [이어서 쓰기 · n/m] 또는 [초안 보기]로 그 화면을 엽니다.
+                    이 공고로 이미 쓰는 신청 문서가 있으면 [신청 문서 쓰기] 대신 [이어서 쓰기 · n/m] 또는 [초안 보기]로 그 화면을 엽니다.
                     처리 중에는 줄을 그대로 두고 누를 수 없게만 해 막대 높이가 줄었다 늘지 않게 합니다. */}
                 {govTools.length > 0 ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label="이 공고로 작업하기">
                   {govTools.map((tool) => tool === 'APPLICATION' && selectedPreparation && !isBusy ? (
-                    <Link key={tool} className={chatPageStyles.govToolButton} to={preparationPath(selectedPreparation)}>
+                    <Link key={tool} className={isCuedTool(tool) ? `${chatPageStyles.govToolButton} ${chatPageStyles.govToolCue}` : chatPageStyles.govToolButton}
+                      to={preparationPath(selectedPreparation)}>
                       {selectedPreparation.hasCurrentDocument ? '초안 보기' : continueLabel(selectedPreparation)}
                     </Link>
                   ) : (
-                    <button key={tool} type="button" className={chatPageStyles.govToolButton} disabled={isBusy}
+                    <button key={tool} type="button" disabled={isBusy}
+                      className={isCuedTool(tool) ? `${chatPageStyles.govToolButton} ${chatPageStyles.govToolCue}` : chatPageStyles.govToolButton}
                       title={tool === 'APPLICATION' ? '저장된 양식이 없으면 입력칸 분석(유료 AI)을 바로 시작해요' : undefined}
                       onClick={() => startGovTool(tool)}>
                       {govToolTexts[tool].label}
                     </button>
                   ))}
                 </div> : null}
-              </div> : <>
-                <p>검색 결과에서 ‘이 공고 선택’을 누르면 원문 질문과 신청 준비를 이어갈 수 있습니다.</p>
-                {evidenceUsage ? <PlanUsageLine view={evidenceUsage} className="mt-2" /> : null}
-              </>}
+              </div> : <div className={chatPageStyles.govToolPreviewRow}>
+                {/* 같은 작업 칩을 미리 두되, 누르면 실행하지 않고 [이 공고로 작업]을 먼저 누르도록 이끕니다. */}
+                {govTools.length > 0 ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label="공고를 고르면 할 수 있는 작업">
+                  {govTools.map((tool) => (
+                    <button key={tool} type="button" className={chatPageStyles.govToolButton} disabled={isBusy}
+                      onClick={() => cueProgramSelection(tool)}>
+                      {govToolTexts[tool].label}
+                    </button>
+                  ))}
+                  <span className={chatPageStyles.govToolPreviewMessage} aria-live="polite">{selectCueMessage}</span>
+                </div> : null}
+                {evidenceUsage && (evidenceUsage.isNearLimit || evidenceUsage.isLimitReached)
+                  ? <PlanUsageLine view={evidenceUsage} className="mt-1.5 text-xs" /> : null}
+              </div>}
             </div> : null}
             {readinessNotice}
             {composerInputGroup}

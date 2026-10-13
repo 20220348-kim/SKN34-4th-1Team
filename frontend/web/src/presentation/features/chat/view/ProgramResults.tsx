@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router'
 import { programStatusLabels } from '@govbiz/shared/domain/labels'
 
@@ -12,12 +12,14 @@ import { searchResultInterestKey, searchResultInterestMessages, type SearchResul
 import { chatPageStyles } from './ChatPage.styles'
 
 // 초안 입력 중에도 Redux가 보존하는 검색 결과 배열은 카드 전체를 다시 렌더하지 않습니다.
-export const ProgramResults = memo(function ProgramResults({ programs, totalCount = programs.length, resultToken = null, interests = null, onSelectProgram }: {
+export const ProgramResults = memo(function ProgramResults({ programs, totalCount = programs.length, resultToken = null, interests = null, onSelectProgram, selectCue }: {
   programs: SupportProgram[]
   totalCount?: number
   resultToken?: string | null
   interests?: SearchResultInterests | null
   onSelectProgram?: (program: SupportProgram) => void
+  /** 공고를 고르기 전 작업 칩을 누른 횟수입니다. 있으면 [이 공고로 작업]에 고리를 두르고 첫 카드의 버튼으로 옮깁니다. */
+  selectCue?: number
 }) {
   const lockedCount = resultToken ? Math.max(0, totalCount - programs.length) : 0
   const returnTo = `${appPaths.chat}?searchResult=${encodeURIComponent(resultToken ?? '')}`
@@ -32,8 +34,9 @@ export const ProgramResults = memo(function ProgramResults({ programs, totalCoun
         </div>
       ) : null}
       <div className={chatPageStyles.programList}>
-        {programs.map((program) => (
-          <ProgramCard key={searchResultInterestKey({ sourceCode: program.sourceCode, sourceProgramId: program.id })} program={program} interests={interests} onSelectProgram={onSelectProgram} />
+        {programs.map((program, index) => (
+          <ProgramCard key={searchResultInterestKey({ sourceCode: program.sourceCode, sourceProgramId: program.id })} program={program} interests={interests}
+            onSelectProgram={onSelectProgram} selectCue={selectCue} focusOnCue={index === 0} />
         ))}
       </div>
       {lockedCount > 0 ? (
@@ -77,7 +80,20 @@ export const ProgramResults = memo(function ProgramResults({ programs, totalCoun
   )
 })
 
-function ProgramCard({ program, interests, onSelectProgram }: { program: SupportProgram; interests: SearchResultInterests | null; onSelectProgram?: (program: SupportProgram) => void }) {
+function ProgramCard({ program, interests, onSelectProgram, selectCue, focusOnCue }: {
+  program: SupportProgram
+  interests: SearchResultInterests | null
+  onSelectProgram?: (program: SupportProgram) => void
+  selectCue?: number
+  focusOnCue: boolean
+}) {
+  const selectButtonRef = useRef<HTMLButtonElement>(null)
+  // 작업 칩을 누를 때마다 첫 카드의 [이 공고로 작업]이 보이게 옮기고 키보드 초점도 둡니다.
+  useEffect(() => {
+    if (!selectCue || !focusOnCue) return
+    selectButtonRef.current?.scrollIntoView?.({ block: 'center' })
+    selectButtonRef.current?.focus({ preventScroll: true })
+  }, [selectCue, focusOnCue])
   const { pathname } = useLocation()
   const inApp = isAppPath(pathname)
   const searchReturnTo = inApp ? appPaths.chat : '/'
@@ -172,9 +188,11 @@ function ProgramCard({ program, interests, onSelectProgram }: { program: Support
           ))}
         </div>
         <div className={chatPageStyles.programActionButtons}>
-          {/* Gov 에이전트는 고른 공고로 같은 대화에서 원문 답변·신청 준비를 이어 갑니다. */}
-          {onSelectProgram ? <button type="button" className={chatPageStyles.programDetailsButton}
-            onClick={() => onSelectProgram(program)}>이 공고 선택</button> : null}
+          {/* Gov 에이전트는 고른 공고로 같은 대화에서 원문 답변·신청 문서·중복 검토·파트너 찾기를 이어 갑니다. */}
+          {/* 누를 때마다 고리 움직임을 처음부터 다시 보이도록 횟수를 key로 씁니다. */}
+          {onSelectProgram ? <button key={selectCue ?? 0} ref={selectButtonRef} type="button"
+            className={selectCue ? `${chatPageStyles.programDetailsButton} ${chatPageStyles.govSelectCue}` : chatPageStyles.programDetailsButton}
+            onClick={() => onSelectProgram(program)}>이 공고로 작업</button> : null}
           {questionTarget ? (
             <Link
               className={chatPageStyles.programQuestionButton}

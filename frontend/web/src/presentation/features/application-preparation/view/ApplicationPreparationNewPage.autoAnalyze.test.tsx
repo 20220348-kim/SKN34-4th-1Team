@@ -55,7 +55,7 @@ async function open(items: ApplicationForm[], analyze: boolean) {
   return discover
 }
 
-it('starts input analysis once when opened from the Gov 신청서 쓰기 chip for a program without a stored form', async () => {
+it('starts input analysis once when opened from the Gov 신청 문서 쓰기 chip for a program without a stored form', async () => {
   const discover = await open([], true)
   expect(discover).toHaveBeenCalledOnce()
   expect(discover).toHaveBeenCalledWith(program.sourceCode, program.sourceProgramId, expect.any(AbortSignal), expect.any(String))
