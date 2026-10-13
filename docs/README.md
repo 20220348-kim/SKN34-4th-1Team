@@ -40,6 +40,7 @@ LLMOps, 실행·검증·배포 범위까지 안내합니다.
 | [요청량·동시 실행 제한](support-program-request-limits.md) | 제한 설정·429/503 계약·운영 한계·4단계 최종 통합 검증 |
 | [요금제 사용량 한도](plan-usage-limits.md) | 요금제별 AI 기능 한도·세는 규칙·429/503 계약·판단 기록·테스트 계정 배정 |
 | [Frontend 개발](../frontend/web/README.md) | 화면 구조, 실행, 테스트·lint·build |
+| [발표용 Android APK 배포](mobile-app-distribution.md) | EAS preview 빌드, 준비할 프로젝트·환경변수, Firebase 그룹·QR와 실기기 확인 |
 | [Core API 개발](../backend/core-service/README.md) | 패키지·DB 규칙, 평가 프로필, JDK 21·MySQL 테스트 |
 | [AI Service 개발](../backend/ai-service/README.md) | 실행 설정, 내부 API, 테스트와 패키지 빌드 |
 | [Ops 개발·컨테이너](../backend/ops-service/README.md) | Django·전용 MySQL, 개발 runserver·기본 Gunicorn 구분, 상태 확인과 격리 테스트 |

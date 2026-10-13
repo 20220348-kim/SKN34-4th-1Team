@@ -137,6 +137,7 @@ function Choices({ values, selected, onSelect }: { values: readonly string[]; se
 }
 
 function companyError(error: ApiError): string {
+  if (error.code === 'BIZNO_NOT_CONFIGURED') return '사업자 정보 조회 서비스 설정이 준비되지 않았습니다. 관리자에게 문의해 주세요.'
   if (error.code === 'BUSINESS_NOT_FOUND') return companyRegistrationMessages.businessNotFound
   if (error.code === 'BUSINESS_NUMBER_ALREADY_REGISTERED') return companyRegistrationMessages.businessNumberTaken
   if (error.code === 'BUSINESS_NOT_ACTIVE') return companyRegistrationMessages.businessClosed(null)

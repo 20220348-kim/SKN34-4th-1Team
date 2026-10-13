@@ -14,6 +14,9 @@
 ## 웹·앱 공통 코드
 
 `frontend/web`와 Expo React Native `frontend/mobile`은 `frontend/packages/shared`의 domain·유스케이스·DTO 검증을 가져옵니다.
+모바일 발표 배포는 `모바일·shared 소스 → EAS Cloud Build → Android APK → Firebase App Distribution → 설치`로 진행합니다.
+설치된 앱의 업무 호출은 기존 공개 HTTPS API·Core·AI 경로를 사용하며 Firebase는 회원 인증·업무 DB를 소유하지 않습니다.
+프로젝트·환경변수·빌드·실기기 확인은 [Android APK 배포 안내](mobile-app-distribution.md)를 참고하세요.
 색·모서리 디자인 토큰(`design/tokens.ts`)도 shared 한 곳에 두고, 웹은 이 값으로 만든 Tailwind `@theme` 파일을, 모바일은 값을 그대로 씁니다.
 요금제 가격·혜택·출시 안내·FAQ는 shared `design/pricingContent.ts`에서 웹과 모바일이 함께 읽습니다.
 화면 이름은 shared `design/screenTitles.ts`를 웹의 routes/screenTitles와 모바일 메뉴·Stack·도우미가 함께 읽습니다.
@@ -259,6 +262,7 @@ QUEUED·RUNNING·UNKNOWN 작업이 있으면 DELETE는 409 `APPLICATION_PREPARAT
 `ApplicationDocumentService.generateNow`는 `ApplicationDocumentMappingService.ensure`의 새 매핑 요청 또는 답변 기입 요청 중 최초 요청 직전에 작업의 `ai_started_at`을 한 번 기록합니다. 매핑 캐시를 사용하면 답변 기입 요청에서 기록하고, 생성 파일 재사용·답변 없는 원본 저장에는 기록하지 않습니다. 기록 저장에 실패하면 요청을 보내지 않습니다. 최초 매핑 호출 뒤의 알 수 없는 실패와 실행 중단도 기존 UNKNOWN 분류·만료 처리에 포함됩니다.
 유료 AI 호출 뒤 결과를 확인하지 못한 실행은 UNKNOWN으로 남아 그 준비 건의 새 작업을 막고, `unknown-outcome-lock-ttl`(기본 24시간)이 지나면 실패로 내려 다시 받습니다.
 QUEUED 1시간이 지나면 만료, RUNNING 30분이 지나면 유료 AI 호출 전(재시작 등으로 끊긴 실행)은 실패, 호출 뒤는 결과 불명으로 정리합니다. 동기 `POST …/documents`는 같은 규칙을 거치는 기존 계약으로 남아 있지만 웹은 호출하지 않습니다.
+`APPLICATION_DOCUMENT_JOBS_ENABLED=false`이면 새 생성 작업 POST는 저장·이용량 확인 전에 503 `APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE`로 거절합니다. 이미 접수된 같은 계정·요청 키·작성본·답변 버전은 기존 작업을 반환하며 대상·버전이 다르면 409입니다. 기존 작업 GET도 계속 사용할 수 있습니다. 문서 실행기는 다른 기능의 활성 여부와 별개로 스케줄링을 등록하며, 실행 풀의 접수 거절 시 슬롯을 반환하고 폴링 실패 로그에 예외 원인을 남깁니다. 웹은 작업 목록 조회 실패를 빈 목록으로 바꾸지 않고 오류를 표시합니다. 모바일은 이 명시적인 접수 거절만 보관 요청에서 정리하고 일반 503·응답 유실의 요청 키는 유지합니다.
 공식 첨부 SHA-256이 선택한 양식 버전과 일치할 때 원본의 문단·표 셀 또는 PDF 페이지를 분석합니다.
 저장된 바인딩이 있는 HWP·HWPX·DOCX·XLSX는 작성 계획을 AI에 다시 묻지 않고 바인딩에서 결정적으로 만듭니다. 빈 칸은 입력하고, 글자가 있는
 칸은 AI Service `answer_slots`의 고정 규칙으로 인쇄된 단위·라벨·글머리표·선택지를 남긴 채 빈칸에만 씁니다(`(   명)`→`(12 명)`, `□ 자가 □ 임차`→

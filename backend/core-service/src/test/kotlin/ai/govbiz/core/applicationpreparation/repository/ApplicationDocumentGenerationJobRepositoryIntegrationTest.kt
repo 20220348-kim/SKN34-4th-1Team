@@ -87,6 +87,16 @@ class ApplicationDocumentGenerationJobRepositoryIntegrationTest {
     }
 
     @Test
+    fun requestKeyRecoveryRemainsScopedToItsOwner() {
+        val key = UUID.randomUUID().toString()
+        val owned = requireNotNull(jobs.reserve(ownerId, key, preparations.create(ownerId, draft()).id, 1).job)
+        val other = requireNotNull(jobs.reserve(otherId, key, preparations.create(otherId, draft()).id, 1).job)
+        assertEquals(owned, jobs.findOwnedRequest(ownerId, key))
+        assertEquals(other, jobs.findOwnedRequest(otherId, key))
+        assertNull(jobs.findOwnedRequest(ownerId, UUID.randomUUID().toString()))
+    }
+
+    @Test
     fun recordsStagesResultsAndFailureDetailsAndReleasesTheActiveSlot() {
         val preparation = preparations.create(ownerId, draft()).id
         val job = requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), preparation, 1).job)

@@ -110,3 +110,6 @@ API 계약이나 인증 서버를 바꾸면 기존 Core API 테스트와 소비�
   Node 캐시는 새로 만듭니다. 기존 DB·검색·메시지 볼륨의 이름과 데이터는 유지합니다.
 - Expo: 앱 폴더에서 Metro를 실행하며 Expo의 기본 모노레포 해석을 사용합니다.
   웹 React와 앱 React Native의 버전을 강제로 같은 의존성으로 합치지 않습니다.
+  발표용 Android APK는 앱 폴더의 `eas.json` preview 프로필로 EAS Cloud Build에서 생성하고
+  Firebase App Distribution으로 전달합니다. 개발·배포 환경값과 실기기 확인은
+  [APK 배포 안내](mobile-app-distribution.md)를 따르며 기존 업무 API·회원 인증 경계는 유지합니다.

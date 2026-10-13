@@ -13,4 +13,12 @@ describe('application preparation request errors', () => {
     expect(new ApplicationPreparationError(404, 'APPLICATION_PREPARATION_API_UNAVAILABLE').message).toContain('현재 연결된 서버')
     expect(new ApplicationPreparationError(401, 'REQUEST_FAILED').message).toContain('로그인이 만료되었습니다')
   })
+
+  it('explains that a disabled generation worker needs administrator action while preserving saved answers', () => {
+    const error = new ApplicationPreparationError(503, 'APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE')
+    expect(error.message).toContain('문서 생성 작업 처리가 비활성화되어 있습니다')
+    expect(error.message).toContain('저장된 답변은 유지')
+    expect(error.message).toContain('관리자 확인')
+    expect(error.message).not.toContain('잠시 후 다시 시도')
+  })
 })

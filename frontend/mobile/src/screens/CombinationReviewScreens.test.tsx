@@ -225,6 +225,28 @@ test('choosing programs goes straight to the analysis step and the optional situ
   expect(entries.size).toBe(0)
 })
 
+test('a newly saved review opens confirmation only after the owning route has been replaced', async () => {
+  const onCreated = jest.fn()
+  const view = render(<CombinationReviewEditorScreen id={null} onCreated={onCreated} onLogin={jest.fn()} onOpenProgram={onOpen} />)
+  await screen.findByText('검색 결과 3건')
+  fireEvent.changeText(screen.getByLabelText('검토 제목'), '새 라우트에서 확인할 검토')
+  fireEvent.press(screen.getByLabelText('검토 사업 1 선택'))
+  fireEvent.press(screen.getByLabelText('검토 사업 2 선택'))
+  fireEvent.press(screen.getByText('다음 · 분석 확인'))
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith(saved.id, 'confirm'))
+
+  expect(screen.queryByText('이 내용으로 검토할까요?')).toBeNull()
+  expect(screen.getByDisplayValue('새 라우트에서 확인할 검토')).toBeTruthy()
+  expect(mockRepository.create).toHaveBeenCalledTimes(1)
+  expect(mockRepository.start).not.toHaveBeenCalled()
+
+  view.rerender(<CombinationReviewEditorScreen id={saved.id} initialStep="confirm" onCreated={onCreated} onLogin={jest.fn()} onOpenProgram={onOpen} />)
+  await screen.findByText('이 내용으로 검토할까요?')
+  await screen.findAllByText('사업 1 · 검토 사업 1')
+  expect(mockRepository.create).toHaveBeenCalledTimes(1)
+  expect(mockRepository.start).not.toHaveBeenCalled()
+})
+
 test('lost admission responses retain the exact key and facts for an explicit same-request confirmation', async () => {
   mockRepository.start.mockRejectedValueOnce(new Error('network interrupted'))
   render(editor())

@@ -315,7 +315,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 |---|---|
 | `GET /api/v1/application-preparations/{id}/documents` | 현재 입력 revision의 생성 파일 메타데이터 목록 |
 | `POST /api/v1/application-preparations/{id}/documents` | `expectedRevision`으로 원본 양식 기입 및 같은 형식 파일 저장(동기 경로, 현재 웹은 호출하지 않음) |
-| `POST /api/v1/application-preparations/{id}/documents/jobs` | UUID `requestKey`·`expectedRevision`으로 V45 계정별 생성 작업 접수(202·Location). 같은 키는 같은 작업, 준비 건에 진행 중·결과 불명 작업이 있으면 409, 계정당 3개 초과는 422 `APPLICATION_DOCUMENT_JOB_CAPACITY`, 답변 버전이 다르면 409 |
+| `POST /api/v1/application-preparations/{id}/documents/jobs` | UUID `requestKey`·`expectedRevision`으로 V45 계정별 생성 작업 접수(202·Location). 같은 키는 같은 작업, 준비 건에 진행 중·결과 불명 작업이 있으면 409, 계정당 3개 초과는 422 `APPLICATION_DOCUMENT_JOB_CAPACITY`, 답변 버전이 다르면 409. `APPLICATION_DOCUMENT_JOBS_ENABLED=false`이면 새 작업은 저장 전에 503 `APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE`로 거절하며 이미 접수된 같은 대상·버전의 키는 기존 작업 반환 |
 | `GET /api/v1/application-preparations/{id}/documents/jobs/{jobId}` | 본인 작업의 상태(QUEUED·RUNNING·SUCCEEDED·FAILED·UNKNOWN)·단계(PREPARING·MAPPING·WRITING·SAVING)·파일 ID·실패 코드/문구·입력 위치 변경 안내 |
 | `GET /api/v1/application-preparations/{id}/documents/jobs` | 그 준비 건의 최근 5개 작업(변경 안내 제외). 화면이 진행 중 작업을 이어받을 때 읽음 |
 | `GET /api/v1/application-preparations/documents/jobs` | 계정의 최근 20개 작업(준비 건 구분 없음, 변경 안내 제외). 목록 화면이 초안을 만드는 중·결과 확인 중·실패한 준비 건을 표시할 때 읽음. 각 작업의 `seen`은 끝난 결과를 확인했는지 |
