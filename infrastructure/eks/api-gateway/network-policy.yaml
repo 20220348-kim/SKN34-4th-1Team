@@ -28,6 +28,12 @@ spec:
       ports: [{protocol: TCP, port: 8000}]
     - to:
         - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: govbiz-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: langfuse-web}
+      ports: [{protocol: TCP, port: 3000}]
+    - to:
+        - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: argocd}
           podSelector:
             matchLabels: {app.kubernetes.io/name: argocd-server}

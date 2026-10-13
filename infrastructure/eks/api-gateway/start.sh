@@ -19,6 +19,17 @@ if [ -n "${GOVBIZ_ARGO_PROXY_SECRET:-}" ]; then
 else
   printf 'location = /argocd { return 403; }\nlocation /argocd/ { return 403; }\n' > /tmp/argocd.conf
 fi
+# Langfuse has its own origin credential; an absent secret keeps this route
+# closed without affecting the API or Argo dashboard.
+if [ -n "${GOVBIZ_LANGFUSE_PROXY_SECRET:-}" ]; then
+  if [ "${#GOVBIZ_LANGFUSE_PROXY_SECRET}" -ne 64 ] || ! printf '%s' "$GOVBIZ_LANGFUSE_PROXY_SECRET" | grep -Eq '^[a-f0-9]{64}$'; then
+    echo 'GOVBIZ_LANGFUSE_PROXY_SECRET must be 64 lowercase hexadecimal characters' >&2
+    exit 1
+  fi
+  envsubst '${GOVBIZ_LANGFUSE_PROXY_SECRET}' < /etc/govbiz/langfuse.conf.template > /tmp/langfuse.conf
+else
+  printf 'location = /_langfuse { return 403; }\nlocation ^~ /_langfuse/ { return 403; }\n' > /tmp/langfuse.conf
+fi
 # Read the Pod DNS address rather than carrying Docker's resolver into EKS.
 GOVBIZ_DNS_RESOLVER=$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf)
 export GOVBIZ_DNS_RESOLVER

@@ -104,6 +104,7 @@ jobs:
           python -m pip install cfn-lint==1.46.0
           AWS_EC2_METADATA_DISABLED=true cfn-lint ../eks/release-stack.yaml --regions ap-southeast-2
           AWS_EC2_METADATA_DISABLED=true cfn-lint ../eks/api-cloudfront.yaml --regions ap-southeast-2
+          AWS_EC2_METADATA_DISABLED=true cfn-lint ../eks/langfuse-cloudfront.yaml --regions ap-southeast-2
           AWS_EC2_METADATA_DISABLED=true cfn-lint ../eks/autoscaling/node-pool.yaml --regions ap-southeast-2
       - name: Set up Node.js for offline Langfuse authentication probe tests
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2

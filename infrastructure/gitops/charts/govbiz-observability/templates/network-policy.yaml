@@ -16,6 +16,10 @@ spec:
   ingress:
     - from:
         - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: govbiz-msa}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: api-gateway}
+        - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: govbiz-evaluation}
           podSelector:
             matchLabels: {app.kubernetes.io/name: evaluation-runner}

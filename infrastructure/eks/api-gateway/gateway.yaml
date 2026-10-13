@@ -50,6 +50,9 @@ spec:
             - name: GOVBIZ_ARGO_PROXY_SECRET
               valueFrom:
                 secretKeyRef: {name: argocd-dashboard-proxy, key: origin-secret, optional: true}
+            - name: GOVBIZ_LANGFUSE_PROXY_SECRET
+              valueFrom:
+                secretKeyRef: {name: langfuse-dashboard-proxy, key: origin-secret, optional: true}
           ports: [{name: http, containerPort: 8080}]
           resources:
             requests: {cpu: 25m, memory: 32Mi}
