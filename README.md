@@ -301,8 +301,6 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 그림에서 한 상자에 묶인 서비스도 각각 별도 Pod로 실행됩니다. Ops는 API인 `ops-service`와 동기화 작업인 `ops-sync` 두 컨테이너를 같은 Pod에서 실행합니다. 서비스끼리 주고받는 요청은 [5.1 서비스 연결](#51-서비스-연결)에서 확인할 수 있습니다.
 
-EKS에서는 Core·AI를 두 노드 풀에 배치할 수 있으며, 같은 서비스끼리는 서로 다른 Node를 사용합니다. Catalog·Ops는 각각 업무 DB와 같은 application 노드에 배치됩니다. 평가·관측 서비스는 observability에 배치되며, 서로 다른 Namespace를 유지합니다. Core·AI 각각 최소 2개·최대 3개와 Gateway 최소 1개·최대 3개는 HPA의 정상 운영 범위이고, 다른 업무·평가·저장소는 단일 실행입니다.
-
 **Argo CD 자체도 Pod로 실행**합니다. EKS는 `argocd` Namespace에 속한 Core 4개와 대시보드 1개, 총 Pod 5개를 observability Node에 배치합니다. `application-controller`는 `StatefulSet → Pod`, `repo-server`·`applicationset-controller`·Redis·`argocd-server`는 각각 `Deployment → ReplicaSet → Pod`로 관리합니다. 대시보드는 CloudFront `/argocd/`의 관리자 IPv4 제한과 `admin` 인증을 거쳐 접속합니다. 기존 Gateway가 전용 origin 비밀값을 검사한 뒤 ClusterIP `8080`의 서버 인증서를 검증해 HTTPS로 연결합니다. 로컬 kind는 상시 웹 서버 없는 Core Pod 4개를 유지합니다. Argo는 Kubernetes API 권한으로 다른 Namespace의 업무·평가 앱을 배포하며, 사용자 API 요청은 Argo를 거치지 않습니다.
 
 **Ops API와 MySQL의 상세 관계**
