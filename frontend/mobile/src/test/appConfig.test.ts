@@ -31,18 +31,24 @@ test('local development and CI export can load without an Expo project', () => {
   expect(config.extra?.eas.projectId).toBeUndefined()
 })
 
-test('the selected first icon is packaged as a square opaque PNG for native launchers', () => {
+test('native launchers use an opaque default icon and a separate transparent adaptive foreground', () => {
   const config = readConfig()
   expect(config.icon).toBe('./assets/icon.png')
-  expect(config.android?.adaptiveIcon).toEqual({ foregroundImage: config.icon, backgroundColor: '#E7F6ED' })
-  expect(config.android?.versionCode).toBe(2)
+  expect(config.android?.adaptiveIcon).toEqual({ foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#E7F6ED' })
+  expect(config.android?.versionCode).toBe(3)
   const fs = jest.requireActual<{ readFileSync(path: string): Uint8Array }>('node:fs')
-  const png = fs.readFileSync(config.icon!)
-  expect(Array.from(png.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
-  const header = new DataView(png.buffer, png.byteOffset, png.byteLength)
-  expect(header.getUint32(16)).toBe(header.getUint32(20))
-  expect(header.getUint32(16)).toBeGreaterThanOrEqual(1024)
-  expect(png[25]).toBe(2)
+  const assets = [
+    { path: config.icon!, colorType: 2 },
+    { path: config.android!.adaptiveIcon!.foregroundImage!, colorType: 6 },
+  ]
+  for (const asset of assets) {
+    const png = fs.readFileSync(asset.path)
+    expect(Array.from(png.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    const header = new DataView(png.buffer, png.byteOffset, png.byteLength)
+    expect(header.getUint32(16)).toBe(header.getUint32(20))
+    expect(header.getUint32(16)).toBeGreaterThanOrEqual(1024)
+    expect(png[25]).toBe(asset.colorType)
+  }
 })
 
 describe('presentation APK configuration', () => {

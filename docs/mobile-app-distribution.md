@@ -25,16 +25,19 @@ Expo 서버에 업로드해 빌드하는 외부 빌드 서비스다. Firebase �
 |---|---|
 | [eas.json](../frontend/mobile/eas.json) | `preview` 환경, 개발 클라이언트 없는 internal APK, Node 24.18.0·pnpm 11.22.0 |
 | [app.config.ts](../frontend/mobile/app.config.ts) | 이름·패키지·scheme·버전·아이콘·Expo 프로젝트·선택적 FCM 설정, preview 입력 검증 |
-| [icon.png](../frontend/mobile/assets/icon.png) | 최초 선택한 G 모노그램 원본, 기본 아이콘과 Android adaptive icon |
+| [icon.png](../frontend/mobile/assets/icon.png) | 최초 선택한 G 모노그램 원본, 기본 아이콘 |
+| [adaptive-icon.png](../frontend/mobile/assets/adaptive-icon.png) | G를 줄이고 투명 여백을 늘린 Android adaptive icon 전경 |
 | [.env.example](../frontend/mobile/.env.example) | 기존 로컬 개발 환경변수 목록 |
 | [.env.preview.example](../frontend/mobile/.env.preview.example) | 사용자가 준비해 EAS `preview`에 등록할 배포 환경변수 목록 |
 | [.gitignore](../frontend/mobile/.gitignore) | 실제 환경파일·서명키·Firebase 인증·APK 제외 |
 | [루트 .easignore](../.easignore) | 기존 제외 규칙과 모바일 생성·인증파일 제외 유지, 다른 서비스·자료·작업용 체크아웃 업로드 제외 |
 
-현재 설정은 `version=0.1.0`, `android.versionCode=2`, 패키지 `ai.govbiz.mobile`, scheme `govbiz`다.
-기존 QA APK의 versionCode 1에서 업데이트할 수 있도록 2로 올렸다. 아이콘은 최초 선택한 G 모노그램
-원본을 `frontend/mobile/assets/icon.png`에 보관하고 `icon`과 `android.adaptiveIcon.foregroundImage`에 연결했다.
-Android adaptive icon의 배경색은 `#E7F6ED`다. 실제 런처 표시와 기존 APK 업데이트는 새 빌드에서 확인한다.
+현재 설정은 `version=0.1.0`, `android.versionCode=3`, 패키지 `ai.govbiz.mobile`, scheme `govbiz`다.
+기존 versionCode 2 APK에서 업데이트할 수 있도록 3으로 올렸다. 기본 아이콘은 최초 선택한 G 모노그램
+원본 `frontend/mobile/assets/icon.png`를 사용한다. Android 전경은 중앙 G를 줄이고 투명 여백을 늘린
+`frontend/mobile/assets/adaptive-icon.png`를 `android.adaptiveIcon.foregroundImage`에 연결했다.
+배경색은 `#E7F6ED`다. 아이콘 변경은 새 APK 빌드·설치 후 실제 런처에서 확인하며, JavaScript
+업데이트만으로 적용되지 않는다.
 
 ## 사용자가 먼저 준비할 정보
 
