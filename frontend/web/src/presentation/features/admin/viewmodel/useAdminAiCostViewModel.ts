@@ -272,7 +272,8 @@ export function useAdminAiCostViewModel(useCases: Partial<UseCases> = {}, now: (
       tokens: tokens(group.totals),
       cost: group.totals.unpricedCalls === group.totals.calls ? '가격 없음' : formatAiCostUsd(group.totals.estimatedUsd, rate),
     })),
-    days: (summary?.days ?? []).filter((day) => day.calls > 0 || day.actualUsd !== null).map((day) => ({
+    days: (summary?.days ?? []).filter((day) => day.calls > 0 || day.actualUsd !== null)
+      .sort((left, right) => right.date.localeCompare(left.date)).map((day) => ({
       date: day.date,
       calls: `${day.calls.toLocaleString('ko-KR')}회`,
       estimated: formatAiCostUsd(day.estimatedUsd),
