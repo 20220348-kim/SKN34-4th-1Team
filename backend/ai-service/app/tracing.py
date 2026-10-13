@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 PROMPT_HASH = sha256(SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode()).hexdigest()
 SPAN_NAMES = {
     "assistant.agent",
+    "assistant.model",
     "assistant.classify",
     "assistant.resume",
     "assistant.plan",
@@ -136,6 +137,7 @@ class LLMTracing:
             yield None
             return
         try:
+            model_call = kwargs.get("as_type") in {"generation", "embedding"}
             context = {"trace_id": trace_id} if trace_id else None
             if context is not None and parent_span_id is not None:
                 context["parent_span_id"] = parent_span_id
@@ -145,7 +147,7 @@ class LLMTracing:
                 metadata=({"prompt_sha256": PROMPT_HASH} if name in {
                     "evidence.answer", "evidence.model", "evidence.validate_response", "evidence.validate_selection",
                 } else {})
-                | (metadata or {}),
+                | (metadata or {}) | {"record_kind": "model_call" if model_call else "processing"},
                 **kwargs,
             )
             observation = manager.__enter__()
@@ -175,6 +177,26 @@ class LLMTracing:
                 manager.__exit__(None, None, None)
             except Exception:
                 logger.error("evidence_trace_end_failed")
+
+    def start_generation(self, name: str, *, model: str | None, metadata: dict):
+        """Callback 사이에서 current context를 바꾸지 않고 실제 모델 호출 하나를 시작한다."""
+        if self.client is None or self._closed:
+            return None
+        try:
+            return self.client.start_observation(
+                name=name, as_type="generation", model=model,
+                metadata=metadata | {"record_kind": "model_call", "usage_reported": False},
+            )
+        except Exception:
+            logger.error("model_trace_start_failed")
+            return None
+
+    def end_generation(self, observation) -> None:
+        if observation is not None:
+            try:
+                observation.end()
+            except Exception:
+                logger.error("model_trace_end_failed")
 
     def update(self, observation, **kwargs) -> None:
         if observation is not None:

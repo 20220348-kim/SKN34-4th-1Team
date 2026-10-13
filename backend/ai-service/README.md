@@ -306,9 +306,20 @@ assistant.agent
 └─ assistant.finalize
 ```
 
-모델을 호출하는 노드는 설정된 모델 이름·프롬프트 SHA-256을 기록합니다. 루트는 계약 버전과
+위 노드는 일반 처리 기록(`SPAN`, `record_kind=processing`)입니다. 모델을 쓰는 노드에는
+`configured_model`·프롬프트 SHA-256을 남기고, 실제 채팅 모델 호출마다 그 노드 아래에
+`assistant.model`(`GENERATION`, `record_kind=model_call`)을 하나씩 기록합니다.
+병렬 `assistant.saved.judge` 호출은 각각 분리하며, `map` 자체를 모델 호출로 세지 않습니다.
+기존 검색·근거 답변의 생성 기록도 `GENERATION`, 임베딩 호출은 `EMBEDDING`으로 구분합니다.
+
+Langfuse에서 **모델 호출 횟수·토큰·비용**을 볼 때는 관측 유형을 `GENERATION`·`EMBEDDING`으로
+필터하고, **처리 단계**를 볼 때는 `SPAN`을 선택합니다. 전체 이벤트를 모델별로 묶은 차트의
+`n/a`에는 모델 없는 일반 처리 기록이 포함되므로 그 건수를 유료 호출 횟수로 해석하지 않습니다.
+이전 기록은 소급해서 바뀌지 않습니다. 모델명·사용량이 누락된 모델 호출은 별도 점검 대상입니다.
+
+루트는 계약 버전과
 허용 문서 메타데이터·청크 해시 목록의 `document_manifest_sha256`, 문서 수를 남깁니다.
-질문·답변·원문·도움말·문서 식별자·계정·도구 인자와 결과·토큰·외부 예외 원문은 전송하지 않습니다.
+질문·답변·원문·도움말·문서 식별자·계정·도구 인자와 결과·인증 토큰·외부 예외 원문은 전송하지 않습니다.
 문서 해시는 검토된 평가셋이나 사람 정답 버전을 뜻하지 않습니다.
 
 예외가 전파되면 해당 단계에 `ERROR`와 `failed`·`timeout`·`cancelled`를 기록합니다. 기존 정책으로 처리된
@@ -319,6 +330,9 @@ assistant.agent
 루트의 `usage_input_tokens`, `usage_output_tokens`, `usage_observed_*`, `usage_unknown_calls`,
 `usage_complete`는 위 요청별 사용량 집계기를 사용합니다. 미확정 합계는 숫자 0으로 채우지 않으며,
 일부 값만 확인된 실행은 `usage_complete=false`로 식별합니다. 추적 전송 실패로 업무·모델을 재실행하지 않습니다.
+각 `assistant.model`에도 제공자가 반환한 입력·출력 토큰 수와 `usage_reported`를 남깁니다.
+실패·취소된 호출의 사용량이 없으면 0으로 채우지 않으며, 응답 검증 실패라도 받은 사용량은 보존합니다.
+Langfuse의 토큰 기반 비용은 추정치이며 실제 청구액 확인은 제공자 비용 기록과 대조해야 합니다.
 
 무료 검증은 `tests/assistant_agent/test_tracing.py`에서 실제 LangGraph와 메모리 exporter로 수행합니다.
 기존 LLMOps `smoke.py`에도 정상·map 일부 실패·시간 초과의 Langfuse 저장·재조회 검사를 추가했습니다.

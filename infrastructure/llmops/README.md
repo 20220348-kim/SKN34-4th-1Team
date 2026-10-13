@@ -814,10 +814,11 @@ Langfuse의 `core-search-smoke` 환경에서 다음 trace ID로 확인할 수 �
 부모 연결·경고·오류·미확정 사용량·본문 미수집 기준은
 [AI Service 안내](../../backend/ai-service/README.md#도우미-단계별-langfuse-추적)에 정리했습니다.
 
-`assistant_trace_smoke.py`는 무료 대역 모델·도구·검색으로 정상과 map 일부 실패를 각 10개 관측,
-시간 초과를 3개 관측으로 생성합니다. 기존 `smoke.py`가 같은 Langfuse client 생애 안에서 근거 답변·검색과
+`assistant_trace_smoke.py`는 무료 대역 모델·도구·검색으로 정상과 map 일부 실패를 각 13개 관측,
+시간 초과를 5개 관측으로 생성합니다. 실제 모델 호출마다 `GENERATION`을 별도로 기록하며 일반 단계는 `SPAN`으로 유지합니다.
+기존 `smoke.py`가 같은 Langfuse client 생애 안에서 근거 답변·검색과
 함께 저장·재조회합니다. 상세 근거 RAG의 캐시·실패와 답변 검증 단계를 추가한 현재 `smoke.py`는
-LLMOps CI의 기존 필수 작업에서 총 10개 trace·71개 관측을 검증합니다.
+LLMOps CI의 기존 필수 작업에서 총 10개 trace·79개 관측을 검증합니다.
 모델 호출 수·미확정 사용량을 잘못 기록하거나 병렬 판단의 부모가 끊기면 검사에 실패합니다.
 실제 Core 검색 검사의 별도 네 trace·63개 관측도 유지합니다.
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections import Counter
 from dataclasses import replace
 from hashlib import sha256
 from uuid import uuid4
@@ -65,6 +66,17 @@ def named(spans, name):
     return [span for span in spans if span.name == name]
 
 
+def model_calls(spans):
+    calls = named(spans, "assistant.model")
+    for span in spans:
+        is_model = span.name == "assistant.model"
+        assert span.attributes["langfuse.observation.type"] == ("generation" if is_model else "span")
+        assert attribute(span, "record_kind") == ("model_call" if is_model else "processing")
+        if not is_model:
+            assert "langfuse.observation.model.name" not in span.attributes
+    return calls
+
+
 def assert_private(spans, request):
     exported = json.dumps([span.to_json() for span in spans], ensure_ascii=False)
     for private in (
@@ -110,8 +122,15 @@ async def test_tool_flow_and_validation_retry_keep_parent_links_and_usage(
     assert attribute(tool, "tool") == "get_my_company_profile"
     for span in spans:
         assert span.context.trace_id == root.context.trace_id
-        if span.name not in {"assistant.agent", "assistant.tool"}:
+        if span.name not in {"assistant.agent", "assistant.tool", "assistant.model"}:
             assert span.parent.span_id == root.context.span_id
+    generations = model_calls(spans)
+    assert len(generations) == 5
+    by_id = {span.context.span_id: span for span in spans}
+    assert Counter(by_id[span.parent.span_id].name for span in generations) == {
+        "assistant.classify": 1, "assistant.plan": 2, "assistant.answer": 2,
+    }
+    assert sum(json.loads(span.attributes["langfuse.observation.usage_details"])["input"] for span in generations) == 750
     verifications = named(spans, "assistant.verify")
     assert [attribute(span, "validation_passed") for span in verifications] == [False, True]
     assert verifications[0].attributes["langfuse.observation.level"] == "WARNING"
@@ -135,7 +154,7 @@ async def test_saved_programs_parallel_map_has_nested_spans_and_versions(trace_e
     (saved,) = named(spans, "assistant.saved_programs")
     (mapping,) = named(spans, "assistant.saved.map")
     (retrieval,) = named(spans, "assistant.saved.retrieve")
-    assert len(spans) == 10
+    assert len(spans) == 13
     assert saved.parent.span_id == root.context.span_id
     for name in ("retrieve", "map", "reduce", "verify"):
         assert named(spans, "assistant.saved." + name)[0].parent.span_id == saved.context.span_id
@@ -143,7 +162,12 @@ async def test_saved_programs_parallel_map_has_nested_spans_and_versions(trace_e
     assert len(judges) == 2
     assert all(span.parent.span_id == mapping.context.span_id for span in judges)
     assert attribute(mapping, "prompt_sha256") == sha256(MAP_INSTRUCTIONS.encode()).hexdigest()
-    assert attribute(mapping, "model") == "ScriptedChatModel"
+    assert attribute(mapping, "configured_model") == "ScriptedChatModel"
+    generations = model_calls(spans)
+    assert len(generations) == 3
+    assert {span.parent.span_id for span in generations} == {
+        *(span.context.span_id for span in judges), named(spans, "assistant.saved.reduce")[0].context.span_id,
+    }
     assert attribute(retrieval, "retrieved_documents") == 2
     assert attribute(retrieval, "retrieved_chunks") == 3
     assert attribute(root, "document_count") == 3
@@ -254,6 +278,11 @@ async def test_failed_requests_keep_usage_and_sanitized_outcomes(
     assert attribute(root, "usage_complete") is False
     assert attribute(root, "usage_input_tokens") is None
     assert attribute(root, "usage_observed_input_tokens") == 200
+    generations = model_calls(spans)
+    assert len(generations) == 2
+    (failed,) = [span for span in generations if span.attributes.get("langfuse.observation.level") == "ERROR"]
+    assert attribute(failed, "usage_reported") is False
+    assert json.loads(failed.attributes.get("langfuse.observation.usage_details", "{}")) == {}
     assert_private(spans, request_data)
 
 
@@ -276,10 +305,13 @@ async def test_concurrent_requests_have_separate_roots_and_usage(trace_environme
         assert {span.name for span in children} == {"assistant.classify", "assistant.finalize"}
         assert attribute(root, "model_calls") == 1
         assert attribute(root, "usage_input_tokens") == 200
+        (generation,) = [span for span in model_calls(spans) if span.context.trace_id == root.context.trace_id]
+        (classify,) = [span for span in children if span.name == "assistant.classify"]
+        assert generation.parent.span_id == classify.context.span_id
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("method", ["start_as_current_observation", "update"])
+@pytest.mark.parametrize("method", ["start_as_current_observation", "start_observation", "update", "generation_update", "end"])
 async def test_telemetry_failure_never_repeats_model_calls(
     trace_environment, request_data, empty_classification, monkeypatch, caplog, method
 ):
@@ -290,10 +322,11 @@ async def test_telemetry_failure_never_repeats_model_calls(
     def broken(*args, **kwargs):
         raise RuntimeError("private instrumentation detail")
 
-    if method == "update":
-        from langfuse._client.span import LangfuseSpan
+    if method in {"update", "generation_update", "end"}:
+        from langfuse._client.span import LangfuseGeneration, LangfuseSpan
 
-        monkeypatch.setattr(LangfuseSpan, "update", broken)
+        monkeypatch.setattr(LangfuseSpan if method == "update" else LangfuseGeneration,
+                            "update" if method == "generation_update" else method, broken)
     else:
         monkeypatch.setattr(tracing.client, method, broken)
     try:
@@ -347,6 +380,7 @@ def test_http_bootstrap_traces_actual_graph_and_closes_exporter(
         "assistant.agent",
         "assistant.classify",
         "assistant.finalize",
+        "assistant.model",
     }
     spans = exporter.get_finished_spans()
     (root,) = named(spans, "assistant.agent")
@@ -356,7 +390,11 @@ def test_http_bootstrap_traces_actual_graph_and_closes_exporter(
     else:
         assert root.context.trace_id != int("1" * 32, 16)
     assert all(span.context.trace_id == root.context.trace_id for span in spans)
-    assert all(span.parent.span_id == root.context.span_id for span in spans if span != root)
+    assert all(span.parent.span_id == root.context.span_id
+               for span in spans if span != root and span.name != "assistant.model")
+    (generation,) = model_calls(spans)
+    (classify,) = named(spans, "assistant.classify")
+    assert generation.parent.span_id == classify.context.span_id
     assert "private-baggage" not in assert_private(spans, request_data)
 
 

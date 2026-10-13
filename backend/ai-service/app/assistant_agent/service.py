@@ -36,7 +36,7 @@ class AssistantAgentService:
         started = perf_counter()
         outcome = "failed"
         state: dict = {}
-        usage = AssistantModelUsage()
+        usage = AssistantModelUsage(self._tracing)
         trace_id = trace_id or uuid4().hex
         documents = request.saved_program_documents or []
         metadata = {
@@ -77,6 +77,7 @@ class AssistantAgentService:
             except (ValidationError, ValueError, Exception) as error:
                 raise AssistantAgentError() from error
             finally:
+                usage.finish(outcome)
                 # 시간·호출 수·토큰만 남긴다. 질문·답·도구 본문은 남기지 않는다.
                 results = state.get("tool_results", []) if isinstance(state, dict) else []
                 classification = state.get("classification") if isinstance(state, dict) else None

@@ -73,7 +73,7 @@ async def assistant_trace_examples(tracing):
             {
                 "trace_id": trace_id,
                 "assistant_scenario": scenario,
-                "observation_count": 3 if scenario == "timeout" else 10,
+                "observation_count": 5 if scenario == "timeout" else 13,
             }
         )
     return records
@@ -94,16 +94,25 @@ def verify_assistant_observations(observations, record):
     expected = [("assistant.agent", None)]
     if scenario == "timeout":
         expected += [("assistant.classify", "assistant.agent"), ("assistant.plan", "assistant.agent")]
+        expected += [("assistant.model", "assistant." + name) for name in ("classify", "plan")]
     else:
         expected += [("assistant." + name, "assistant.agent") for name in ("resume", "saved_programs", "finalize")]
         expected += [
             ("assistant.saved." + name, "assistant.saved_programs") for name in ("retrieve", "map", "reduce", "verify")
         ]
         expected += [("assistant.saved.judge", "assistant.saved.map")] * 2
+        expected += [("assistant.model", "assistant.saved.judge")] * 2
+        expected += [("assistant.model", "assistant.saved.reduce")]
     assert Counter(edges) == Counter(expected)
     metadata = root["metadata"]
     assert metadata["outcome"] == ("timeout" if scenario == "timeout" else "completed")
     assert metadata["model_calls"] == (2 if scenario == "timeout" else 3)
+    generations = [item for item in observations if item["type"] == "GENERATION"]
+    assert len(generations) == metadata["model_calls"]
+    assert all(item["name"] == "assistant.model" and item["metadata"]["record_kind"] == "model_call" for item in generations)
+    assert sum(not item["metadata"]["usage_reported"] for item in generations) == (0 if scenario == "saved" else 1)
+    assert all(item["type"] == "SPAN" and item["metadata"]["record_kind"] == "processing"
+               for item in observations if item["name"] != "assistant.model")
     assert metadata["usage_unknown_calls"] == (0 if scenario == "saved" else 1)
     assert metadata["usage_complete"] is (scenario == "saved")
     assert metadata["usage_observed_input_tokens"] == {"saved": 600, "map-failure": 400, "timeout": 200}[scenario]
