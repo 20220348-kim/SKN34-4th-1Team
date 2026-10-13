@@ -207,6 +207,31 @@ Argo 실패·시간 초과는 배포 성공이 아닙니다. workflow가 끝나�
 성공해 접수를 복구한 태그를 다시 실행하려면 새 workflow 실행으로 새 태그를 발행합니다.
 직접 `release.py rollout`이나 기존 `deploy.py`로 우회하지 않습니다.
 
+### 배포 확인 오류 읽기
+
+`gitops.py`는 실패하면 `eks_gitops_error` JSON 한 줄을 stderr에 남기고 종료 코드 1을 반환합니다.
+`stage`로 실패 위치, `error_type`으로 예외 종류, `code`로 오류 분류를 확인합니다.
+개별 Deployment 조회 실패에는 고정된 서비스 이름인 `resource`도 포함됩니다.
+
+| stage | 확인할 대상 |
+|---|---|
+| `wait.receipt` / `wait.connect` / `wait.settings` | 배포 증거 파일, AWS·kubeconfig 연결, 해당 커밋의 설정 |
+| `wait.initial_ci` / `wait.source` | 시작 시 필수 CI와 대기 중 main 커밋 변경 여부 |
+| `wait.application` / `wait.deployment` | Argo Application 또는 표시된 앱 조회 |
+| `wait.verify` / `wait.timeout` | 실제 revision·hook·이미지·준비 상태 검사 또는 대기 시간 초과 |
+| `wait.final_ci` | Argo 배포 확인 후 마지막 필수 CI 재검사 |
+
+예를 들어 `code=RATE_LIMITED, tool=gh, http_status=403`은 GitHub가 요청 제한을 보고한 경우이며,
+같은 403이어도 요청 제한 문구가 없으면 `ACCESS_DENIED`로 기록합니다. 429는 `RATE_LIMITED`,
+5xx는 `REMOTE_SERVER_ERROR`, 프로세스 시간 초과는 `COMMAND_TIMEOUT`입니다.
+분류할 근거가 없는 명령 실패는 `COMMAND_FAILED`로 남기며 네트워크 장애로 단정하지 않습니다.
+진단 JSON에는 명령 인자·응답 본문·원문 stderr·예외 메시지·환경변수·전체 Application을 넣지 않습니다.
+
+`eks_gitops_checkpoint`의 `stage=wait.argo_verified` 뒤에 `wait.final_ci` 오류가 있다면
+Argo 배포 검사는 통과했지만 최종 CI 검사는 실패한 것입니다. 이 checkpoint만으로 전체 배포 성공을
+판정하지 않습니다. 오류를 자동 재시도하거나 성공으로 바꾸지 않으며 Vercel 전환 차단을 유지합니다.
+이 진단 추가는 과거 로그에서 숨겨진 원인을 소급해 복원하지 않습니다.
+
 ## 검증
 
 Infra CI는 ECR·CI 검증, 실제 Helm·Kustomize 렌더링, 태그 불변성, 관리권·patch 제한,

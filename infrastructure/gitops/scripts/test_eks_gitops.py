@@ -2,11 +2,14 @@
 
 import copy
 import importlib.util
+import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -748,11 +751,205 @@ class EksGitOpsTests(unittest.TestCase):
                 patch.object(gitops, "connect"),
                 patch.object(gitops.release, "check") as check,
             ):
-                with self.assertRaisesRegex(ValueError, "timed out"):
+                with self.assertRaisesRegex(gitops.GitOpsDiagnosticError, "ARGO_SYNC_TIMEOUT"):
                     gitops.wait(self.sha, path, timeout=0)
-                check.side_effect = ValueError("Source superseded")
-                with self.assertRaisesRegex(ValueError, "superseded"):
+                check.side_effect = ValueError("Source superseded; deploy the latest tested main")
+                with self.assertRaisesRegex(gitops.GitOpsDiagnosticError, "SOURCE_SUPERSEDED"):
                     gitops.wait(self.sha, path)
+
+    def wait_cli(self, *, check=None, kube=None, source=None, app=None, timeout=1200):
+        ready_app, record, deployments = self.success()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.dict(os.environ, ENV),
+            patch.object(gitops, "ROOT", self.root),
+            patch.object(gitops, "connect"),
+            patch.object(gitops.release, "check", side_effect=check) as ci,
+            patch.object(gitops.release.gate, "api", side_effect=source,
+                         return_value={"object": {"sha": self.sha}}),
+            patch.object(gitops, "kube", side_effect=kube or (
+                lambda namespace, *args: (app or ready_app) if namespace == "argocd" else deployments[args[1]]
+            )),
+            patch.object(gitops.time, "sleep") as sleep,
+            redirect_stdout(stdout), redirect_stderr(stderr),
+        ):
+            path = Path(temp) / "receipt.json"
+            path.write_text(json.dumps(record))
+            with patch.object(gitops, "main", side_effect=lambda: gitops.wait(self.sha, path, timeout)):
+                result = gitops.cli()
+            sleep.assert_not_called()  # Reporting must not retry or hide an error.
+        return result, stdout.getvalue(), stderr.getvalue(), ci.call_count
+
+    def test_final_ci_rate_limit_is_distinct_from_successful_argo_sync(self):
+        secret = "private-credential-must-not-appear"
+        error = subprocess.CalledProcessError(
+            1, ["gh", "api", "private-url?token=" + secret],
+            output=secret, stderr="gh: API rate limit exceeded " + secret + " (HTTP 403)",
+        )
+        result, stdout, stderr, calls = self.wait_cli(check=[None, error])
+        self.assertEqual(result, 1)
+        self.assertEqual(calls, 2)
+        self.assertEqual(json.loads(stdout), {
+            "event": "eks_gitops_checkpoint", "stage": "wait.argo_verified",
+        })
+        self.assertEqual(json.loads(stderr), {
+            "event": "eks_gitops_error", "stage": "wait.final_ci",
+            "error_type": "CalledProcessError", "code": "RATE_LIMITED",
+            "tool": "gh", "exit_code": 1, "http_status": 403,
+        })
+        self.assertNotIn(secret, stdout + stderr)
+        self.assertNotIn("all six Deployments succeeded", stdout)
+
+    def test_github_query_and_changed_main_stop_before_success(self):
+        for error, code, error_type in (
+            (subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: unavailable (HTTP 503)"),
+             "REMOTE_SERVER_ERROR", "CalledProcessError"),
+            (lambda _: {"object": {"sha": "c" * 40}}, "SOURCE_SUPERSEDED", "ValueError"),
+        ):
+            with self.subTest(code=code):
+                result, stdout, stderr, calls = self.wait_cli(source=error)
+                diagnostic = json.loads(stderr)
+                self.assertEqual((result, calls, stdout), (1, 1, ""))
+                self.assertEqual(diagnostic["stage"], "wait.source")
+                self.assertEqual(diagnostic["code"], code)
+                self.assertEqual(diagnostic["error_type"], error_type)
+
+    def test_kubernetes_errors_identify_the_resource_without_command_output(self):
+        app, _, deployments = self.success()
+        secret = "private-runtime-value"
+        for target, error, stage, code in (
+            ("govbiz-eks", subprocess.CalledProcessError(
+                1, ["kubectl", "get", "application", secret], output=secret,
+                stderr="Error from server (Forbidden): " + secret,
+            ), "wait.application", "ACCESS_DENIED"),
+            ("core-service", subprocess.TimeoutExpired(
+                ["kubectl", "get", "deployment", secret], 20, output=secret, stderr=secret,
+            ), "wait.deployment", "COMMAND_TIMEOUT"),
+        ):
+            def kube(namespace, *args):
+                if args[1] == target:
+                    raise error
+                return app if namespace == "argocd" else deployments[args[1]]
+
+            with self.subTest(resource=target):
+                result, stdout, stderr, calls = self.wait_cli(kube=kube)
+                diagnostic = json.loads(stderr)
+                self.assertEqual((result, calls, stdout), (1, 1, ""))
+                self.assertEqual(diagnostic["stage"], stage)
+                self.assertEqual(diagnostic["resource"], target)
+                self.assertEqual(diagnostic["code"], code)
+                self.assertNotIn(secret, stderr)
+
+    def test_argo_failure_and_timeout_remain_failed_and_skip_final_ci(self):
+        app, _, _ = self.success()
+        app["status"]["operationState"]["phase"] = "Failed"
+        app["status"]["operationState"]["message"] = "secret-in-hook-error"
+        for options, stage, code in (
+            ({"app": app}, "wait.verify", "ARGO_SYNC_FAILED"),
+            ({"timeout": 0}, "wait.timeout", "ARGO_SYNC_TIMEOUT"),
+        ):
+            with self.subTest(code=code):
+                result, stdout, stderr, calls = self.wait_cli(**options)
+                diagnostic = json.loads(stderr)
+                self.assertEqual((result, calls, stdout), (1, 1, ""))
+                self.assertEqual((diagnostic["stage"], diagnostic["code"]), (stage, code))
+                self.assertNotIn("secret-in-hook-error", stderr)
+
+    def test_success_still_requires_final_ci_and_reports_a_checkpoint(self):
+        result, stdout, stderr, calls = self.wait_cli()
+        self.assertEqual((result, stderr, calls), (0, "", 2))
+        self.assertEqual(json.loads(stdout.splitlines()[0])["stage"], "wait.argo_verified")
+        self.assertIn("all six Deployments succeeded", stdout)
+
+    def test_ci_policy_rejection_at_either_gate_cannot_report_success(self):
+        error = ValueError("Required CI is not ready: ci_run_changed:infra-ci.yml")
+        for effects, stage in (([error], "wait.initial_ci"), ([None, error], "wait.final_ci")):
+            with self.subTest(stage=stage):
+                result, stdout, stderr, calls = self.wait_cli(check=effects)
+                diagnostic = json.loads(stderr)
+                self.assertEqual((result, calls), (1, len(effects)))
+                self.assertEqual(diagnostic["stage"], stage)
+                self.assertEqual(diagnostic["code"], "REQUIRED_CI_NOT_READY")
+                self.assertEqual(diagnostic["reason"], "ci_run_changed")
+                self.assertEqual(diagnostic["workflow"], "infra-ci.yml")
+                self.assertNotIn("all six Deployments succeeded", stdout)
+
+
+class EksGitOpsDiagnosticRedactionTests(unittest.TestCase):
+    def test_unexpected_failure_outside_a_stage_is_also_redacted(self):
+        stderr = io.StringIO()
+        with patch.object(gitops, "main", side_effect=RuntimeError("private-secret")), redirect_stderr(stderr):
+            self.assertEqual(gitops.cli(), 1)
+        self.assertEqual(json.loads(stderr.getvalue()), {
+            "event": "eks_gitops_error", "stage": "cli",
+            "error_type": "RuntimeError", "code": "UNEXPECTED_ERROR",
+        })
+
+    def test_raw_errors_never_escape_the_cli_and_nested_stages_keep_the_origin(self):
+        secret = "private-value\n::error::injected-message"
+        for error, code in (
+            (ValueError(secret), "VALIDATION_REJECTED"),
+            (KeyError(secret), "MISSING_FIELD"),
+            (TypeError(secret), "INVALID_TYPE"),
+            (RuntimeError(secret), "UNEXPECTED_ERROR"),
+            (PermissionError(13, secret, secret), "OS_ERROR"),
+            (json.JSONDecodeError(secret, secret, 0), "INVALID_JSON"),
+            (yaml.YAMLError(secret), "INVALID_YAML"),
+            (subprocess.CalledProcessError(1, ["kubectl", secret], output=secret, stderr=secret),
+             "COMMAND_FAILED"),
+        ):
+            def fail():
+                with gitops.diagnostic_stage("wait"):
+                    with gitops.diagnostic_stage("wait.settings"):
+                        raise error
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with self.subTest(code=code), patch.object(gitops, "main", side_effect=fail), redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(gitops.cli(), 1)
+            diagnostic = json.loads(stderr.getvalue())
+            self.assertEqual(diagnostic["stage"], "wait.settings")
+            self.assertEqual(diagnostic["code"], code)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertNotIn(secret, stderr.getvalue())
+            self.assertNotIn("injected-message", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_http_status_and_ci_reasons_are_allowlisted(self):
+        for status, code in ((401, "ACCESS_DENIED"), (403, "ACCESS_DENIED"),
+                             (429, "RATE_LIMITED"), (500, "REMOTE_SERVER_ERROR"),
+                             (404, "HTTP_ERROR")):
+            error = subprocess.CalledProcessError(
+                1, ["gh", "api", "private"], stderr=f"gh: private details (HTTP {status})".encode(),
+            )
+            diagnostic = gitops.failure_diagnostic("wait.final_ci", error)
+            self.assertEqual((diagnostic["http_status"], diagnostic["code"]), (status, code))
+            self.assertNotIn("private", json.dumps(diagnostic))
+        for reason, visible in (("ci_run_changed:infra-ci.yml", True),
+                                ("private:infra-ci.yml", False),
+                                ("ci_run_changed:private-secret", False)):
+            diagnostic = gitops.failure_diagnostic(
+                "wait.final_ci", ValueError("Required CI is not ready: " + reason),
+            )
+            self.assertEqual(diagnostic["code"], "REQUIRED_CI_NOT_READY")
+            self.assertEqual("workflow" in diagnostic, visible)
+            self.assertNotIn("private", json.dumps(diagnostic))
+
+    def test_real_cli_rejects_invalid_private_receipt_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "private-receipt.json"
+            path.write_text("private-secret-invalid-json")
+            result = subprocess.run(
+                [sys.executable, "-B", str(ROOT / "infrastructure/eks/gitops.py"),
+                 "wait", "--sha", "a" * 40, "--receipt", str(path)],
+                text=True, capture_output=True, timeout=10,
+            )
+        self.assertEqual(result.returncode, 1)
+        diagnostic = json.loads(result.stderr)
+        self.assertEqual((diagnostic["stage"], diagnostic["code"]), ("wait.receipt", "INVALID_JSON"))
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("private-secret", result.stderr)
+        self.assertNotIn(str(path), result.stderr)
 
 
 class EksArgoDashboardTests(unittest.TestCase):
