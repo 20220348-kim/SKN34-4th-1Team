@@ -9,6 +9,8 @@ import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocu
 import ai.govbiz.core.applicationpreparation.domain.*
 import ai.govbiz.core.applicationpreparation.repository.*
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationPreparationDetailResult
+import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException
 import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoAttachmentClient
 import ai.govbiz.core.supportprogram.client.cntradenotice.CnTradeNoticeAttachmentClient
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
@@ -93,6 +95,52 @@ class ApplicationDocumentGenerationJobServiceTest {
             AiDocumentGenerationPayload("application-document-mcp-v1", pipeline, hash(source), 2,
                 Base64.getEncoder().encodeToString(output), hash(output), "c".repeat(64), "test-map", "test-engine", emptyMap(),
                 listOf(binding), emptyMap(), emptyMap()))
+    }
+
+    @Test
+    fun disabledWorkerRejectsSubmissionBeforeReservingAJobOrCallingTheDocumentPipeline() {
+        val disabled = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission,
+            PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), jobsEnabled = false)
+        val error = assertThrows(ApplicationDocumentException::class.java) {
+            disabled.submit(owner, job.preparationId, job.requestKey, job.expectedRevision)
+        }
+        assertEquals("APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE", error.code)
+        verify(jobs).findOwnedRequest(owner.id, job.requestKey)
+        verify(jobs, never()).reserve(anyLong(), anyString(), anyLong(), anyLong())
+        verifyNoInteractions(preparations, client, redis, attachments)
+    }
+
+    @Test
+    fun disabledWorkerReturnsAnAlreadyAcceptedRequestWithoutCreatingAnotherJob() {
+        val disabled = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission,
+            PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), jobsEnabled = false)
+        `when`(jobs.findOwnedRequest(owner.id, job.requestKey)).thenReturn(job)
+        assertEquals(job, disabled.submit(owner, job.preparationId, job.requestKey, job.expectedRevision))
+        verify(jobs, never()).reserve(anyLong(), anyString(), anyLong(), anyLong())
+        verifyNoInteractions(preparations, client, redis, attachments)
+    }
+
+    @Test
+    fun disabledWorkerRejectsReusingAnAcceptedKeyForAnotherInputVersion() {
+        val disabled = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission,
+            PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), jobsEnabled = false)
+        `when`(jobs.findOwnedRequest(owner.id, job.requestKey)).thenReturn(job)
+        assertThrows(ApplicationPreparationRunConflictException::class.java) {
+            disabled.submit(owner, job.preparationId, job.requestKey, job.expectedRevision + 1)
+        }
+        verify(jobs, never()).reserve(anyLong(), anyString(), anyLong(), anyLong())
+        verifyNoInteractions(preparations, client, redis, attachments)
+    }
+
+    @Test
+    fun disabledWorkerStillAllowsTheOwnerToReadAnExistingJob() {
+        val disabled = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission,
+            PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), jobsEnabled = false)
+        `when`(jobs.findOwned(owner.id, job.preparationId, job.id)).thenReturn(job)
+        assertEquals(job, disabled.get(owner, job.preparationId, job.id))
+        verify(jobs).findOwned(owner.id, job.preparationId, job.id)
+        verify(jobs, never()).reserve(anyLong(), anyString(), anyLong(), anyLong())
+        verifyNoInteractions(client, redis, attachments)
     }
 
     @Test

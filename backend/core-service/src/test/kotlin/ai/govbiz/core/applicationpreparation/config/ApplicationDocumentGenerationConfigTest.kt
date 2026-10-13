@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.springframework.boot.convert.ApplicationConversionService
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor
 
 class ApplicationDocumentGenerationConfigTest {
     private val runner = ApplicationContextRunner()
@@ -29,6 +30,7 @@ class ApplicationDocumentGenerationConfigTest {
     fun workerUsesItsOwnExecutorEvenWhenAnotherThreadPoolExecutorExists() {
         runner.run {
             assertNull(it.startupFailure)
+            assertTrue(it.getBeansOfType(ScheduledAnnotationBeanPostProcessor::class.java).isNotEmpty())
             val worker = it.getBean(ApplicationDocumentGenerationJobWorker::class.java)
             val executor = ApplicationDocumentGenerationJobWorker::class.java.getDeclaredField("executor").apply { isAccessible = true }.get(worker)
             assertSame(it.getBean("applicationDocumentGenerationExecutor"), executor)

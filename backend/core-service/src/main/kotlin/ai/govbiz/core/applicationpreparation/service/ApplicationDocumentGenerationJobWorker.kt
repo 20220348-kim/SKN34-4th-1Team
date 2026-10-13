@@ -33,18 +33,23 @@ class ApplicationDocumentGenerationJobWorker(
             repository.expireStaleWork(unknownOutcomeTtl)
             for (id in repository.claimable(slots.availablePermits())) {
                 if (!slots.tryAcquire()) break
-                executor.execute {
-                    try {
-                        if (!service.execute(id)) log.info("application_document_generation_deferred jobId={} reason=BUSY", id)
-                    } catch (error: Exception) {
-                        log.error("application_document_generation_unrecorded jobId={}", id, error)
-                    } finally {
-                        slots.release()
+                try {
+                    executor.execute {
+                        try {
+                            if (!service.execute(id)) log.info("application_document_generation_deferred jobId={} reason=BUSY", id)
+                        } catch (error: Exception) {
+                            log.error("application_document_generation_unrecorded jobId={}", id, error)
+                        } finally {
+                            slots.release()
+                        }
                     }
+                } catch (error: Exception) {
+                    slots.release()
+                    throw error
                 }
             }
         } catch (error: Exception) {
-            log.warn("application_document_generation_poll_failed message={}", error.message?.take(300))
+            log.warn("application_document_generation_poll_failed message={}", error.message?.take(300), error)
         }
     }
 }

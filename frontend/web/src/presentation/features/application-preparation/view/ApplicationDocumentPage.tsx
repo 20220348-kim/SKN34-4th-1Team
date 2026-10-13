@@ -167,7 +167,7 @@ function DocumentResults({ id }: { id: number }) {
         const [detail, stored, recent] = await Promise.all([
           useCase.get(id, controller.signal),
           useCase.documents(id, controller.signal),
-          useCase.documentJobs(id, controller.signal).catch(() => [] as ApplicationDocumentGenerationJob[]),
+          useCase.documentJobs(id, controller.signal),
         ])
         if (controller.signal.aborted) return
         if (detail.id !== id) {

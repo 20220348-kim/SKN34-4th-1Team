@@ -204,6 +204,36 @@ it('resumes a job that is already running instead of submitting another paid gen
   expect(repository.documentJob).toHaveBeenCalledWith(12, 77, expect.any(AbortSignal))
 })
 
+it('keeps a failed job-list lookup visible and retries the existing job without submitting a new generation', async () => {
+  vi.useFakeTimers()
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValue([documentFile])
+  repository.documentJobs.mockRejectedValueOnce(new ApplicationPreparationError(503, 'REQUEST_FAILED'))
+    .mockResolvedValue([generationJob({ id: 77, status: 'RUNNING', stage: 'WRITING', fileIds: [], finishedAt: null })])
+  repository.documentJob.mockResolvedValue(generationJob({ id: 77 }))
+  await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
+  expect(screen.getByRole('alert').textContent).toContain('서버에서 신청문서 요청을 처리하지 못했습니다')
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+  expect(repository.documentJob).not.toHaveBeenCalled()
+  expect(screen.queryByRole('status', { name: '문서 생성 진행' })).toBeNull()
+
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '다시 시도' })) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(receiveButton()).toBeTruthy()
+  expect(repository.documentJob).toHaveBeenCalledWith(12, 77, expect.any(AbortSignal))
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+it('shows a disabled generation worker as a service error without starting a polling loop', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockRejectedValueOnce(new ApplicationPreparationError(503, 'APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE'))
+  mount('/app/application-preparations/12/documents?generate=3')
+  expect((await screen.findByRole('alert')).textContent).toContain('문서 생성 작업 처리가 비활성화되어 있습니다')
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
+  expect(repository.documentJob).not.toHaveBeenCalled()
+  expect(screen.queryByRole('status', { name: '문서 생성 진행' })).toBeNull()
+})
+
 it('keeps the previous documents downloadable while a new draft is being made', async () => {
   vi.useFakeTimers()
   const previous = { ...documentFile, id: 70, inputRevision: 2, fileName: '신청서_초안_v2.hwpx' }

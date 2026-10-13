@@ -472,7 +472,23 @@ pnpm --filter @govbiz/mobile ios
 
 `ios/`와 `android/`는 Expo가 생성하며 Git에 넣지 않습니다. 네이티브 설정은 `app.config.ts`와
 Expo config plugin으로 관리합니다. store 등록 전 bundle identifier `ai.govbiz.mobile`과 앱 아이콘,
-서명·개발자 계정은 실제 프로젝트에 맞게 확정해야 합니다. EAS 계정·유료 빌드는 필수로 사용하지 않습니다.
+서명·개발자 계정은 실제 프로젝트에 맞게 확정해야 합니다. 로컬 네이티브 개발에 EAS 계정·유료 빌드는 필수가 아닙니다.
+
+## 발표용 Android APK 배포
+
+`eas.json`의 `preview`는 EAS `preview` 환경을 사용하는 internal APK이며 개발 클라이언트를 포함하지 않습니다.
+`frontend/mobile`에서 `pnpm dlx eas-cli@latest build --platform android --profile preview`로 빌드한 APK를
+Firebase App Distribution 콘솔에 올려 팀원 확인 후 참석자 초대 링크·QR로 제공합니다.
+Expo 프로젝트는 `@seop1026/govbiz`이며 실제 프로젝트 UUID는 환경변수에서 읽습니다.
+Android 패키지는 `ai.govbiz.mobile`, 현재 버전은 `0.1.0`/`versionCode=2`이며 업데이트마다 versionCode를 올립니다.
+기본 아이콘과 Android adaptive icon은 최초 선택한 G 모노그램 원본인 `assets/icon.png`를 사용합니다.
+
+먼저 [.env.preview.example](.env.preview.example)의 실제 API HTTPS origin과 Expo 프로젝트 UUID를 준비해
+EAS 프로젝트의 `preview` 환경에 등록하세요. `.env.local`은 클라우드 빌드에 전달되지 않습니다.
+preview 빌드는 UUID 누락·형식 오류와 잘못된 API/웹 origin을 명시적인 오류로 중단합니다.
+Firebase 배포는 기존 Core·AI·DB를 사용하며 앱 푸시를 제공할 때만 FCM 설정을 추가로 준비합니다.
+준비할 프로젝트 정보·환경변수·서명·설치 확인은 [Android APK 배포 안내](../../docs/mobile-app-distribution.md)를 따릅니다.
+발표용 변경은 작업 브랜치에서 검증하며 실제 APK 배포·실기기 확인·병합은 각각 별도 단계입니다.
 
 ## 인증과 소셜 로그인
 

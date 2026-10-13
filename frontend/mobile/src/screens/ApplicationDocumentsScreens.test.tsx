@@ -470,6 +470,27 @@ test.each(['empty', 'undecided', 'partial'] as const)('the document page allows 
   expect(api.submitDocumentJob).toHaveBeenCalledTimes(1)
 })
 
+test.each([
+  ['APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE', true],
+  ['REQUEST_FAILED', false],
+] as const)('generation rejection %s clears only a confirmed unaccepted request', async (code, rejected) => {
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  const failure = new ApplicationPreparationError(503, code)
+  api.submitDocumentJob.mockRejectedValueOnce(failure)
+  jest.mocked(clearPendingPreparation).mockClear()
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText('초안 만들기'))
+  await screen.findByText(failure.message)
+  expect(api.submitDocumentJob).toHaveBeenCalledTimes(1)
+  if (rejected) {
+    await waitFor(() => expect(clearPendingPreparation).toHaveBeenCalledWith('https://api.example.test', 'first@test.com'))
+    expect(screen.queryByLabelText('같은 생성 요청으로 확인')).toBeNull()
+  } else {
+    expect(await screen.findByLabelText('같은 생성 요청으로 확인')).toBeTruthy()
+    expect(clearPendingPreparation).not.toHaveBeenCalled()
+  }
+})
+
 test('manual-only provided answers keep the explicit server failure instead of offering an original fallback', async () => {
   api.get.mockResolvedValue({ ...documentPreparation, form: { ...documentForm, sections: documentForm.sections.map(section => ({ ...section,
     fields: section.fields.map(field => ({ ...field, required: false, documentWritable: false })),

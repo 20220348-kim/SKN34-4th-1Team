@@ -7,10 +7,12 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
 
 /** 문서 생성 작업은 긴 MCP 호출이라 공고 동기화·발견 scheduler와 스레드를 나누지 않는다. */
 @Configuration(proxyBeanMethods = false)
+@EnableScheduling
 @ConditionalOnProperty(name = ["app.application-document.jobs.enabled"], havingValue = "true", matchIfMissing = true)
 class ApplicationDocumentGenerationConfig {
     @Bean fun applicationDocumentGenerationTaskScheduler() = ThreadPoolTaskScheduler().apply {

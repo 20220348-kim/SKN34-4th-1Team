@@ -43,6 +43,7 @@ class ApplicationDocumentGenerationJobRepository(
         return Reservation(requireNotNull(mapper.find(row.id)).toDomain(), false)
     }
 
+    fun findOwnedRequest(ownerId: Long, key: String) = mapper.findRequest(ownerId, key)?.toDomain()
     fun findOwned(ownerId: Long, preparationId: Long, id: Long) = mapper.findOwned(ownerId, preparationId, id)?.toDomain()
     fun listOwned(ownerId: Long, preparationId: Long) = mapper.listOwned(ownerId, preparationId).map { it.toDomain() }
     fun listRecentOwned(ownerId: Long) = mapper.listRecentOwned(ownerId).map { it.toDomain() }

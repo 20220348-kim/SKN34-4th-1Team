@@ -79,6 +79,21 @@ test('a network failure or unknown endpoint cannot be misrepresented as an absen
   expect(view.getByText('다시 불러오기')).toBeTruthy()
 })
 
+test.each([
+  ['BIZNO_NOT_CONFIGURED', '사업자 정보 조회 서비스 설정이 준비되지 않았습니다. 관리자에게 문의해 주세요.'],
+  ['BIZNO_UNAVAILABLE', '사업자 정보 조회 서비스를 이용할 수 없습니다. 잠시 뒤 다시 시도해 주세요.'],
+])('explains lookup failure %s without accepting an unverified company', async (code, message) => {
+  jest.mocked(apiRequest).mockImplementation(path => path.startsWith('/api/v1/me/company/lookup?')
+    ? Promise.reject(new ApiError(503, 'lookup unavailable', code))
+    : Promise.reject(new ApiError(404, 'missing', 'COMPANY_NOT_REGISTERED')))
+  const view = render(<CompanyScreen />)
+  fireEvent.changeText(await view.findByLabelText('사업자등록번호'), '1234567890')
+  fireEvent.press(view.getByText('사업자 정보 조회'))
+  await view.findByText(message)
+  expect(view.getByRole('button', { name: '기업 등록' })).toBeDisabled()
+  expect(jest.mocked(apiRequest).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
 test('partner settings load after company registration and are absent from the registration form', async () => {
   const view = await lookUp(business('계속사업자', '01', true))
   expect(view.queryByText('협업·파트너 설정')).toBeNull()

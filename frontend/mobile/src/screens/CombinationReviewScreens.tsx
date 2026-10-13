@@ -80,20 +80,22 @@ function OwnedReviewList({ token, onNew }: { token: string; onNew(): void }) {
 export type CombinationReviewStep = 'selection' | 'confirm' | 'analysis'
 const scopeNotice = '두 공고를 함께 신청 · 수행할 수 있는지, 같은 과제 · 비용으로 두 번 받는 것은 아닌지 봐요. 다른 사업까지 합친 과거 수혜 이력 누적은 이 검토 범위 밖이에요.'
 
-export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram, inline = false, active = true, disabled = false, onWorkingChange }: {
+export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onCreated, onStepChange, onLogin, onOpenProgram, inline = false, active = true, disabled = false, onWorkingChange }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; onLogin(): void
+  onCreated?(id: number, step: CombinationReviewStep): void
   onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void
   inline?: boolean; active?: boolean; disabled?: boolean; onWorkingChange?(busy: boolean): void
 }) {
   const auth = useAuth()
   if (auth.status !== 'signedIn' || !auth.session) return <ReviewLogin onLogin={onLogin} />
   return <OwnedReviewEditor key={`${auth.session.accessToken}:${id ?? 'new'}:${runId ?? 'latest'}:${initialProgram?.sourceCode ?? ''}:${initialProgram?.sourceProgramId ?? ''}`} id={id} runId={runId} initialProgram={initialProgram}
-    initialStep={initialStep} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram}
+    initialStep={initialStep} onCreated={onCreated} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram}
     inline={inline} active={active} disabled={disabled} onWorkingChange={onWorkingChange} />
 }
 
-function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChange, token, email, onOpenProgram, inline, active, disabled, onWorkingChange }: {
+function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, onStepChange, token, email, onOpenProgram, inline, active, disabled, onWorkingChange }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; token: string; email: string
+  onCreated?(id: number, step: CombinationReviewStep): void
   onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void
   inline: boolean; active: boolean; disabled: boolean; onWorkingChange?(busy: boolean): void
 }) {
@@ -163,7 +165,12 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
       : previous.programs.length < 2 ? [...previous.programs, { ...identity, participation: unknownParticipation() }] : previous.programs }))
   }
   function changeStep(next: CombinationReviewStep, savedId = vm.review?.id) {
-    vm.setError(null); if (next === 'selection') setSelectionVisited(true); setStep(next)
+    vm.setError(null)
+    // 새 검토는 저장된 검토 라우트가 확인 화면을 연다. 교체할 화면에서 먼저
+    // 확인 화면을 붙이면 Fabric이 기존 목록을 변경하는 중에 라우트까지 교체된다.
+    if (id === null && savedId && onCreated) { onCreated(savedId, next); return }
+    if (next === 'selection') setSelectionVisited(true)
+    setStep(next)
     if (savedId) onStepChange?.(savedId, next)
   }
   async function saveStep(next: CombinationReviewStep) {

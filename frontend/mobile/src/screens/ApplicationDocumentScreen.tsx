@@ -149,7 +149,10 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       setPending(null); setApproved(false); setRevision(value => value + 1)
     } catch (cause) { if (!controller.signal.aborted) {
       reportError(cause)
-      if (cause instanceof ApplicationPreparationError && cause.status >= 400 && cause.status < 500 && cause.status !== 408) {
+      if (cause instanceof ApplicationPreparationError && (
+        cause.status >= 400 && cause.status < 500 && cause.status !== 408
+        || cause.status === 503 && cause.code === 'APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE'
+      )) {
         await clearPendingPreparation(base, email).then(() => setPending(null)).catch(reportError)
       }
     } } finally { locked.current = false; if (!controller.signal.aborted && mounted.current) setBusy(null) }

@@ -14,6 +14,7 @@ import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramRequestRejectedException
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.PlatformTransactionManager
@@ -34,11 +35,23 @@ class ApplicationDocumentGenerationJobService(
     private val admission: SupportProgramRequestAdmissionService,
     private val planUsage: PlanUsageService,
     transactionManager: PlatformTransactionManager,
+    @param:Value("\${app.application-document.jobs.enabled:true}") private val jobsEnabled: Boolean = true,
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     private val transactions = TransactionTemplate(transactionManager)
 
     fun submit(account: Account, preparationId: Long, requestKey: String, expectedRevision: Long): ApplicationDocumentGenerationJob {
+        if (!jobsEnabled) {
+            // 실행기가 꺼지기 전에 접수된 요청은 같은 키로 계속 확인할 수 있다.
+            repository.findOwnedRequest(account.id, requestKey.lowercase())?.let { existing ->
+                if (existing.preparationId != preparationId || existing.expectedRevision != expectedRevision) {
+                    throw ApplicationPreparationRunConflictException()
+                }
+                return existing
+            }
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE",
+                "문서 생성 작업 처리가 비활성화되어 있습니다. 저장된 답변은 유지되며 관리자 확인이 필요합니다.")
+        }
         val detail = preparations.findOwned(account, preparationId)
         if (detail.preparation.inputRevision != expectedRevision) throw ApplicationPreparationRevisionConflictException()
         val reservation = try {

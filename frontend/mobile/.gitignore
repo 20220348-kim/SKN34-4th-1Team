@@ -4,3 +4,13 @@ android/
 expo-env.d.ts
 google-services.json
 *firebase-adminsdk*.json
+
+# Public checklist only; actual preview environment files stay ignored by the root rules.
+!.env.preview.example
+
+# Signing credentials and generated distribution artifacts
+credentials.json
+*.jks
+*.keystore
+*.apk
+*.aab

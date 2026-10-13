@@ -23,7 +23,9 @@ class ApplicationDocumentExceptionHandler {
 
     @ExceptionHandler(ApplicationDocumentException::class)
     fun handle(error: ApplicationDocumentException): ResponseEntity<ProblemDetail> {
-        val problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, error.message ?: "문서를 생성하지 못했습니다.")
+        val status = if (error.code == "APPLICATION_DOCUMENT_GENERATION_UNAVAILABLE") HttpStatus.SERVICE_UNAVAILABLE
+            else HttpStatus.UNPROCESSABLE_CONTENT
+        val problem = ProblemDetail.forStatusAndDetail(status, error.message ?: "문서를 생성하지 못했습니다.")
         problem.setProperty("code", error.code)
         error.mappingMigration?.let { notice ->
             problem.setProperty("mappingMigration", ApplicationDocumentMigrationNoticeResponse(
@@ -33,6 +35,6 @@ class ApplicationDocumentExceptionHandler {
                     ApplicationDocumentMappingChangeResponse(it.fieldLabel, it.changeType, it.oldLocation, it.newLocation)
                 }))
         }
-        return ResponseEntity.unprocessableContent().cacheControl(CacheControl.noStore()).body(problem)
+        return ResponseEntity.status(status).cacheControl(CacheControl.noStore()).body(problem)
     }
 }
