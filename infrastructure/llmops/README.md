@@ -853,8 +853,10 @@ Web은 Node.js 24.19.0과 pnpm 11.22.0을 사용했다.
 검색과 도우미가 하나의 Core OTLP provider를 사용하며 새 의존성은 없습니다.
 `core_assistant_trace.py`는 격리된 실제 Core → AI → 무료 OpenAI HTTP 대역 경로에서
 정상 200·모델 오류 503·시간 초과 504의 세 trace를 Langfuse에서 다시 읽습니다.
-정상 6개·실패 각 4개 관측의 부모 연결, 외부 trace ID 무시, 오류 코드, 요청당 모델 호출 1회,
+정상 7개·실패 각 5개 관측의 부모 연결, 외부 trace ID 무시, 오류 코드, 요청당 모델 호출 1회,
 사용량 누락을 0으로 바꾸지 않는 동작과 본문·비밀 키 미수집을 검사합니다.
+`assistant.classify` 아래 `assistant.model`은 `GENERATION`이며, 나머지는 `SPAN`입니다.
+모델명·호출 표식·미확정 사용량도 확인해 실제 호출을 일반 단계로 잘못 기록하면 실패합니다.
 
 ```bash
 # 저장소 루트. 기존 로컬 Langfuse 프로젝트·네트워크만 명시적으로 공유합니다.

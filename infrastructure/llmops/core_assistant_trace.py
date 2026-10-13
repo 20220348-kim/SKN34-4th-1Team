@@ -19,6 +19,7 @@ def span_tree(scenario):
         "assistant.core.request": "assistant.total",
         "assistant.agent": "assistant.core.request",
         "assistant.classify": "assistant.agent",
+        "assistant.model": "assistant.classify",
     }
     if scenario == "ok":
         tree["assistant.finalize"] = "assistant.agent"
@@ -41,6 +42,8 @@ def verify_observations(observations, trace_id, scenario, private_values):
             item.get("parentObservationId") == (matched[parent]["id"] if parent else None), "Wrong assistant parent"
         )
         require(item.get("endTime"), "Unfinished assistant observation")
+        require(item.get("type") == ("GENERATION" if name == "assistant.model" else "SPAN"),
+                "Wrong assistant observation type")
         require(item["metadata"].get("outcome") == outcome, "Wrong assistant outcome")
         require((item["level"] == "ERROR") == (scenario != "ok"), "Wrong assistant error level")
         require(
@@ -57,6 +60,12 @@ def verify_observations(observations, trace_id, scenario, private_values):
         usage.get("usage_input_tokens") is None and usage.get("usage_output_tokens") is None,
         "Unknown usage became a number",
     )
+    generation = matched["assistant.model"]
+    require(generation["metadata"].get("record_kind") == "model_call", "Missing assistant model call marker")
+    require(isinstance(generation.get("providedModelName"), str) and bool(generation["providedModelName"]),
+            "Missing assistant model name")
+    require(generation["metadata"].get("usage_reported") is False, "Unknown model usage lost")
+    require(generation.get("usageDetails") in (None, {}), "Unknown model usage became a number")
     serialized = json.dumps(observations, ensure_ascii=False)
     require(all(value not in serialized for value in private_values if value), "Private assistant trace data captured")
     return [
