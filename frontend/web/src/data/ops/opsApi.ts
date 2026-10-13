@@ -6,6 +6,8 @@ const dashboardSamplesSchema = z.object({ status: z.number().int().nonnegative()
 const dashboardCoverageSchema = z.object({ status: z.string().nullable(), citation: z.string().nullable(), retrieval: z.string().nullable(), latency: z.string().nullable(), input_tokens: z.string().nullable(), output_tokens: z.string().nullable() })
 const dashboardSchema = z.object({
   as_of: z.iso.datetime({ offset: true }), configured_model: z.string(),
+  // 이전 Ops 응답도 읽되, 서버가 알리지 않은 실행 모델을 임의로 추가하지 않는다.
+  allowed_models: z.array(z.string().min(1)).default([]),
   window: z.object({ limit: z.number().int().positive(), loaded: z.number().int().nonnegative(), total: z.number().int().nonnegative(), truncated: z.boolean() }),
   states: z.object({ completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), active: z.number().int().nonnegative(), cancelled: z.number().int().nonnegative() }),
   excluded: z.object({ replay: z.number().int().nonnegative(), incomplete: z.number().int().nonnegative(), unverifiable: z.number().int().nonnegative(), duplicate: z.number().int().nonnegative() }),

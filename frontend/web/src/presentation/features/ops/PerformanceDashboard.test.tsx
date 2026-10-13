@@ -21,6 +21,7 @@ const old = point('10000000-0000-4000-8000-000000000001', '2026-08-01T02:00:00Z'
 const latest = point('10000000-0000-4000-8000-000000000002', '2026-10-07T02:00:00Z', 0.5)
 const data = (): Dashboard => ({
   as_of: '2026-10-07T03:00:00Z', configured_model: 'current-model',
+  allowed_models: ['current-model', 'gpt-5.6-luna'],
   window: { limit: 200, loaded: 3, total: 3, truncated: false },
   states: { completed: 2, failed: 1, active: 0, cancelled: 0 },
   excluded: { replay: 1, incomplete: 0, unverifiable: 0, duplicate: 0 },
@@ -38,6 +39,55 @@ function mount(onExpired = vi.fn(), path = '/ops/dashboard') {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('성능 대시보드', () => {
+  it('실측 없는 허용 모델을 미측정으로 선택하고 점수나 평가 요청을 만들지 않는다', async () => {
+    const fetch = vi.fn(async () => json(data())); vi.stubGlobal('fetch', fetch)
+    mount()
+    await screen.findByRole('region', { name: '최근 성능 지표' })
+    const models = screen.getByLabelText('측정 모델')
+    expect(within(models).getByRole('option', { name: 'gpt-5.6-luna · 미측정' })).toBeTruthy()
+    expect(within(models).getAllByRole('option')).toHaveLength(2)
+    fireEvent.change(models, { target: { value: 'gpt-5.6-luna' } })
+    expect(within(screen.getByRole('region', { name: '실측 없음' })).getByText('gpt-5.6-luna · 미측정')).toBeTruthy()
+    expect(screen.getByLabelText('현재 경로').textContent).toContain('model=gpt-5.6-luna')
+    expect(screen.queryByRole('region', { name: '최근 성능 지표' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '모델별 결과 비교' })).toBeNull()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    fireEvent.change(models, { target: { value: 'current-model' } })
+    expect(screen.getByRole('region', { name: '최근 성능 지표' })).toBeTruthy()
+  })
+
+  it('허용 모델 목록이 없는 이전 API에서는 기존 실측 모델을 계속 조회한다', async () => {
+    const { allowed_models: _omitted, ...legacy } = data()
+    legacy.series.push({ ...legacy.series[0], id: 'historical', model: 'historical-model', points: [old] })
+    vi.stubGlobal('fetch', vi.fn(async () => json(legacy)))
+    mount()
+    await screen.findByRole('region', { name: '최근 성능 지표' })
+    const models = within(screen.getByLabelText('측정 모델'))
+    expect(models.getByRole('option', { name: 'historical-model' })).toBeTruthy()
+    expect(models.queryByRole('option', { name: /gpt-5.6-luna/ })).toBeNull()
+  })
+
+  it('재평가를 포함한 전체 처리 완료 건수와 선택 모델의 저장 실측 건수를 구분한다', async () => {
+    const payload = data()
+    payload.window = { limit: 200, loaded: 4, total: 4, truncated: false }
+    payload.states = { completed: 4, failed: 0, active: 0, cancelled: 0 }
+    payload.excluded.replay = 3
+    payload.series[0].points = [latest]
+    vi.stubGlobal('fetch', vi.fn(async () => json(payload)))
+    mount(vi.fn(), '/ops/dashboard?model=gpt-5.6-luna')
+    await screen.findByRole('region', { name: '실측 없음' })
+    expect(screen.getByLabelText('선택 조건의 실측').textContent).toBe('gpt-5.6-luna · 선택한 자료·기간의 저장된 실측 0건')
+    const inventory = within(screen.getByRole('region', { name: '집계 기준' }))
+    expect(inventory.getByRole('heading', { name: '전체 저장 평가 이력' })).toBeTruthy()
+    expect(inventory.getByText('이 조회 범위에서 실측으로 집계한 기록 1건 · 저장 답변 재평가 이력 3건')).toBeTruthy()
+    expect(inventory.getByText('처리 완료').parentElement?.textContent).toBe('처리 완료4건')
+    fireEvent.change(screen.getByLabelText('측정 모델'), { target: { value: 'current-model' } })
+    expect(screen.getByLabelText('선택 조건의 실측').textContent).toBe('current-model · 선택한 자료·기간의 저장된 실측 1건')
+    expect(inventory.getByText('처리 완료').parentElement?.textContent).toBe('처리 완료4건')
+    fireEvent.change(screen.getByLabelText('측정 기간'), { target: { value: '30' } })
+    expect(screen.getByLabelText('선택 조건의 실측').textContent).toContain('저장된 실측 1건')
+  })
+
   it('실측 지표·퍼센트포인트 하락·표본과 상세 링크를 표시하며 조회만 한다', async () => {
     const fetch = vi.fn(async () => json(data())); vi.stubGlobal('fetch', fetch)
     mount()

@@ -53,6 +53,22 @@ def fixed_run(**kwargs):
 
 
 class DashboardAggregationTests(SimpleTestCase):
+    def test_allowed_models_are_available_without_fabricating_measurements(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "LLMOPS_LIVE_MODEL": "gpt-6-luna",
+                "LLMOPS_ALLOWED_MODELS": "gpt-6-luna,gpt-5.6-luna,gpt-5.6-luna",
+            },
+        ):
+            empty = dashboard_data([], 0)
+            historical = dashboard_data([fixed_run()], 1)
+        self.assertEqual(empty["configured_model"], "gpt-6-luna")
+        self.assertEqual(empty["allowed_models"], ["gpt-6-luna", "gpt-5.6-luna"])
+        self.assertEqual(empty["series"], [])
+        self.assertEqual(historical["allowed_models"], empty["allowed_models"])
+        self.assertEqual([series["model"] for series in historical["series"]], ["model-a"])
+
     def test_only_live_and_live_origin_recovery_count_without_duplicate_answers(self):
         live = fixed_run()
         recovery = fixed_run(execution_mode="recovery", source_run=live, live_config={})

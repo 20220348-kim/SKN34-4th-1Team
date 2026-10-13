@@ -1,7 +1,6 @@
 """저장된 실측 결과를 같은 평가 조건끼리 묶는 읽기 전용 대시보드."""
 
 import math
-import os
 import re
 
 from django.utils import timezone
@@ -10,7 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .catalog import DATASETS
+from .catalog import DATASETS, allowed_models
 from .execution_spec import digest
 from .models import EvaluationRun
 
@@ -222,9 +221,11 @@ def dashboard_data(runs, total):
     series = sorted(
         groups.values(), key=lambda group: group["points"][-1]["measured_at"], reverse=True
     )
+    models = allowed_models()
     return {
         "as_of": timezone.now().isoformat(),
-        "configured_model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
+        "configured_model": models[0],
+        "allowed_models": models,
         "window": {
             "limit": RUN_LIMIT,
             "loaded": len(runs),
