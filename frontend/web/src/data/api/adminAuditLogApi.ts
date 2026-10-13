@@ -2,6 +2,7 @@ import { adminAuditLogPageSize, type AdminAuditLogQuery } from '../../domain/ent
 import { adminAuditLogListDtoSchema, type AdminAuditLogListDto } from '../models/AdminAuditLogDto'
 import { rejectFailedResponse } from './adminAccountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 const ADMIN_AUDIT_LOGS_PATH = '/api/v1/admin/audit-logs'
 
@@ -21,7 +22,7 @@ export async function browseAdminAuditLogsApi(
   if (query.from !== '') params.set('from', query.from)
   if (query.to !== '') params.set('to', query.to)
   if (before !== null) params.set('before', String(before))
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_AUDIT_LOGS_PATH}?${params}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_AUDIT_LOGS_PATH}?${params}`, {
     headers: { Accept: 'application/json' },
     credentials: 'include',
     cache: 'no-store',

@@ -7,6 +7,7 @@ import {
 } from '@govbiz/shared/data/models/PartnerRecruitmentRecommendationDto'
 import { AccountApiError } from './accountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 import {
   partnerRecruitmentDtoSchema,
   partnerRecruitmentListDtoSchema,
@@ -34,7 +35,7 @@ export async function browsePartnerRecruitmentsApi(
   for (const role of query.seekingRoles) params.append('seekingRole', role)
   for (const region of query.regions) params.append('region', region)
   if (query.sourceCode !== '') params.set('sourceCode', query.sourceCode)
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}?${params}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}?${params}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -61,7 +62,7 @@ export async function recommendPartnerRecruitmentsApi(
     params.set('sourceCode', conditions.program.sourceCode)
     params.set('sourceProgramId', conditions.program.sourceProgramId)
   }
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/recommended?${params}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/recommended?${params}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -73,7 +74,7 @@ export async function recommendPartnerRecruitmentsApi(
 }
 
 export async function getPartnerRecruitmentApi(id: number, signal?: AbortSignal): Promise<PartnerRecruitmentDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${id}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${id}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -88,7 +89,7 @@ export async function createPartnerRecruitmentApi(
   input: PartnerRecruitmentInput,
   signal?: AbortSignal,
 ): Promise<PartnerRecruitmentDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -106,7 +107,7 @@ export async function updatePartnerRecruitmentApi(
   input: PartnerRecruitmentContentInput,
   signal?: AbortSignal,
 ): Promise<PartnerRecruitmentDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${id}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${id}`, {
     method: 'PUT',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -120,7 +121,7 @@ export async function updatePartnerRecruitmentApi(
 
 /** 작성자의 수동 마감입니다. 본문 없이 보내고 마감된 모집글을 돌려받습니다. */
 export async function closePartnerRecruitmentApi(id: number, signal?: AbortSignal): Promise<PartnerRecruitmentDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${id}/close`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${id}/close`, {
     method: 'POST',
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,

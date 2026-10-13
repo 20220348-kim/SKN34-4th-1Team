@@ -45,7 +45,7 @@ import { SampleItemPage } from './presentation/features/sample-item/view/SampleI
 import { AppHeader } from './presentation/shared/app-header/AppHeader'
 import { publicLayoutStyles } from './presentation/shared/app-header/PublicLayout.styles'
 import { WorkspaceLayout } from './presentation/shared/app-sidebar/WorkspaceLayout'
-import { useRestoreAuthSession } from './presentation/shared/auth/hooks/useAuthSession'
+import { useRestoreAuthSession, useWatchAuthSession } from './presentation/shared/auth/hooks/useAuthSession'
 import { AssistantWidget } from './presentation/shared/assistant/AssistantWidget'
 import { GuestOnly, PublicOnly, RequireAuth } from './presentation/shared/auth/RouteGuards'
 import { APP_PREFIX, appPaths, publicPaths } from './presentation/shared/routes/appPaths'
@@ -84,6 +84,8 @@ function PublicLayout() {
  */
 function CoreApp() {
   useRestoreAuthSession()
+  // 복원 뒤에도 세션이 서버에서 끝나면(만료·강제 로그아웃·다른 창 로그아웃) 로그인 상태를 바로 맞춥니다.
+  useWatchAuthSession()
   useRestoreSupportProgramSearch()
   useChatRequestLifecycle()
   useReviewSessionIsolation()

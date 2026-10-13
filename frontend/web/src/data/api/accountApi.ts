@@ -3,6 +3,7 @@ import type { OAuthProviderId } from '../../domain/entities/OAuthProvider'
 
 import type { AccountLogIn, AccountSignUp } from '../../domain/repositories/AccountRepository'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 import {
   accountDeletionPreviewDtoSchema,
   accountDtoSchema,
@@ -122,7 +123,7 @@ export async function getCurrentAccountApi(signal?: AbortSignal): Promise<Accoun
 /** 로그인 세션이 본인 확인이므로 새 비밀번호만 보냅니다. */
 /** 환영 화면의 답을 저장하고 갱신된 계정을 받습니다. */
 export async function completeOnboardingApi(body: { accountType: string }, signal?: AbortSignal): Promise<AccountDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ONBOARDING_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ONBOARDING_PATH}`, {
     method: 'PUT',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -134,7 +135,7 @@ export async function completeOnboardingApi(body: { accountType: string }, signa
 }
 
 export async function changePasswordApi(newPassword: string, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${PASSWORD_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${PASSWORD_PATH}`, {
     method: 'PUT',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ newPassword }),
@@ -145,7 +146,7 @@ export async function changePasswordApi(newPassword: string, signal?: AbortSigna
 }
 
 export async function getAccountDeletionPreviewApi(signal?: AbortSignal) {
-  const response = await fetch(`${getCoreApiBaseUrl()}${DELETION_PREVIEW_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${DELETION_PREVIEW_PATH}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',

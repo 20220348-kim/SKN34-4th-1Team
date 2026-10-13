@@ -779,8 +779,11 @@ IME 조합, 스크롤 effect와 검색 결과 안내도 페이지 ViewModel이 �
 달력 연도·월·진행 단계·참여 상태·작성 문서·관리자 조건 등 모든 선택 칸이 이 컴포넌트입니다. 테스트에서는 `src/test/selectField.ts`의
 `chooseOption`·`selectedValue`·`optionLabels`·`optionValues`로 값을 고르고 읽습니다(`fireEvent.change`·`.value`·`.options`는 쓰지 않음). 프로필 계정 카드의 비밀번호 변경·계정 삭제 모달은
 `features/company-profile/viewmodel/useAccountSecurityViewModel`이 소유하고, 삭제에 성공하면 Store를 비운 뒤 `setTimeout(0)`으로 랜딩에 갑니다(`RequireAuth`의 로그인 리다이렉트보다 늦게). 화면 고유 배치는 각 기능의 styles 파일에서 정의합니다.
-로그인 상태는 `presentation/shared/auth`의 Redux `auth` slice와 `useAuthSession`·`useRestoreAuthSession`이 소유합니다.
-`App`은 시작 시 세션을 복원하고, `RequireAuth(minimumTier)`·`GuestOnly`·`PublicOnly` 라우트 래퍼가 복원이 끝나기 전(`unknown`)에는
+로그인 상태는 `presentation/shared/auth`의 Redux `auth` slice와 `useAuthSession`·`useRestoreAuthSession`·`useWatchAuthSession`이 소유합니다.
+`App`은 시작 시 세션을 복원하고, 복원 뒤에도 `useWatchAuthSession`이 서버의 세션을 따라갑니다. 쿠키 세션으로 부르는 Core API는 `data/api/coreFetch`를 지나
+401(만료·강제 로그아웃·정지로 세션 삭제)을 받으면 `signedOut('expired')`로 로그아웃시키고, 화면을 옮기거나 탭으로 돌아왔을 때 마지막 확인 뒤 5분이 지났으면 `/auth/me`로 다시 확인하며,
+다른 창의 로그아웃·로그인은 세션 힌트(`govbiz.hasSession`)의 `storage` 이벤트로 따라갑니다(`signedOut('elsewhere')`·다시 복원). 로그인 화면은 끝난 이유를 한 줄로 알리고
+`RequireAuth`가 남긴 `next`로 보던 화면에 돌아갑니다. 로그인·회원가입·비밀번호 확인처럼 401이 입력 오류인 요청과 Ops API는 `coreFetch`를 쓰지 않습니다. `RequireAuth(minimumTier)`·`GuestOnly`·`PublicOnly` 라우트 래퍼가 복원이 끝나기 전(`unknown`)에는
 리다이렉트하지 않다가 회원·관리자 단계에 따라 화면을 나눕니다. `PublicOnly`는 로그인한 사용자를 공개 URL에서 같은 내용의
 `/app` 화면으로 보내는 래퍼로, 단계는 보지 않습니다. 같은 내용을 두 세계에서 보여 줄 때 할 수 있는 일이 같으면
 `layout` prop 하나로(요금제·채팅), 할 수 있는 일이 다르면 별도 feature로(파트너 모집) 만듭니다. 단계(`tier`)는 서버의 `/auth/me`가 계산해 내려 주며

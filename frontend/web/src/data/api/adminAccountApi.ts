@@ -13,6 +13,7 @@ import {
 } from '../models/AdminAccountDto'
 import { AccountApiError } from './accountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 const ADMIN_ACCOUNTS_PATH = '/api/v1/admin/accounts'
 
@@ -28,7 +29,7 @@ const actionRequests: Record<AdminAccountActionKind, { path: string; body: Recor
 const withSessionCookie: RequestCredentials = 'include'
 
 export async function getAdminAccountStatsApi(signal?: AbortSignal): Promise<AdminAccountStatsDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/summary`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/summary`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -50,7 +51,7 @@ export async function browseAdminAccountsApi(query: AdminAccountQuery, signal?: 
   if (query.status !== '') params.set('status', query.status)
   if (query.role !== '') params.set('role', query.role)
   if (query.loginMethod !== '') params.set('loginMethod', query.loginMethod)
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}?${params}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}?${params}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -64,7 +65,7 @@ export async function browseAdminAccountsApi(query: AdminAccountQuery, signal?: 
 }
 
 export async function getAdminAccountApi(id: number, signal?: AbortSignal): Promise<AdminAccountDetailDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/${id}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/${id}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -83,7 +84,7 @@ export async function takeAdminAccountActionApi(
   signal?: AbortSignal,
 ): Promise<AdminAccountDetailDto> {
   const request = actionRequests[kind]
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/${id}/${request.path}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/${id}/${request.path}`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...request.body, reason }),

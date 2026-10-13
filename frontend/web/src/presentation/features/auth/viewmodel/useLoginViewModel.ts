@@ -2,12 +2,12 @@ import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 
 import { appContainer } from '../../../../app/appContainer'
-import { useAppDispatch } from '../../../../app/hooks'
+import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
 import { isEmailAddress } from '../../../../domain/entities/EmailAddress'
 import { isOAuthErrorCode, type OAuthErrorCode } from '../../../../domain/entities/OAuthProvider'
 import type { LogInUseCase } from '../../../../domain/usecases/LogInUseCase'
 import { readReturnPath, signupPathFor } from '../../../shared/auth/returnPath'
-import { signedIn } from '../../../shared/auth/state/authSlice'
+import { selectSessionEndReason, signedIn } from '../../../shared/auth/state/authSlice'
 import { useOAuthSignInOptions } from './useOAuthSignInOptions'
 
 type AccountLogInUseCase = Pick<LogInUseCase, 'execute'>
@@ -22,6 +22,11 @@ export const loginMessages = {
       ? '로그인 시도가 많아 잠시 막혔습니다. 잠시 후 다시 시도해 주세요.'
       : `로그인 시도가 많아 잠시 막혔습니다. ${retryAfterSeconds}초 뒤에 다시 시도해 주세요.`,
   requestFailed: '로그인 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  /** 직접 로그아웃하지 않았는데 로그인이 끝나 이 화면으로 왔을 때의 안내입니다. */
+  sessionEnded: {
+    expired: '로그인이 만료됐어요. 다시 로그인하면 보던 화면으로 돌아가요.',
+    elsewhere: '다른 창에서 로그인이 끝나 이 창도 로그아웃했어요. 다시 로그인해 주세요.',
+  },
   /** 소셜 로그인이 실패해 서버가 `?oauthError=`로 돌려보냈을 때의 안내입니다. */
   oauth: {
     cancelled: '소셜 로그인을 취소했습니다.',
@@ -108,8 +113,11 @@ export function useLoginViewModel(
     }
   }
 
+  const sessionEndReason = useAppSelector(selectSessionEndReason)
+
   return {
     signupPath: signupPathFor(readReturnPath(location.search, '')),
+    sessionNotice: sessionEndReason ? loginMessages.sessionEnded[sessionEndReason] : null,
     oauthOptions,
     email,
     password,

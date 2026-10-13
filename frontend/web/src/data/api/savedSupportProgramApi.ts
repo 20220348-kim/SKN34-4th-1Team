@@ -1,6 +1,7 @@
 import type { SupportProgramIdentity } from '../../domain/repositories/SupportProgramRepository'
 import { AccountApiError } from './accountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 import {
   savedSupportProgramDtoSchema,
   savedSupportProgramListDtoSchema,
@@ -14,7 +15,7 @@ const SAVED_PROGRAMS_PATH = '/api/v1/me/saved-programs'
 const withSessionCookie: RequestCredentials = 'include'
 
 export async function listSavedSupportProgramsApi(signal?: AbortSignal): Promise<SavedSupportProgramDto[]> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -25,7 +26,7 @@ export async function listSavedSupportProgramsApi(signal?: AbortSignal): Promise
 }
 
 export async function getSavedSupportProgramStatusApi(identity: SupportProgramIdentity, signal?: AbortSignal): Promise<boolean> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}/status?${identityParams(identity)}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}/status?${identityParams(identity)}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -37,7 +38,7 @@ export async function getSavedSupportProgramStatusApi(identity: SupportProgramId
 
 /** 원본 ID에 `/`가 올 수 있어 경로가 아니라 본문으로 보냅니다. */
 export async function saveSupportProgramApi(identity: SupportProgramIdentity, signal?: AbortSignal): Promise<SavedSupportProgramDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(identity),
@@ -49,7 +50,7 @@ export async function saveSupportProgramApi(identity: SupportProgramIdentity, si
 }
 
 export async function removeSavedSupportProgramApi(identity: SupportProgramIdentity, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}?${identityParams(identity)}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${SAVED_PROGRAMS_PATH}?${identityParams(identity)}`, {
     method: 'DELETE',
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,

@@ -1,5 +1,6 @@
 import type { AssistantQuestion } from '../../domain/repositories/AssistantRepository'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 import { assistantAnswerDtoSchema, type AssistantAnswerDto } from '../models/AssistantAnswerDto'
 
 const ASSISTANT_MESSAGES_PATH = '/api/v1/assistant/messages'
@@ -22,7 +23,7 @@ export class AssistantApiError extends Error {
 
 /** 비로그인도 물을 수 있지만 세션 쿠키가 있으면 함께 보내 회원 상태 답을 받습니다. */
 export async function askAssistantApi(question: AssistantQuestion, signal?: AbortSignal): Promise<AssistantAnswerDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ASSISTANT_MESSAGES_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ASSISTANT_MESSAGES_PATH}`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(question),

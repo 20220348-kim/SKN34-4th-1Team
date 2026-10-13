@@ -2,6 +2,7 @@ import type { z } from 'zod'
 import { DailyReportError } from '../../domain/errors/DailyReportError'
 import { dailyReportProblemSchema } from '../models/DailyReportDto'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 /** 미리보기 대기를 끝내도 이미 시작한 서버 생성은 계속될 수 있으므로 최신 조회로 확인합니다. */
 export async function dailyReportRequest<T>(path: string, method: 'GET' | 'PUT' | 'POST', schema: z.ZodType<T> | 'empty', body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -11,7 +12,7 @@ export async function dailyReportRequest<T>(path: string, method: 'GET' | 'PUT' 
   if (signal?.aborted) controller.abort()
   const timer = setTimeout(abort, path.endsWith('/preview') ? 180_000 : 15_000)
   try {
-    const response = await fetch(`${getCoreApiBaseUrl()}${path}`, {
+    const response = await coreFetch(`${getCoreApiBaseUrl()}${path}`, {
       method, credentials: 'include', cache: 'no-store', signal: controller.signal,
       headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
