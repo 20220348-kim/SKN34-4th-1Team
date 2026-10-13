@@ -10,7 +10,7 @@ def traced_node(tracing: LLMTracing, name: str, operation, *, model=None, prompt
     # 그래프 상태, 모델 입력/출력, 문서·계정 식별자는 exporter에 넘기지 않는다.
     metadata = {}
     if model is not None:
-        metadata["model"] = getattr(model, "model_name", type(model).__name__)
+        metadata["configured_model"] = getattr(model, "model_name", type(model).__name__)
     if prompt is not None:
         metadata["prompt_sha256"] = sha256(prompt.encode()).hexdigest()
 

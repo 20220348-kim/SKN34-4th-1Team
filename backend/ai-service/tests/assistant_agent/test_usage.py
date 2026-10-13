@@ -18,6 +18,7 @@ from tests.assistant_agent.fakes import HANG, ScriptedChatModel, tool_call_messa
 from tests.assistant_agent.test_graph import PROFILE_CALL, READY, Harness
 from tests.assistant_agent.test_saved_programs import Harness as SavedHarness
 from tests.assistant_agent.test_saved_programs import documents, finding, reduce_output
+from tests.assistant_agent.test_tracing import trace_environment as trace_environment
 
 
 def run_log(caplog):
@@ -76,14 +77,21 @@ async def test_rejected_classification_still_records_received_usage(request_data
     ({"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "0", "0", "0"),
     ({"input_tokens": 40, "output_tokens": 7, "total_tokens": 47}, "40", "7", "0"),
 ])
-async def test_missing_usage_is_distinct_from_confirmed_zero(request_data, empty_classification, caplog, usage, expected_input, expected_output, unknown):
+async def test_missing_usage_is_distinct_from_confirmed_zero(request_data, empty_classification, caplog, usage, expected_input, expected_output, unknown, trace_environment):
+    tracing, exporter, _ = trace_environment
     raw = AIMessage(content=json.dumps({**empty_classification, "intent": "PROGRAM_QUESTION"}), usage_metadata=usage)
-    harness = Harness(classify=[raw], agent=[])
+    harness = Harness(classify=[raw], agent=[], tracing=tracing)
     with caplog.at_level(logging.INFO, logger="app.assistant_agent.service"):
         await harness.run(request_data)
     log = run_log(caplog)
     assert log["outcome"] == "completed" and log["model_calls"] == "1"
     assert (log["input_tokens"], log["output_tokens"], log["usage_unknown_calls"]) == (expected_input, expected_output, unknown)
+    await tracing.close()
+    (generation,) = [span for span in exporter.get_finished_spans() if span.name == "assistant.model"]
+    assert generation.attributes["langfuse.observation.metadata.usage_reported"] is (usage is not None)
+    assert json.loads(generation.attributes.get("langfuse.observation.usage_details", "{}")) == (
+        {} if usage is None else {"input": usage["input_tokens"], "output": usage["output_tokens"]}
+    )
 
 
 @pytest.mark.anyio
@@ -173,7 +181,8 @@ async def test_concurrent_requests_on_shared_graph_keep_separate_usage(request_d
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("scenario", ["next_call_timeout", "invalid_classification", "invalid_json", "missing_usage"])
-async def test_responses_sdk_preserves_usage_through_graph(request_data, empty_classification, caplog, scenario):
+async def test_responses_sdk_preserves_usage_through_graph(request_data, empty_classification, caplog, scenario, trace_environment):
+    tracing, exporter, _ = trace_environment
     calls = []
     classification = {**empty_classification, "intent": "PARTNER_MATCH" if scenario == "next_call_timeout" else "PROGRAM_QUESTION"}
     if scenario == "invalid_classification":
@@ -204,8 +213,9 @@ async def test_responses_sdk_preserves_usage_through_graph(request_data, empty_c
             graph = build_assistant_agent_graph(
                 classify_model=model, agent_model=model, tool_client=harness.client,
                 max_tool_calls=3, retriever=harness.retriever,
+                tracing=tracing,
             )
-            service = AssistantAgentService(graph=graph, timeout_seconds=5)
+            service = AssistantAgentService(graph=graph, timeout_seconds=5, tracing=tracing)
             with caplog.at_level(logging.INFO, logger="app.assistant_agent.service"):
                 if scenario == "missing_usage":
                     await service.answer(AssistantAgentRequest.model_validate(request_data))
@@ -215,6 +225,7 @@ async def test_responses_sdk_preserves_usage_through_graph(request_data, empty_c
                         await service.answer(AssistantAgentRequest.model_validate(request_data))
     finally:
         await harness.client.aclose()
+        await tracing.close()
 
     log = run_log(caplog)
     assert len(calls) == (2 if scenario == "next_call_timeout" else 1)
@@ -225,6 +236,18 @@ async def test_responses_sdk_preserves_usage_through_graph(request_data, empty_c
     assert log["usage_unknown_calls"] == ("0" if scenario in {"invalid_classification", "invalid_json"} else "1")
     assert log["input_tokens"] == ("83" if scenario in {"invalid_classification", "invalid_json"} else "None")
     assert "private upstream timeout" not in caplog.text and "test-key" not in caplog.text
+    generations = [span for span in exporter.get_finished_spans() if span.name == "assistant.model"]
+    assert len(generations) == len(calls)
+    assert all(span.attributes["langfuse.observation.model.name"] == "test-model" for span in generations)
+    known = [span for span in generations if span.attributes["langfuse.observation.metadata.usage_reported"]]
+    assert len(known) == (0 if scenario == "missing_usage" else 1)
+    if known:
+        assert json.loads(known[0].attributes["langfuse.observation.usage_details"]) == {"input": 83, "output": 12}
+    if scenario == "invalid_json":
+        assert known[0].attributes["langfuse.observation.level"] == "ERROR"
+    exported = json.dumps([span.to_json() for span in generations])
+    for private in ("test-key", "not JSON", "private upstream timeout", request_data["message"]):
+        assert private not in exported
 
 
 @pytest.mark.anyio
