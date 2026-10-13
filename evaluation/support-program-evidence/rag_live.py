@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from time import perf_counter
 from uuid import uuid4
 
 import rag_evaluate as rag
@@ -169,6 +170,7 @@ async def execute(fixture_path, output_dir, *, budget, execution_spec):
                 "indexedCount": None,
                 "search": None,
                 "answer": None,
+                "answerElapsedMs": None,
                 "failure": {"stage": "not_started", "code": "NOT_STARTED"},
             }
             for c in fixture["cases"]
@@ -311,13 +313,16 @@ async def execute(fixture_path, output_dir, *, budget, execution_spec):
                     guard.begin_api(
                         "POST", "/internal/v1/support-program-evidence/answers", request
                     )
+                    answer_started = perf_counter()
                     answer = await answer_service.answer(
                         SupportProgramEvidenceAnswerRequest.model_validate(request),
                         trace_id=record["traceId"],
                     )
+                    answer_elapsed_ms = round((perf_counter() - answer_started) * 1000, 3)
                     response = answer.model_dump(mode="json", by_alias=True)
                     guard.finish_api(200, response)
                     record["answer"]["response"] = response
+                    record["answerElapsedMs"] = answer_elapsed_ms
                     record["failure"] = None
             except BaseException as error:
                 guard.stop()

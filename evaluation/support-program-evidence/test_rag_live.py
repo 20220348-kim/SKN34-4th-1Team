@@ -15,7 +15,7 @@ import rag_replay_flow
 from apps.evaluations.catalog import live_config
 from apps.evaluations.execution_spec import digest, make_spec, read_release
 from apps.evaluations.rag_material import material_from_sources
-from apps.evaluations.rag_replay import read_result, validate_live_capture
+from apps.evaluations.rag_replay import read_result, validate_live_capture, validate_report
 from apps.evaluations.recovery_inputs import read_recovery_inputs
 from budget_client import BudgetClient, BudgetUnavailable
 
@@ -97,8 +97,10 @@ def runner(tmp_path, monkeypatch):
     return tmp_path, calls, actions, fault
 
 
-def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
+def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner, monkeypatch):
     root, calls, actions, _ = runner
+    ticks = iter([10, 10.125, 20, 20.375, 30, 30.25])
+    monkeypatch.setattr(rag_live, "perf_counter", lambda: next(ticks))
     params = parameters()
     manifest = ops_flow.evaluate_saved_capture.fn(**params)
     folder = root / params["request_id"]
@@ -115,16 +117,33 @@ def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
                          (folder / "evaluation/report.html").read_bytes())
     assert result[1]["liveExecutionPerformed"] and result[1]["measurementKind"] == "recorded-live-evaluation"
     assert result[1]["baselineEligible"] is False
+    assert [case["answerElapsedMs"] for case in capture["cases"]] == [125, 375, 250]
+    latency = {"value": 250, "measuredCaseCount": 3, "eligibleCaseCount": 3}
+    assert result[1]["metrics"]["meanAnswerLatencyMs"] == latency
+    # The receiving API checks the recorded cases, not just the claimed average.
+    for field, value in [("value", 0), ("measuredCaseCount", 2), ("eligibleCaseCount", 4)]:
+        invalid = deepcopy(result[1])
+        invalid["metrics"]["meanAnswerLatencyMs"][field] = value
+        with pytest.raises(ValueError):
+            validate_report(invalid, params["execution_spec"], invalid["captureSha256"], live=True)
+    legacy = deepcopy(result[1])
+    legacy["metrics"].pop("meanAnswerLatencyMs")
+    for case in legacy["cases"]:
+        case.pop("answerElapsedMs")
+    validate_report(legacy, params["execution_spec"], legacy["captureSha256"], live=True)
     material = material_from_sources(json.loads((HERE / "rag-fixture.json").read_text()), capture,
                                      json.loads((HERE / "rag-synthetic-capture.json").read_text()), result[3])
     assert material["cases"][0]["candidate"]["answer"] == "무료 테스트 답변"
     _, recovery, _ = read_recovery_inputs(root, HERE, params["request_id"])
     spec = make_spec(read_release(), DATASET, "recovery", {}, "new-model-response", CAPTURE, recovery_config=recovery)
+    recovery_id = str(uuid4())
     recovered = ops_flow.evaluate_saved_capture.fn(**{
-        **params, "request_id": str(uuid4()), "execution_mode": "recovery", "live_config": {},
+        **params, "request_id": recovery_id, "execution_mode": "recovery", "live_config": {},
         "recovery_config": recovery, "execution_spec": spec, "execution_spec_sha256": digest(spec),
     })
     assert recovered["status"] == "completed" and len(calls) == 8
+    report = json.loads((root / recovery_id / "evaluation/comparison.json").read_text())
+    assert report["current"]["metrics"]["meanAnswerLatencyMs"] == latency
     assert len([action for action, _ in actions if action == "claim"]) == 1
     with pytest.raises(FileExistsError):
         ops_flow.evaluate_saved_capture.fn(**params)
@@ -223,6 +242,7 @@ def test_partial_failure_preserves_usage_and_stops_remaining_cases(runner, kind,
     assert usage["model_api_calls"] == len(calls) == expected and not usage["completed"]
     assert capture["cases"][0]["failure"]["stage"] == "answer"
     assert capture["cases"][1]["failure"]["stage"] == "not_started"
+    assert all(case["answerElapsedMs"] is None for case in capture["cases"])
     assert actions[-1][0] == "close" and not (folder / "preflight.json").exists()
     if kind == "unknown":
         assert [fields for action, fields in actions if action == "settle"][-1]["usage"] is None

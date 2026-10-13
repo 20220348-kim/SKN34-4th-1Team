@@ -7,6 +7,7 @@ import re
 import sys
 from datetime import datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -242,6 +243,16 @@ def search_request(case, document):
 
 
 def validate_observation(observation, case, document, kind):
+    if isinstance(observation, dict) and "answerElapsedMs" in observation:
+        elapsed = observation["answerElapsedMs"]
+        require(
+            elapsed is None or (
+                kind == "recorded" and observation.get("failure") is None
+                and type(elapsed) in (int, float) and isfinite(elapsed) and elapsed >= 0
+            ),
+            "invalid recorded answer duration",
+        )
+        observation = {key: value for key, value in observation.items() if key != "answerElapsedMs"}
     if isinstance(observation, dict) and "documentVectors" in observation:
         vectors = observation["documentVectors"]
         fields(vectors, "key sha256 status")
@@ -527,6 +538,7 @@ def evaluate(fixture_path, capture_path=None):
                 else None,
                 "retrievalMeasured": retrieved is not None,
                 "answerMeasured": answer is not None,
+                "answerElapsedMs": observation.get("answerElapsedMs") if answer is not None else None,
                 "retrievalResultSha256": json_digest(observation["search"]["response"])
                 if retrieved is not None
                 else None,
@@ -549,6 +561,9 @@ def evaluate(fixture_path, capture_path=None):
         ),
         "answerStatusAccuracy": metric(
             [row["answerStatusMatches"] for row in rows], len(cases)
+        ),
+        "meanAnswerLatencyMs": metric(
+            [row["answerElapsedMs"] for row in rows], len(cases)
         ),
     }
     report["coverage"] = {

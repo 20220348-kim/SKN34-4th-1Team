@@ -242,6 +242,20 @@ class DashboardAggregationTests(SimpleTestCase):
         group = dashboard_data([run], 1)["series"][0]
         self.assertEqual(group["points"][0]["samples"]["retrieval"], 1)
         self.assertEqual(group["points"][0]["values"]["retrieval"], 0.5)
+        self.assertIsNone(group["points"][0]["values"]["latency"])
+        self.assertIsNone(group["points"][0]["samples"]["latency"])
+        # Recovered measurements retain the original per-case timing and denominator.
+        run.comparison["current"]["metrics"]["meanAnswerLatencyMs"] = {
+            "value": 1250,
+            "measuredCaseCount": 1,
+            "eligibleCaseCount": 2,
+        }
+        run.comparison["current"]["cases"][0]["answerElapsedMs"] = 1250
+        measured = dashboard_data([run], 1)["series"][0]["points"][0]
+        self.assertEqual(measured["values"]["latency"], 1250)
+        self.assertEqual(measured["samples"]["latency"], 1)
+        self.assertIsNotNone(measured["coverage"]["latency"])
+        self.assertEqual(measured["measured_at"], origin.started_at.isoformat())
         changed = deepcopy(run)
         changed.comparison["current"]["cases"][0]["k"] = 3
         self.assertEqual(len(dashboard_data([run, changed], 2)["series"]), 2)

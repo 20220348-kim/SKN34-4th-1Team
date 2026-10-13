@@ -53,6 +53,19 @@ def validate_live_capture(capture, usage, spec, spec_hash):
     )
     cases = capture["cases"]
     require([case["caseId"] for case in cases] == spec["dataset"]["case_ids"])
+    for case in cases:
+        elapsed = case.get("answerElapsedMs")
+        require(
+            elapsed is None
+            or (
+                case["failure"] is None
+                and isinstance(case.get("answer"), dict)
+                and case.get("answer", {}).get("response") is not None
+                and type(elapsed) in (int, float)
+                and isfinite(elapsed)
+                and elapsed >= 0
+            )
+        )
     vector_plan = spec["live_config"].get("document_vectors")
     vector_hashes = {}
     if vector_plan is not None:
@@ -167,9 +180,24 @@ def validate_report(report, spec, capture_hash, *, live=False, recovered=False):
     if kind == "integration-stub":
         require(type(execution["paidModelApiCalls"]) is int and execution["paidModelApiCalls"] == 0)
     cases = report["cases"]
+    has_latency = "meanAnswerLatencyMs" in report["metrics"]
     require([case["caseId"] for case in cases] == spec["dataset"]["case_ids"])
     require(type(report["caseCount"]) is int and report["caseCount"] == len(cases))
     for case in cases:
+        if has_latency:
+            elapsed = case["answerElapsedMs"]
+            require(
+                elapsed is None
+                or (
+                    kind == "recorded"
+                    and case["answerMeasured"] is True
+                    and type(elapsed) in (int, float)
+                    and isfinite(elapsed)
+                    and elapsed >= 0
+                )
+            )
+        else:
+            require("answerElapsedMs" not in case)
         require(type(case["retrievalMeasured"]) is bool and type(case["answerMeasured"]) is bool)
         require(not case["answerMeasured"] or case["retrievalMeasured"])
         require((case["failure"] is None) == case["answerMeasured"])
@@ -211,8 +239,11 @@ def validate_report(report, spec, capture_hash, *, live=False, recovered=False):
         report["coverage"] == expected_coverage
         and all(type(v) is int for v in report["coverage"].values())
     )
-    require(set(report["metrics"]) == set(METRICS))
-    for name, column in zip(METRICS, (*METRICS[:2], "answerStatusMatches"), strict=True):
+    columns = list(zip(METRICS, (*METRICS[:2], "answerStatusMatches"), strict=True))
+    if has_latency:
+        columns.append(("meanAnswerLatencyMs", "answerElapsedMs"))
+    require(set(report["metrics"]) == {name for name, _ in columns})
+    for name, column in columns:
         metric = report["metrics"][name]
         values = [case[column] for case in cases if case[column] is not None]
         require(
@@ -220,7 +251,7 @@ def validate_report(report, spec, capture_hash, *, live=False, recovered=False):
         )
         eligible = metric["eligibleCaseCount"]
         require(type(eligible) is int and len(values) <= eligible <= len(cases))
-        if name == "answerStatusAccuracy":
+        if name in {"answerStatusAccuracy", "meanAnswerLatencyMs"}:
             require(eligible == len(cases))
         value = metric["value"]
         require(
