@@ -97,7 +97,14 @@ def api_session(request):
             if operator
             else None,
             "csrf_token": get_token(request),
-            "datasets": [{**item, "baseline": baselines.get(item["id"])} for item in datasets]
+            "datasets": [
+                {
+                    **item,
+                    "selection_guide": DATASETS.get(item["id"], {}).get("selection_guide"),
+                    "baseline": baselines.get(item["id"]),
+                }
+                for item in datasets
+            ]
             if operator
             else [],
             "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,

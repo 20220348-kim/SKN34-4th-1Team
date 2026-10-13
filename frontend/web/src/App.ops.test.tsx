@@ -86,6 +86,64 @@ function open(path = '/ops/evaluations/new') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('자료를 용도별로 묶고 선택한 자료의 설명과 기존 비교 대상을 함께 바꾼다', async () => {
+    const development = { ...dataset, selection_guide: { category: 'development', title: '지원 조건 가상 사례', purpose: '가상 공고로 지원 조건 누락을 확인합니다.', material: '가상 질문 6개와 저장 응답', limitations: '실제 공고 전체의 품질을 대표하지 않습니다.' } }
+    const historical = { ...comparisonDataset, selection_guide: { category: 'historical', title: '이전 프롬프트 비교', purpose: '이전 지시문의 응답 차이를 비교합니다.', material: 'E01 과거 응답 두 개', limitations: '한 질문의 과거 비교입니다.' } }
+    const quality = { ...comparisonDataset, id: 'official-answer-20260907-v3', selection_guide: { category: 'quality', title: '실제 공고 답변 · 참조 보완 v3', purpose: '주어진 실제 공고 근거로 답변 품질을 평가합니다.', material: '저장 원문과 참조 조건', limitations: '검색은 평가하지 않습니다.' } }
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+      ? Promise.resolve(json({ ...session(), datasets: [development, historical, quality] })) : original(path, options))
+    open()
+    const select = await screen.findByLabelText('평가 자료')
+    expect(within(select).getAllByRole('group').map((group) => group.getAttribute('label'))).toEqual(['실제 품질 평가용', '개발 검증용', '과거 자료'])
+    expect(select).toHaveProperty('value', development.id)
+    expect(within(screen.getByRole('region', { name: '선택한 평가 자료 설명' })).getByText(development.selection_guide.purpose)).toBeTruthy()
+    fireEvent.change(select, { target: { value: quality.id } })
+    const explanation = within(screen.getByRole('region', { name: '선택한 평가 자료 설명' }))
+    expect(explanation.getByRole('heading', { name: quality.selection_guide.title })).toBeTruthy()
+    expect(explanation.getByText(quality.selection_guide.material)).toBeTruthy()
+    expect(explanation.getByText(quality.selection_guide.limitations)).toBeTruthy()
+    expect(explanation.queryByText(development.selection_guide.purpose)).toBeNull()
+    expect(screen.getByLabelText('기준 실행')).toHaveProperty('value', 'reference')
+    expect(screen.getByLabelText('후보 실행')).toHaveProperty('value', 'candidate')
+    expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'replay')
+    fireEvent.click(screen.getByRole('link', { name: '평가 이력' }))
+    fireEvent.click(await screen.findByRole('link', { name: '새 평가' }))
+    expect(await screen.findByLabelText('평가 자료')).toHaveProperty('value', quality.id)
+    expect(screen.getByText(quality.selection_guide.limitations)).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
+  it('용도 설명이 없는 이전 세션 응답은 품질 자료로 추정하지 않고 기존 선택을 유지한다', async () => {
+    open()
+    const select = await screen.findByLabelText('평가 자료')
+    expect(within(select).getByRole('group', { name: '분류 확인 필요' })).toBeTruthy()
+    expect(select).toHaveProperty('value', dataset.id)
+    expect(screen.getByText('이 자료의 용도 설명이 아직 제공되지 않았습니다. 자료 이름만으로 실제 품질 평가용인지 판단하지 마세요.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '평가 실행' })).toHaveProperty('disabled', false)
+  })
+
+  it('그룹이 다른 자료를 고르면 유료 실행 동의를 해제하며 저장 전용 자료는 재평가로 전환한다', async () => {
+    const quality = { ...dataset, selection_guide: { category: 'quality', title: '공식 공고 답변', purpose: '답변 확인', material: '등록된 공고 원문', limitations: '검색 미평가' } }
+    const historical = { ...comparisonDataset, live_config: null, live_options: [], execution_profiles: { ...executionProfiles, live: null }, selection_guide: { category: 'historical', title: 'Core 저장 기록', purpose: '저장 기록 재평가', material: '기존 Core 응답', limitations: '저장 응답 재평가만 가능' } }
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+      ? Promise.resolve(json({ ...session(), datasets: [quality, historical] })) : original(path, options))
+    open()
+    fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: /위 자료의 OpenAI 전송/ }))
+    expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', false)
+    fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: historical.id } })
+    expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'replay')
+    expect(screen.getByRole('option', { name: '새 응답 생성 · 유료 모델 호출' })).toHaveProperty('disabled', true)
+    expect(screen.getByText('저장 응답 재평가만 가능')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: quality.id } })
+    fireEvent.change(screen.getByLabelText('실행 방식'), { target: { value: 'live' } })
+    expect(screen.getByRole('checkbox', { name: /위 자료의 OpenAI 전송/ })).toHaveProperty('checked', false)
+    expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
   it('실사용 메뉴에서 Core 사용량을 읽고 기간 조회·회원 상세·Langfuse를 연결한다', async () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'

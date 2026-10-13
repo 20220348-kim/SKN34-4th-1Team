@@ -2,7 +2,9 @@ import os
 from copy import deepcopy
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from .catalog import (
     DATASETS,
@@ -14,6 +16,7 @@ from .catalog import (
     validate_execution,
 )
 from .execution_spec import digest, profile, read_release
+from .views import api_session
 
 RAG = "rag-synthetic-multichunk-v1"
 
@@ -115,3 +118,89 @@ class LiveModelCatalogTests(SimpleTestCase):
         validate_execution(RAG, LIVE_CAPTURE_ID, reference, "live", config, pinned_vectors=True)
         with self.assertRaises(ValueError):
             validate_execution(RAG, LIVE_CAPTURE_ID, reference, "live", config)
+
+
+class DatasetSelectionGuideTests(SimpleTestCase):
+    def session(self, *, authenticated=True):
+        request = APIRequestFactory().get("/api/v1/ops/session")
+        if authenticated:
+            force_authenticate(request, user=get_user_model()(username="offline-operator"))
+        return api_session(request)
+
+    @patch("apps.evaluations.vector_cache.discover", return_value=None)
+    @patch("apps.evaluations.views.baseline_choices", return_value={})
+    def test_session_groups_every_registered_dataset_and_preserves_execution_contract(
+        self, baselines, cache
+    ):
+        expected = {
+            "target-coverage-20260907-v1": "development",
+            "fixed-context-e01-v1": "historical",
+            "rag-synthetic-multichunk-v1": "development",
+            "core-rag-20261002-v1": "development",
+            "core-rag-20261002-v2": "development",
+            "official-answer-20260907-v2": "historical",
+            "official-answer-20260907-v3": "quality",
+            "official-rag-20261006-v1": "historical",
+            "official-rag-20261006-v2": "quality",
+            "core-official-640f14b8cf87bd9e5d3f2319": "historical",
+        }
+        original = {row["id"]: row for row in public_datasets()}
+        response = self.session()
+        self.assertEqual(response.status_code, 200)
+        rows = response.data["datasets"]
+        self.assertEqual({row["id"] for row in rows}, set(expected))
+        for row in rows:
+            with self.subTest(dataset=row["id"]):
+                guide = row["selection_guide"]
+                self.assertEqual(guide, DATASETS[row["id"]]["selection_guide"])
+                self.assertEqual(guide["category"], expected[row["id"]])
+                self.assertEqual(
+                    set(guide), {"category", "title", "purpose", "material", "limitations"}
+                )
+                for value in guide.values():
+                    self.assertIsInstance(value, str)
+                    self.assertTrue(value.strip())
+                self.assertEqual(
+                    {
+                        key: value
+                        for key, value in row.items()
+                        if key not in {"selection_guide", "baseline"}
+                    },
+                    original[row["id"]],
+                )
+
+    @patch("apps.evaluations.views.baseline_choices", return_value={})
+    def test_missing_guidance_and_unknown_catalog_rows_have_no_invented_category(self, baselines):
+        original = {"id": LEGACY_DATASET_ID, "label": "기존 자료"}
+        unknown = {"id": "newly-registered", "label": "새 자료"}
+        with (
+            patch("apps.evaluations.views.public_datasets", return_value=[original, unknown]),
+            patch("apps.evaluations.views.DATASETS", {LEGACY_DATASET_ID: original}),
+        ):
+            response = self.session()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["datasets"],
+            [
+                {**original, "selection_guide": None, "baseline": None},
+                {**unknown, "selection_guide": None, "baseline": None},
+            ],
+        )
+
+    @patch("apps.evaluations.views.public_datasets")
+    @patch("apps.evaluations.views.baseline_choices")
+    def test_anonymous_session_does_not_expose_dataset_guidance(self, baselines, datasets):
+        response = self.session(authenticated=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["datasets"], [])
+        datasets.assert_not_called()
+        baselines.assert_not_called()
+
+    @patch("apps.evaluations.vector_cache.discover", return_value=None)
+    def test_display_guidance_does_not_change_execution_options_or_approval_profiles(self, cache):
+        original = public_datasets()
+        without_guidance = deepcopy(DATASETS)
+        for item in without_guidance.values():
+            item.pop("selection_guide")
+        with patch.dict(DATASETS, without_guidance, clear=True):
+            self.assertEqual(public_datasets(), original)
