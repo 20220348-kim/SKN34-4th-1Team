@@ -105,7 +105,12 @@ export function PerformanceDashboard({ onExpired }: { onExpired: () => void }) {
           </section>
           <section aria-label="최근 성능 지표" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             {metrics.map((metric) => <article key={metric.key} className="rounded-xl border border-line bg-white p-4 sm:p-5"><h3 className="text-sm font-medium text-ink-muted">{metric.label}</h3><p className="mt-3 text-2xl font-bold tabular-nums sm:text-3xl text-ink">{percent(latest.values[metric.key])}</p><p className="mt-2 text-xs font-medium text-ink">{change(latest, points.at(-2), metric.key)}</p><p className="mt-3 text-xs leading-5 text-ink-muted">{latest.values[metric.key] !== null ? `${latest.samples[metric.key] ?? '미확인'}개 사례 측정 / 전체 ${selected.case_ids.length}개` : metric.key === 'retrieval' && selected.scope === 'fixed-answer-context-only' ? '이 평가에는 검색 단계가 없습니다.' : '저장된 측정값이 없습니다.'}</p></article>)}
-            <article className="rounded-xl border border-line bg-white p-4 sm:p-5"><h3 className="text-sm font-medium text-ink-muted">평균 답변 지연</h3><p className="mt-3 text-2xl font-bold tabular-nums sm:text-3xl text-ink">{latest.values.latency === null ? '미측정' : <>{(latest.values.latency / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}<span className="ml-1 text-base font-medium">초</span></>}</p><p className="mt-2 text-xs text-ink">저장된 답변 생성 시간</p><p className="mt-3 text-xs leading-5 text-ink-muted">전체 API 응답 시간과 다릅니다.</p></article>
+            <article className="rounded-xl border border-line bg-white p-4 sm:p-5">
+              <h3 className="text-sm font-medium text-ink-muted">평균 답변 지연</h3>
+              <p className="mt-3 text-2xl font-bold tabular-nums sm:text-3xl text-ink">{latest.values.latency === null ? '미측정' : <>{(latest.values.latency / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}<span className="ml-1 text-base font-medium">초</span></>}</p>
+              <p className="mt-2 text-xs text-ink">{latest.values.latency === null ? '이 평가에는 답변 생성 시간이 저장되지 않았습니다.' : latest.samples.latency !== null ? `${latest.samples.latency}개 답변 측정 / 전체 ${selected.case_ids.length}개` : '저장된 답변 생성 시간'}</p>
+              <p className="mt-3 text-xs leading-5 text-ink-muted">{selected.scope === 'source-chunks-retrieval-answer' && '임베딩·검색을 제외한 답변 생성 단계의 시간입니다. '}전체 API 응답 시간과 다릅니다.</p>
+            </article>
           </section>
           <ModelComparison series={data.series} selected={selected} reference={latest} cutoff={cutoff} />
           <DashboardReviewStatus key={`${latest.run_id}:${revision}`} runId={latest.run_id} onExpired={onExpired} />

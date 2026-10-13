@@ -21,6 +21,7 @@ RESULT_SCHEMA = pa.DataFrameSchema(
         "retrieval_recall": pa.Column(float, pa.Check.in_range(0, 1), nullable=True),
         "citation_recall": pa.Column(float, pa.Check.in_range(0, 1), nullable=True),
         "status_match": pa.Column(float, pa.Check.isin([0.0, 1.0]), nullable=True),
+        "answer_elapsed_ms": pa.Column(float, pa.Check.ge(0), nullable=True),
         "failed": pa.Column(float, pa.Check.isin([0.0, 1.0])),
     },
     strict=True,
@@ -35,6 +36,7 @@ def result_frame(report):
                 "retrieval_recall": case["retrievalRecallAtK"],
                 "citation_recall": case["answerCitationRecall"],
                 "status_match": case["answerStatusMatches"],
+                "answer_elapsed_ms": case.get("answerElapsedMs"),
                 "failed": case["failure"] is not None,
             }
             for case in report["cases"]

@@ -190,6 +190,13 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_live
 `capture.json`과 `usage-summary.json`은 실패 시에도 남기며, 완료된 생성 결과만 후처리합니다.
 새 실행은 `recorded-live-evaluation`, 저장 기록 재계산·복구는 `recorded-capture-replay`로 구분합니다.
 
+새 RAG 실행은 답변 Service 호출 전후의 단조 증가 시계로 성공한 사례의 `answerElapsedMs`를 기록합니다.
+청크 임베딩·검색·파일 저장은 제외하고 답변 생성 및 Service 내부 응답 검증을 포함합니다.
+평가기의 `meanAnswerLatencyMs`는 시간이 기록된 성공 사례만 평균 내며 표본 수를 함께 저장합니다.
+Pandera 결과 표와 Ops 성능 대시보드까지 같은 값을 전달합니다. 과거 캡처의 누락 값과 실패한 답변은
+`null`로 유지하며 0초로 환산하지 않습니다. 무료 재평가·복구는 원래 시간을 보존하며 새 실행 시간으로
+대체하지 않습니다. 전체 HTTP API 응답 시간이나 첫 토큰 지연(TTFT)을 나타내는 지표는 아닙니다.
+
 청크 벡터는 `LLMOPS_RESULTS_DIR/vector-cache/<key>.json`에 저장합니다. 원문 해시·청크 ID/본문/순서·
 임베딩 모델/차원·임베딩 전처리 코드 해시가 키를 결정합니다. 질문·답변 모델·답변 프롬프트만 바꾸면 재사용합니다.
 최초 생성에서 사용량이 확인·정산된 벡터만 공개하며, 동시 생성에서는 원자적 파일 생성으로 먼저 저장된 파일을 보존합니다.

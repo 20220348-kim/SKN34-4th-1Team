@@ -59,6 +59,51 @@ def test_fixture_only_publishes_no_measurement():
     assert report["metrics"]["retrievalRecallAtK"]["eligibleCaseCount"] == 2
 
 
+def test_answer_latency_uses_only_recorded_successes_and_preserves_missing_values(records, tmp_path):
+    fixture, capture = records
+    capture["execution"].update(
+        kind="recorded", model="recorded-model", embeddingModel="recorded-embedding",
+        promptSha256="a" * 64, recorderSha256="b" * 64,
+    )
+    legacy = evaluate_copy(tmp_path, fixture, capture)
+    assert legacy["metrics"]["meanAnswerLatencyMs"] == {
+        "value": None, "measuredCaseCount": 0, "eligibleCaseCount": 3,
+    }
+    capture["cases"][0]["answerElapsedMs"] = 0
+    capture["cases"][1]["answerElapsedMs"] = 1500
+    fail_at(capture["cases"][2], "answer")
+    capture["cases"][2]["answerElapsedMs"] = None
+    report = evaluate_copy(tmp_path, fixture, capture)
+    assert report["metrics"]["meanAnswerLatencyMs"] == {
+        "value": 750, "measuredCaseCount": 2, "eligibleCaseCount": 3,
+    }
+    assert [case["answerElapsedMs"] for case in report["cases"]] == [0, 1500, None]
+
+
+@pytest.mark.parametrize("value", [-1, True, "100", float("nan"), float("inf")])
+def test_invalid_answer_duration_is_rejected(records, value):
+    fixture, capture = records
+    documents, cases = rag.validate_fixture(fixture)
+    observation = capture["cases"][0]
+    observation["answerElapsedMs"] = value
+    case = cases[observation["caseId"]]
+    with pytest.raises(ValueError, match="answer duration"):
+        rag.validate_observation(observation, case, documents[case["documentId"]], "recorded")
+
+
+@pytest.mark.parametrize("kind,failed", [("synthetic", False), ("integration-stub", False), ("recorded", True)])
+def test_synthetic_or_failed_answers_cannot_claim_measured_duration(records, kind, failed):
+    fixture, capture = records
+    documents, cases = rag.validate_fixture(fixture)
+    observation = capture["cases"][0]
+    if failed:
+        fail_at(observation, "answer")
+    observation["answerElapsedMs"] = 100
+    case = cases[observation["caseId"]]
+    with pytest.raises(ValueError, match="answer duration"):
+        rag.validate_observation(observation, case, documents[case["documentId"]], kind)
+
+
 def test_retrieval_and_citation_omissions_are_scored_separately():
     report = rag.evaluate(FIXTURE, CAPTURE)
     complete_search, missed_search, unanswerable = report["cases"]

@@ -299,6 +299,7 @@ def test_original_search_failure_remains_visible_in_successful_recalculation(
             },
         )
         report["metrics"] = {
+            "meanAnswerLatencyMs": report["metrics"]["meanAnswerLatencyMs"],
             "retrievalRecallAtK": {
                 "value": 0.0,
                 "measuredCaseCount": 1,

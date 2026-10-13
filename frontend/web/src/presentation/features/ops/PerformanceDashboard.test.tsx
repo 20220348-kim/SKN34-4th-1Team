@@ -39,6 +39,25 @@ function mount(onExpired = vi.fn(), path = '/ops/dashboard') {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('성능 대시보드', () => {
+  it('RAG 답변 지연을 초 단위와 측정 표본으로 표시하고 과거 미측정 사유를 안내한다', async () => {
+    const payload = data()
+    payload.series[0].scope = 'source-chunks-retrieval-answer'
+    payload.series[0].points = [{ ...latest, samples: { ...latest.samples, latency: 4 } }]
+    payload.series.push({ ...payload.series[0], id: 'legacy-rag', dataset_label: '시간 기록 없는 과거 평가',
+      points: [{ ...old, values: { ...old.values, latency: null } }] })
+    vi.stubGlobal('fetch', vi.fn(async () => json(payload)))
+    mount()
+    const cards = await screen.findByRole('region', { name: '최근 성능 지표' })
+    const card = within(cards).getByRole('heading', { name: '평균 답변 지연' }).closest('article')!
+    expect(within(card).getByText('1.23')).toBeTruthy()
+    expect(within(card).getByText('4개 답변 측정 / 전체 6개')).toBeTruthy()
+    expect(card.textContent).toContain('임베딩·검색을 제외한 답변 생성 단계')
+    fireEvent.change(screen.getByLabelText('평가 자료 · 채점 버전'), { target: { value: 'legacy-rag' } })
+    expect(within(card).getByText('미측정')).toBeTruthy()
+    expect(within(card).getByText('이 평가에는 답변 생성 시간이 저장되지 않았습니다.')).toBeTruthy()
+    expect(within(card).queryByText('0')).toBeNull()
+  })
+
   it('실측 없는 허용 모델을 미측정으로 선택하고 점수나 평가 요청을 만들지 않는다', async () => {
     const fetch = vi.fn(async () => json(data())); vi.stubGlobal('fetch', fetch)
     mount()

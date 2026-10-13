@@ -151,6 +151,15 @@ def measurement(run):
             coverage[key] = digest(
                 sorted(row["caseId"] for row in cases if row.get(field) is not None)
             )
+        latency = report.get("metrics", {}).get("meanAnswerLatencyMs", {})
+        values["latency"] = number(latency.get("value"))
+        if latency:
+            samples["latency"] = number(latency.get("measuredCaseCount"))
+            coverage["latency"] = digest(
+                sorted(
+                    row["caseId"] for row in cases if number(row.get("answerElapsedMs")) is not None
+                )
+            )
     else:
         return None
     if not model or model != origin.live_config.get("model") or not fingerprint(capture):
