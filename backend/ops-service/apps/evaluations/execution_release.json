@@ -122,11 +122,11 @@
     "document_vectors": "content-addressed-evaluation-cache-v1"
   },
   "pipeline": {
-    "sha256": "b3f00603ca28c776f1e5c385512131ec270eeb9ce0891eb56e78696c4fb02862",
+    "sha256": "cb7d2e29e80a567ecc7cc546d4141db7326316d7f45a0fd7c50eff42c66c640d",
     "files": {
       "evaluation/support-program-evidence/ops_flow.py": "f1381e5de9362797ea75c70529f60230e75e06f38bb5ca5d9312753f9cbd9840",
       "evaluation/support-program-evidence/budget_client.py": "5fb2ba03088467201693f94ec2c2b074ab15998f4e2ea6724c0c67cdef6613f9",
-      "backend/ops-service/apps/evaluations/catalog.py": "fab46fe80efd7fe02c485440354f70d5941811c71234cec5a2552699acfca44f",
+      "backend/ops-service/apps/evaluations/catalog.py": "e1af8bb2da1a8acd509d72deef81fdf6c753ebfb1eab68ecfb0bd7fb9c2a04ad",
       "backend/ops-service/apps/evaluations/recovery_inputs.py": "0070dfdda076bf3cda0eb2202f6a175a5eef02c02b6e02a6d21c4d434250a3bb",
       "backend/ops-service/apps/evaluations/execution_spec.py": "59c0f4a381cb19f35dd8653258826b9d5c60f89a0675abdc961ba57067e39ab9",
       "backend/ops-service/apps/evaluations/quality_policy.py": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84",

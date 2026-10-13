@@ -541,10 +541,14 @@ runner가 결과 저장소에 쓰고 Ops는 로컬 읽기 또는 인증된 artif
 
 1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate_deployment`로 최신 코드와 migration `0016_budget_operation_identity`까지 반영한다.
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
-   `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
+   `LLMOPS_LIVE_MODEL=gpt-6-luna`, `LLMOPS_ALLOWED_MODELS=gpt-6-luna,gpt-6-sol,gpt-5.6-luna`,
+   `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.
 3. `dc up -d ops-service ops-sync evaluation-runner`로 API·동기화·평가 실행기 설정을 반영한다.
-4. Ops에서 **새 응답 생성**을 고르고 자료·기준·전송 내용·최대 호출 예산을 확인한 뒤 실행한다.
+4. Ops에서 **새 응답 생성**을 고르고 자료·평가 모델·기준·전송 내용·최대 호출 예산을 확인한 뒤 실행한다.
+   모델을 바꾸면 승인을 다시 확인한다. 같은 자료를 다른 모델로 실행한 뒤 성능 대시보드의
+   **모델별 결과 비교**에서 최신 실측을 비교한다. 모델 목록은 API·실행기에 동일하게 적용하며,
+   호출 수·토큰 한도가 같아도 모델별 요금은 다를 수 있다.
 
 | 자료 | OpenAI로 전송하는 범위 | 호출 예산 |
 |---|---|---|

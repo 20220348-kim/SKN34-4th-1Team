@@ -30,10 +30,57 @@ def fingerprint(value):
     return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
 
 
+def generation_config_fingerprint(origin, scope):
+    """모델 이름 외 생성 조건을 비교한다. 과거에 없는 명세를 현재 설정으로 채우지 않는다."""
+    config = origin.live_config
+    if not isinstance(origin.execution_spec, dict) or not isinstance(config, dict):
+        return None
+    generation = origin.execution_spec.get("generation")
+    if (
+        not isinstance(generation, dict)
+        or not fingerprint(generation.get("sha256"))
+        or not isinstance(generation.get("settings"), dict)
+        or not generation["settings"]
+        or any(
+            type(config.get(key)) is not int or config[key] < 1
+            for key in ("max_input_tokens", "max_output_tokens")
+        )
+    ):
+        return None
+    if scope == RAG_SCOPE and (
+        not isinstance(config.get("embedding_model"), str)
+        or not config["embedding_model"]
+        or type(config.get("embedding_dimensions")) is not int
+        or config["embedding_dimensions"] < 1
+        or config.get("source_mode") != "fixed-source-and-chunks"
+    ):
+        return None
+    return digest(
+        {
+            "generation": {"sha256": generation["sha256"], "settings": generation["settings"]},
+            "live_config": {
+                key: config.get(key)
+                for key in (
+                    "max_input_tokens",
+                    "max_output_tokens",
+                    "embedding_model",
+                    "embedding_dimensions",
+                    "source_mode",
+                )
+            },
+        }
+    )
+
+
 def measurement(run):
     """replay는 새 실측으로 세지 않는다. 복구는 원본 live 실행 시각에 귀속한다."""
     origin = run.source_run if run.execution_mode == "recovery" else run
-    if origin is None or origin.execution_mode != "live":
+    if (
+        origin is None
+        or origin.execution_mode != "live"
+        or not isinstance(origin.live_config, dict)
+        or not isinstance(run.execution_spec, dict)
+    ):
         return None
     comparison = run.comparison
     scope = comparison.get("scope")
@@ -129,6 +176,7 @@ def measurement(run):
             "measured_at": (origin.started_at or origin.created_at).isoformat(),
             "evaluated_at": (run.finished_at or run.created_at).isoformat(),
             "prompt_sha256": prompt if fingerprint(prompt) else None,
+            "generation_config_sha256": generation_config_fingerprint(origin, scope),
             "values": values,
             "samples": samples,
             "coverage": coverage,

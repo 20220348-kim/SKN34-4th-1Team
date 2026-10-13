@@ -39,6 +39,7 @@ services:
       LLMOPS_RAG_LIVE_ENABLED: ${LLMOPS_RAG_LIVE_ENABLED:-false}
       LLMOPS_SCHEDULES_ENABLED: ${LLMOPS_SCHEDULES_ENABLED:-false}
       LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
+      LLMOPS_ALLOWED_MODELS: ${LLMOPS_ALLOWED_MODELS:-gpt-6-luna,gpt-6-sol,gpt-5.6-luna}
       LANGFUSE_PROJECT_URL: http://localhost:13000/project/govbiz-evidence-development
     volumes:
       - ops-results:/results:ro
@@ -92,6 +93,7 @@ services:
       LLMOPS_RAG_LIVE_ENABLED: ${LLMOPS_RAG_LIVE_ENABLED:-false}
       LLMOPS_SCHEDULES_ENABLED: ${LLMOPS_SCHEDULES_ENABLED:-false}
       LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
+      LLMOPS_ALLOWED_MODELS: ${LLMOPS_ALLOWED_MODELS:-gpt-6-luna,gpt-6-sol,gpt-5.6-luna}
       LLMOPS_OPS_API_URL: http://ops-service:8000
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes: ["ops-results:/results"]

@@ -14,13 +14,33 @@ LEGACY_DATASET_ID = "target-coverage-20260907-v1"
 LIVE_CAPTURE_ID = "new-model-response"
 MAX_INPUT_TOKENS = 32768
 RAG_SCOPE = "source-chunks-retrieval-answer"
+DEFAULT_ALLOWED_MODELS = "gpt-6-luna,gpt-6-sol,gpt-5.6-luna"
+
+
+def allowed_models():
+    """API와 실행기가 함께 허용한 모델만 선택한다. 기본 모델은 항상 보존한다."""
+    configured = os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna").strip()
+    models = [
+        configured,
+        *(
+            item.strip()
+            for item in os.environ.get("LLMOPS_ALLOWED_MODELS", DEFAULT_ALLOWED_MODELS).split(",")
+        ),
+    ]
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", model) for model in models):
+        raise ValueError("평가 허용 모델 설정을 확인하세요.")
+    return list(dict.fromkeys(models))
 
 
 def evaluation_scope(dataset_id):
     return DATASETS[dataset_id].get("evaluation_scope", "fixed-answer-context-only")
 
 
-def live_config(dataset_id, *, document_vectors=None):
+def live_config(dataset_id, *, model=None, document_vectors=None):
+    models = allowed_models()
+    model = models[0] if model is None else model
+    if model not in models:
+        raise ValueError("서버에서 허용한 평가 모델을 선택하세요.")
     dataset = DATASETS[dataset_id]
     if evaluation_scope(dataset_id) == RAG_SCOPE:
         from .execution_spec import read_release
@@ -39,7 +59,7 @@ def live_config(dataset_id, *, document_vectors=None):
         )
         return {
             **plan["live_config"],
-            "model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
+            "model": model,
             "fixture_sha256": dataset["fixture_sha256"],
             "source_mode": "fixed-source-and-chunks",
             "max_total_input_tokens": sum(
@@ -50,7 +70,7 @@ def live_config(dataset_id, *, document_vectors=None):
             ),
         }
     return {
-        "model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
+        "model": model,
         "fixture_sha256": dataset["fixture_sha256"],
         "max_model_calls": len(dataset["case_ids"]),
         "max_output_tokens": 2000,
@@ -65,9 +85,12 @@ def validate_execution(
     if execution_mode == "live":
         if (
             candidate_id != LIVE_CAPTURE_ID
+            or not isinstance(config, dict)
+            or config.get("model") not in allowed_models()
             or config
             != live_config(
                 dataset_id,
+                model=config.get("model"),
                 document_vectors=config.get("document_vectors") if pinned_vectors else None,
             )
             or type(config.get("max_model_calls")) is not int
@@ -143,6 +166,7 @@ def public_datasets():
     result = []
     for item in DATASETS.values():
         config = live_config(item["id"])
+        options = [{**config, "model": model} for model in allowed_models()] if config else []
         result.append(
             {
                 "id": item["id"],
@@ -151,6 +175,13 @@ def public_datasets():
                 "case_ids": item["case_ids"],
                 "fixture": item["fixture"],
                 "live_config": config,
+                "live_options": [
+                    {
+                        "live_config": option,
+                        "execution_profile": digest(profile(release, item["id"], "live", option)),
+                    }
+                    for option in options
+                ],
                 "execution_profiles": {
                     mode: (
                         digest(

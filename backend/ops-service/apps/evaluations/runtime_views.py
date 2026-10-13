@@ -13,7 +13,7 @@ from rest_framework.response import Response
 
 from .budget import BudgetUnavailable, operation_plan
 from .budget_reporting import budget_summary
-from .catalog import DATASETS, RAG_SCOPE, evaluation_scope, live_config
+from .catalog import DATASETS, RAG_SCOPE, allowed_models, evaluation_scope, live_config
 from .execution_spec import digest, profile, read_release
 from .models import EvaluationAdmission, EvaluationBudget
 from .runtime_checks import inspect_runtime
@@ -36,6 +36,12 @@ def runtime_status(request):
 class LiveReadinessQuery(serializers.Serializer):
     dataset_id = serializers.ChoiceField(choices=tuple(DATASETS))
     execution_profile = serializers.RegexField(r"^[a-f0-9]{64}$")
+    model = serializers.CharField(max_length=200, required=False, trim_whitespace=False)
+
+    def validate_model(self, value):
+        if value not in allowed_models():
+            raise serializers.ValidationError("서버에서 허용한 평가 모델을 선택하세요.")
+        return value
 
 
 @never_cache
@@ -43,13 +49,19 @@ class LiveReadinessQuery(serializers.Serializer):
 def live_readiness(request):
     """Read configured admission and budget only; never reserve, dispatch or call a provider."""
     query = LiveReadinessQuery(data=request.query_params)
-    query.is_valid(raise_exception=True)
+    try:
+        query.is_valid(raise_exception=True)
+    except ValueError:
+        return Response(
+            {"code": "LIVE_PLAN_UNAVAILABLE", "detail": "서버의 실행 계획을 확인할 수 없습니다."},
+            status=503,
+        )
     dataset_id = query.validated_data["dataset_id"]
     scope = evaluation_scope(dataset_id)
     if scope not in {"fixed-answer-context-only", RAG_SCOPE}:
         return Response({"detail": "새 모델 평가를 지원하지 않는 자료입니다."}, status=400)
     try:
-        config = live_config(dataset_id)
+        config = live_config(dataset_id, model=query.validated_data.get("model"))
         if config is None:
             return Response({"detail": "등록된 새 모델 호출 계획이 없습니다."}, status=400)
         spec = profile(read_release(), dataset_id, "live", config)

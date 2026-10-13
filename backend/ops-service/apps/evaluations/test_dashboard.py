@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIClient
 
-from .dashboard import RUN_LIMIT, dashboard_data
+from .dashboard import RAG_SCOPE, RUN_LIMIT, dashboard_data, generation_config_fingerprint
 from .models import EvaluationRun
 
 
@@ -117,10 +117,82 @@ class DashboardAggregationTests(SimpleTestCase):
             lambda run: run.execution_spec.clear(),
             lambda run: run.live_config.update(model="changed"),
             lambda run: run.comparison.update(scope="unknown"),
+            lambda run: setattr(run, "live_config", None),
+            lambda run: setattr(run, "live_config", []),
+            lambda run: setattr(run, "execution_spec", None),
         ):
             run = fixed_run()
             mutate(run)
             self.assertEqual(dashboard_data([run], 1)["excluded"]["unverifiable"], 1)
+
+    def test_generation_fingerprint_preserves_conditions_but_excludes_model_and_cache(self):
+        run = fixed_run()
+        run.execution_spec["generation"] = {
+            "sha256": "a" * 64,
+            "settings": {"reasoning": {"effort": "none"}},
+        }
+        run.live_config.update(
+            max_input_tokens=32768,
+            max_output_tokens=2000,
+            embedding_model="text-embedding-3-small",
+            embedding_dimensions=1536,
+            source_mode="fixed-source-and-chunks",
+        )
+        initial = generation_config_fingerprint(run, RAG_SCOPE)
+        self.assertIsNotNone(initial)
+        unchanged = deepcopy(run)
+        unchanged.live_config.update(
+            model="model-b",
+            document_vectors={"case": {"sha256": "b" * 64}},
+            max_model_calls=1,
+            max_total_input_tokens=1234,
+            max_total_output_tokens=2000,
+        )
+        unchanged.execution_spec["reference_sha256"] = "c" * 64
+        self.assertEqual(generation_config_fingerprint(unchanged, RAG_SCOPE), initial)
+        for field, value in (
+            ("max_input_tokens", 16384),
+            ("max_output_tokens", 1000),
+            ("embedding_model", "text-embedding-3-large"),
+            ("embedding_dimensions", 3072),
+        ):
+            with self.subTest(field=field):
+                changed = deepcopy(run)
+                changed.live_config[field] = value
+                self.assertNotEqual(generation_config_fingerprint(changed, RAG_SCOPE), initial)
+        for generation in (
+            {"sha256": "b" * 64, "settings": {"reasoning": {"effort": "none"}}},
+            {"sha256": "a" * 64, "settings": {"reasoning": {"effort": "low"}}},
+        ):
+            changed = deepcopy(run)
+            changed.execution_spec["generation"] = generation
+            self.assertNotEqual(generation_config_fingerprint(changed, RAG_SCOPE), initial)
+
+    def test_recovery_uses_original_generation_and_missing_conditions_stay_unknown(self):
+        origin = fixed_run()
+        self.assertIsNone(
+            dashboard_data([origin], 1)["series"][0]["points"][0]["generation_config_sha256"]
+        )
+        origin.execution_spec["generation"] = {"sha256": "a" * 64, "settings": {"max_retries": 0}}
+        origin.live_config.update(max_input_tokens=32768, max_output_tokens=2000)
+        recovery = fixed_run(execution_mode="recovery", source_run=origin, live_config={})
+        expected = dashboard_data([origin], 1)["series"][0]["points"][0]["generation_config_sha256"]
+        self.assertIsNotNone(expected)
+        self.assertEqual(
+            dashboard_data([recovery], 1)["series"][0]["points"][0]["generation_config_sha256"],
+            expected,
+        )
+        for field in ("max_input_tokens", "max_output_tokens"):
+            changed = deepcopy(origin)
+            changed.live_config.pop(field)
+            self.assertIsNone(generation_config_fingerprint(changed, "fixed-answer-context-only"))
+        for field in ("live_config", "execution_spec"):
+            for value in (None, [], "legacy-unavailable"):
+                with self.subTest(field=field, value=value):
+                    changed = deepcopy(origin)
+                    setattr(changed, field, value)
+                    self.assertIsNone(generation_config_fingerprint(changed, RAG_SCOPE))
+        self.assertIsNone(generation_config_fingerprint(origin, RAG_SCOPE))
 
     def test_invalid_numbers_are_unmeasured_and_window_is_explicit(self):
         for value in (True, float("nan"), float("inf"), -1, 2):

@@ -290,12 +290,28 @@ class ScheduleTests(ScheduleFixture, TestCase):
         self.assertEqual(EvaluationBudgetReservation.objects.count(), 1)
         self.dispatch.assert_not_called()
 
-    def test_profile_change_blocks_and_never_follows_new_model(self):
+    def test_removed_model_blocks_and_never_follows_new_model(self):
         schedule, _ = self.create()
-        with patch.dict(os.environ, {"LLMOPS_LIVE_MODEL": "different-model"}):
+        with patch.dict(
+            os.environ,
+            {"LLMOPS_LIVE_MODEL": "different-model", "LLMOPS_ALLOWED_MODELS": "different-model"},
+        ):
             dispatch_due_schedules()
         self.assertEqual(schedule.occurrences.get().status, "BLOCKED")
         self.dispatch.assert_not_called()
+
+    def test_schedule_keeps_selected_model_when_server_default_changes(self):
+        dataset = next(item for item in public_datasets() if item["id"] == self.dataset)
+        option = next(
+            item for item in dataset["live_options"] if item["live_config"]["model"] == "gpt-6-sol"
+        )
+        schedule, _ = self.create(**option)
+        with patch.dict(os.environ, {"LLMOPS_LIVE_MODEL": "gpt-5.6-luna"}):
+            dispatch_due_schedules()
+        occurrence = schedule.occurrences.get()
+        self.assertEqual(occurrence.status, "SUBMITTED")
+        self.assertEqual(occurrence.run.live_config["model"], "gpt-6-sol")
+        self.dispatch.assert_called_once()
 
     def test_budget_reduction_or_disable_blocks_and_does_not_retry_that_day(self):
         schedule, _ = self.create()

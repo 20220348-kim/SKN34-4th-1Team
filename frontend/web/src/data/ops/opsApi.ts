@@ -17,6 +17,7 @@ const dashboardSchema = z.object({
     points: z.array(z.object({
       run_id: z.uuid(), source_run_id: z.uuid().nullable(), mode: z.enum(['live', 'recovery']),
       measured_at: z.iso.datetime({ offset: true }), evaluated_at: z.iso.datetime({ offset: true }), prompt_sha256: z.string().nullable(),
+      generation_config_sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable().default(null),
       values: dashboardMetricsSchema, samples: dashboardSamplesSchema, coverage: dashboardCoverageSchema,
     })).min(1),
   })),
@@ -59,6 +60,8 @@ const sessionSchema = z.object({
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
     baseline: z.object({ id: z.string(), label: z.string(), version: z.number().int().nonnegative() }).nullable(),
     fixture: z.string(), live_config: liveConfigSchema.nullable(),
+    live_options: z.array(z.object({ live_config: liveConfigSchema, execution_profile: z.string().regex(/^[a-f0-9]{64}$/) }))
+      .refine((options) => new Set(options.map((option) => option.live_config.model)).size === options.length).optional(),
     execution_profiles: z.object({ replay: z.string().regex(/^[a-f0-9]{64}$/), live: z.string().regex(/^[a-f0-9]{64}$/).nullable() }),
   })),
 })
@@ -619,9 +622,9 @@ export const createEvaluationSchedule = (data: ScheduleInput, owner: string) => 
 export const pauseEvaluationSchedule = (id: string, data: { request_id: string; reason: string }, owner: string) => post(`/schedules/${encodeURIComponent(id)}/pause`, data,
   scheduleSchema.refine((value) => value.id === id && value.state === 'paused' && value.paused_by === owner && value.pause_reason === data.reason), false, owner)
 export const getBudgetSummary = (signal?: AbortSignal) => request('/budget', budgetSummarySchema.extend({ as_of: z.string() }), { signal })
-export const getLiveReadiness = (datasetId: string, executionProfile: string, signal?: AbortSignal) => request(
-  `/evaluations/live-readiness?${new URLSearchParams({ dataset_id: datasetId, execution_profile: executionProfile })}`,
-  liveReadinessSchema.refine((value) => value.dataset_id === datasetId && value.execution_profile === executionProfile, '선택한 실행 설정과 점검 결과가 다릅니다.'), { signal },
+export const getLiveReadiness = (datasetId: string, executionProfile: string, signal?: AbortSignal, model?: string) => request(
+  `/evaluations/live-readiness?${new URLSearchParams({ dataset_id: datasetId, execution_profile: executionProfile, ...(model ? { model } : {}) })}`,
+  liveReadinessSchema.refine((value) => value.dataset_id === datasetId && value.execution_profile === executionProfile && (!model || value.model === model), '선택한 실행 설정과 점검 결과가 다릅니다.'), { signal },
 )
 export const getBudgetReservations = (page: number, signal?: AbortSignal) => request(`/budget/reservations?page=${page}`, budgetPageSchema, { signal })
 export const getUnaccountedRuns = (page: number, signal?: AbortSignal) => request(`/budget/unaccounted-runs?page=${page}`, unaccountedRunsSchema, { signal })

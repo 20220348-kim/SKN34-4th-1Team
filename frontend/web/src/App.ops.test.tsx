@@ -628,7 +628,7 @@ it('새 모델 평가는 전송 자료와 호출 예산 확인 후 한 번만 �
   fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
   const button = screen.getByRole('button', { name: '새 응답 생성 및 평가' })
   expect(button).toHaveProperty('disabled', true)
-  expect(screen.getByText('gpt-6-luna')).toBeTruthy()
+  expect(screen.getByLabelText('평가 모델')).toHaveProperty('value', 'gpt-6-luna')
   expect(screen.queryByLabelText('후보 실행')).toBeNull()
   fireEvent.click(screen.getByRole('checkbox'))
   expect(button).toHaveProperty('disabled', false)
@@ -637,6 +637,78 @@ it('새 모델 평가는 전송 자료와 호출 예산 확인 후 한 번만 �
   const posts = fetchMock.mock.calls.filter(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')
   expect(posts).toHaveLength(1)
   expect(JSON.parse(posts[0][1]!.body as string)).toMatchObject({ execution_mode: 'live', candidate_capture_id: 'new-model-response', live_config: liveConfig, confirm_paid_run: true })
+})
+
+const modelOptions = [
+  { live_config: liveConfig, execution_profile: executionProfiles.live },
+  { live_config: { ...liveConfig, model: 'gpt-6-sol', max_output_tokens: 4000 }, execution_profile: 'f'.repeat(64) },
+  { live_config: { ...liveConfig, model: 'gpt-5.6-luna' }, execution_profile: 'a'.repeat(64) },
+]
+
+it.each([1, 2])('허용 모델 %i를 선택하면 해당 모델 설정과 실행 명세를 점검·접수한다', async (index) => {
+  const original = fetchMock.getMockImplementation()!
+  const option = modelOptions[index]
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/ops/session') return json({ ...session(), datasets: [{ ...dataset, live_options: modelOptions }] })
+    if (path.includes('/live-readiness?')) return json({
+      as_of: '2026-10-03T01:00:00Z', dataset_id: dataset.id, execution_profile: option.execution_profile,
+      evaluation_scope: dataset.evaluation_scope, model: option.live_config.model, state: 'checked',
+      required: { calls: 6, input_tokens: 196608, output_tokens: 24000 },
+      remaining: { calls: 12, input_tokens: 400000, output_tokens: 48000 }, blockers: [], warnings: [],
+    })
+    return original(path, options)
+  })
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  expect(within(screen.getByLabelText('평가 모델')).getAllByRole('option')).toHaveLength(3)
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.change(screen.getByLabelText('평가 모델'), { target: { value: option.live_config.model } })
+  expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
+  expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: '실행 설정·예산 점검' }))
+  await screen.findByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')
+  expect(fetchMock.mock.calls.find(([path]) => path.includes('/live-readiness?'))?.[0]).toBe(
+    `/api/v1/ops/evaluations/live-readiness?dataset_id=${dataset.id}&execution_profile=${option.execution_profile}&model=${option.live_config.model}`,
+  )
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: '새 응답 생성 및 평가' }))
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  const posts = fetchMock.mock.calls.filter(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')
+  expect(posts).toHaveLength(1)
+  expect(JSON.parse(String(posts[0][1]?.body))).toMatchObject({ live_config: option.live_config, execution_profile: option.execution_profile, confirm_paid_run: true })
+})
+
+it('모델 선택은 메뉴 이동 후 유지하고 다른 자료에서 사라진 모델은 자동 대체하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+    ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, live_options: modelOptions }, comparisonDataset] })) : original(path, options))
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  fireEvent.change(screen.getByLabelText('평가 모델'), { target: { value: 'gpt-6-sol' } })
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('link', { name: '예산 관리' }))
+  await screen.findByRole('region', { name: '누적 평가 예산' })
+  fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
+  expect(await screen.findByLabelText('평가 모델')).toHaveProperty('value', 'gpt-6-sol')
+  expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
+  fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: comparisonDataset.id } })
+  expect(screen.getByLabelText('평가 모델')).toHaveProperty('value', 'gpt-6-sol')
+  expect(screen.getByRole('alert').textContent).toContain('허용된 평가 모델을 다시 선택하세요')
+  expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
+  expect(screen.queryByRole('button', { name: '실행 설정·예산 점검' })).toBeNull()
+  fireEvent.change(screen.getByLabelText('평가 모델'), { target: { value: 'gpt-6-luna' } })
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('서버가 빈 허용 목록을 내려주면 이전 기본 모델로 실행하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+    ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, live_options: [] }] })) : original(path, options))
+  open()
+  expect(await screen.findByRole('option', { name: '새 응답 생성 · 유료 모델 호출' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
 
 it('평가 자료를 바꾸면 기존 예산 확인을 해제한다', async () => {
@@ -1012,6 +1084,32 @@ it('다른 관리자의 보관 요청은 복원하거나 제거하지 않는다'
   expect(screen.queryByText(/보관한 요청:/)).toBeNull()
   expect(fetchMock.mock.calls.some(([path]) => path === `/api/v1/ops/evaluations/${id}`)).toBe(false)
   expect(readPendingEvaluation('core:other')).toEqual(pendingRequest())
+})
+
+it('보관한 유료 요청은 허용 모델 목록이 바뀌어도 원래 모델·예산·명세로만 재시도한다', async () => {
+  const option = modelOptions[1]
+  const pending = { ...pendingRequest(), ...option }
+  storePendingEvaluation('core:99', pending)
+  const original = fetchMock.getMockImplementation()!
+  let accepted = false
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === `/api/v1/ops/evaluations/${id}` && !accepted) return json({}, 404)
+    if (path === '/api/v1/ops/evaluations') {
+      expect(JSON.parse(String(options?.body))).toMatchObject({ ...pending, execution_mode: 'live', confirm_paid_run: true })
+      accepted = true
+    }
+    return original(path, options)
+  })
+  open()
+  await screen.findByText(/아직 접수된 요청을 찾지 못했습니다/)
+  expect(screen.getByLabelText('평가 모델')).toHaveProperty('value', 'gpt-6-sol')
+  expect(screen.getByLabelText('평가 모델')).toHaveProperty('disabled', true)
+  expect(screen.getByText(/호출당 출력 최대 4,000토큰/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '실행 설정·예산 점검' })).toBeNull()
+  expect(accepted).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: '같은 요청으로 재시도' }))
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  expect(accepted).toBe(true)
 })
 
 it('손상된 보관 요청은 지우고 새 유료 요청을 만드는 대신 접수를 차단한다', async () => {
