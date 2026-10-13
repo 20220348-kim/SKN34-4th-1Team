@@ -20,7 +20,8 @@ import { useAppForeground } from '../components/useAppForeground'
 import { CatalogScreen } from './CatalogScreen'
 import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
-type Props = { initialProgram?: SupportProgramIdentity; onLogin(): void; onOpenProgram(identity: SupportProgramIdentity): void; onCreated(id: number): void; onList(): void; onPendingDocument(id: number): void }
+type Props = { initialProgram?: SupportProgramIdentity; onLogin(): void; onOpenProgram(identity: SupportProgramIdentity): void; onCreated(id: number): void; onList(): void; onPendingDocument(id: number): void
+  inline?: boolean; active?: boolean; disabled?: boolean; onOpenForms?(): void; onWorkingChange?(busy: boolean): void }
 const labels = { selected: '✓ 작성 대상 선택됨', select: '작성할 공고로 선택' }
 const terminal = (job: ApplicationFormDiscoveryJob) => job.status !== 'QUEUED' && job.status !== 'RUNNING'
 export function ApplicationPreparationNewScreen(props: Props) {
@@ -28,10 +29,10 @@ export function ApplicationPreparationNewScreen(props: Props) {
   if (auth.status !== 'signedIn' || !auth.session) return <PreparationAccess onLogin={props.onLogin} />
   return <OwnedNew key={auth.session.accessToken} token={auth.session.accessToken} email={auth.session.account.email} {...props} />
 }
-function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPendingDocument }: Props & { token: string; email: string }) {
+function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPendingDocument, inline = false, active = true, disabled = false, onOpenForms, onWorkingChange }: Props & { token: string; email: string }) {
   const { invalidateSession } = useAuth()
   const useCase = useMemo(() => applicationPreparationUseCase(token), [token])
-  const [step, setStep] = useState<'selection' | 'form'>('selection')
+  const [step, setStep] = useState<'selection' | 'form'>(inline ? 'form' : 'selection')
   const [method, setMethod] = useState<'filter' | 'saved'>('filter')
   const [savedVisited, setSavedVisited] = useState(false)
   const [program, setProgram] = useState<SupportProgram | SupportProgramDetail | null>(null)
@@ -55,6 +56,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
   formChoice.current = { formId, field }
   const base = getApiBaseUrl()
   const foreground = useAppForeground()
+  useEffect(() => { onWorkingChange?.(busy); return () => onWorkingChange?.(false) }, [busy, onWorkingChange])
   const reportError = useCallback((cause: unknown) => {
     if (cause instanceof ApplicationPreparationError && cause.status === 401) void invalidateSession().catch(() => undefined)
     setError(cause instanceof Error ? cause.message : '신청 양식을 확인하지 못했어요.')
@@ -72,7 +74,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
     return () => { active = false; request.current?.abort() }
   }, [base, email, revision])
   useEffect(() => {
-    if (!initialProgram) return
+    if (!initialProgram || !active) return
     const controller = new AbortController()
     void programClient(token).getDetail(initialProgram, controller.signal).then(result => {
       if (controller.signal.aborted) return
@@ -80,10 +82,10 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
       setProgram(result); setStep('form')
     }).catch(cause => { if (!controller.signal.aborted) reportError(cause) })
     return () => controller.abort()
-  }, [initialProgram?.sourceCode, initialProgram?.sourceProgramId, reportError, token])
+  }, [active, initialProgram?.sourceCode, initialProgram?.sourceProgramId, reportError, token])
   const source = program?.sourceCode, sourceId = program?.id
   useFocusEffect(useCallback(() => {
-    if (!foreground || step !== 'form' || !source || !sourceId) return
+    if (!active || !foreground || step !== 'form' || !source || !sourceId) return
     const controller = new AbortController(); request.current?.abort(); request.current = controller
     let timer: ReturnType<typeof setTimeout> | undefined
     setLoading(true); setError(null); setJob(null); setAvailability(null)
@@ -104,10 +106,10 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
       await useCase.markDiscoveryJobsSeen(source, sourceId, controller.signal)
     })().catch(cause => { if (!controller.signal.aborted) reportError(cause) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); clearTimeout(timer) }
-  }, [foreground, step, source, sourceId, revision, reportError, useCase]))
+  }, [active, foreground, step, source, sourceId, revision, reportError, useCase]))
   function toggle(next: SupportProgram) { if (busy) return; setProgram(previous => previous?.sourceCode === next.sourceCode && previous.id === next.id ? null : next) }
   async function analyze() {
-    if (!program || !pendingReady || guard.current || loading || job && !terminal(job)) return
+    if (!program || !pendingReady || disabled || guard.current || loading || job && !terminal(job)) return
     if (job?.status === 'UNKNOWN') { setError('이전 분석 결과를 먼저 확인해 주세요. 새 분석을 시작하지 않았어요.'); return }
     const record: PendingPreparationRequest = pending ?? { kind: 'discovery', sourceCode: program.sourceCode, sourceProgramId: program.id, requestKey: Crypto.randomUUID() }
     if (record.kind !== 'discovery' || record.sourceCode !== program.sourceCode || record.sourceProgramId !== program.id) { setError('다른 문서의 미확인 요청이 있어요. 해당 문서에서 먼저 확인해 주세요.'); return }
@@ -138,6 +140,28 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
     } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
     finally { guard.current = false; if (!controller.signal.aborted) setBusy(false) }
   }
+  if (inline) return <View style={{ gap: 12 }}>
+    {(error || pendingError) && <><Notice error>{error ?? pendingError}</Notice><Button label="양식·보관 요청 다시 확인" variant="secondary" disabled={busy} onPress={() => setRevision(value => value + 1)} /></>}
+    {loading && <ActivityIndicator color={colors.primary} accessibilityLabel="신청 양식 확인 중" />}
+    {job && <View style={{ gap: 8 }}>
+      <StatusBadge label={job.status === 'QUEUED' ? '분석 대기' : job.status === 'RUNNING' ? '입력칸 분석 중' : job.status === 'UNKNOWN' ? '결과 확인 필요' : job.status === 'FAILED' ? '분석 실패' : '분석 완료'} tone="info" />
+      {job.status === 'FAILED' && <Notice error>{new ApplicationPreparationError(422, job.failureCode ?? 'DISCOVERY_FAILED').message}</Notice>}
+      {job.status === 'UNKNOWN' && <Notice>이전 분석 결과를 확인한 뒤 새 분석을 요청해 주세요.</Notice>}
+      {job.result?.warnings.map(warning => <Text key={warning} style={styles.muted}>{warning}</Text>)}
+    </View>}
+    {pending?.kind === 'document' && <><Notice>결과를 확인하지 못한 문서 생성 요청이 있어 새 분석을 시작하지 않습니다.</Notice>
+      <Button label="미확인 문서의 신청 준비 열기" variant="secondary" onPress={() => onPendingDocument(pending.preparationId)} /></>}
+    {!loading && availability && <Text style={styles.body}>{forms.length ? `작성 양식 ${forms.length}개를 확인했어요.` : '저장된 작성 양식이 없어요. 입력칸 분석을 요청할 수 있어요.'}</Text>}
+    {forms.map(candidate => <View key={candidate.formVersionId} style={{ gap: 4 }}>
+      <Text style={styles.label}>{candidate.formTitle}</Text><Text style={styles.muted}>{candidate.attachmentFileName}</Text>
+    </View>)}
+    {program && <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(program.sourceUrl).catch(() => setError('공식 공고 원문을 열지 못했어요.'))} />}
+    <Text style={styles.muted}>입력칸 분석은 유료 AI를 사용합니다. 작성·문서 생성은 신청 문서 화면에서 이어갑니다.</Text>
+    <FeatureUsageLine token={token} feature="APPLICATION_DRAFT" revision={job?.status} />
+    <Button label={pending?.kind === 'discovery' ? '같은 분석 요청으로 확인' : forms.length ? '입력칸 다시 분석' : '입력칸 분석 시작'} variant="secondary"
+      disabled={disabled || !program || !pendingReady || loading || busy || Boolean(pending?.kind === 'document') || Boolean(job && (!terminal(job) || job.status === 'UNKNOWN'))} onPress={() => void analyze()} />
+    {forms.length > 0 && onOpenForms && <Button label="양식 선택하고 쓰기" disabled={disabled || loading || busy} onPress={onOpenForms} />}
+  </View>
   const selected = program ? [`${program.sourceCode}:${program.id}`] : []
   const header = <View style={{ gap: 12 }}><PreparationSteps active={0} /><Card><View style={styles.row}><Text style={[styles.label, { flex: 1 }]}>작성할 공고</Text><StatusBadge label={`${program ? 1 : 0} / 1 선택`} /></View>
     {program ? <View style={preparationUi.selected}><Text style={[styles.muted, { flex: 1 }]}>{program.title}</Text><Button label="해제" variant="ghost" disabled={busy} onPress={() => setProgram(null)} /></View>

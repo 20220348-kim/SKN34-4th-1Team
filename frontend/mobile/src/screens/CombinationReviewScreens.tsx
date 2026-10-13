@@ -80,21 +80,24 @@ function OwnedReviewList({ token, onNew }: { token: string; onNew(): void }) {
 export type CombinationReviewStep = 'selection' | 'confirm' | 'analysis'
 const scopeNotice = '두 공고를 함께 신청 · 수행할 수 있는지, 같은 과제 · 비용으로 두 번 받는 것은 아닌지 봐요. 다른 사업까지 합친 과거 수혜 이력 누적은 이 검토 범위 밖이에요.'
 
-export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram }: {
+export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram, inline = false, active = true, disabled = false, onWorkingChange }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; onLogin(): void
   onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void
+  inline?: boolean; active?: boolean; disabled?: boolean; onWorkingChange?(busy: boolean): void
 }) {
   const auth = useAuth()
   if (auth.status !== 'signedIn' || !auth.session) return <ReviewLogin onLogin={onLogin} />
   return <OwnedReviewEditor key={`${auth.session.accessToken}:${id ?? 'new'}:${runId ?? 'latest'}:${initialProgram?.sourceCode ?? ''}:${initialProgram?.sourceProgramId ?? ''}`} id={id} runId={runId} initialProgram={initialProgram}
-    initialStep={initialStep} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram} />
+    initialStep={initialStep} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram}
+    inline={inline} active={active} disabled={disabled} onWorkingChange={onWorkingChange} />
 }
 
-function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChange, token, email, onOpenProgram }: {
+function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChange, token, email, onOpenProgram, inline, active, disabled, onWorkingChange }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; token: string; email: string
   onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void
+  inline: boolean; active: boolean; disabled: boolean; onWorkingChange?(busy: boolean): void
 }) {
-  const vm = useCombinationReview(token, email, id, runId)
+  const vm = useCombinationReview(token, email, id, runId, active)
   const { invalidateSession } = useAuth()
   const router = useRouter()
   const [step, setStep] = useState<CombinationReviewStep>(initialStep ?? (id ? 'analysis' : 'selection'))
@@ -111,13 +114,15 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
   const signature = JSON.stringify(referencePrograms.map(reviewProgramKey))
   const initialSourceCode = initialProgram?.sourceCode
   const initialSourceProgramId = initialProgram?.sourceProgramId
-  const locked = vm.busy || Boolean(vm.pending)
+  const locked = disabled || vm.busy || Boolean(vm.pending)
+  useEffect(() => { onWorkingChange?.(vm.busy); return () => onWorkingChange?.(false) }, [vm.busy, onWorkingChange])
   useEffect(() => {
     if (!initialStep) return
     setStep(initialStep)
     if (initialStep === 'selection') setSelectionVisited(true)
   }, [initialStep])
   useEffect(() => {
+    if (!active) return
     const controller = new AbortController()
     setNameError(null)
     const client = programClient(token)
@@ -131,21 +136,21 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
       setNameError('선택한 공고의 이름을 확인하지 못했어요. 공식 정보를 다시 불러와 주세요.')
     } })
     return () => controller.abort()
-  }, [invalidateSession, nameRevision, signature, token])
+  }, [active, invalidateSession, nameRevision, signature, token])
   useEffect(() => {
-    if (id || !initialSourceCode || !initialSourceProgramId || initialSelected.current) return
-    initialSelected.current = true
+    if (!active || id || !initialSourceCode || !initialSourceProgramId || initialSelected.current) return
     const controller = new AbortController()
     const identity = { sourceCode: initialSourceCode, sourceProgramId: initialSourceProgramId }
     void programClient(token).getDetail(identity, controller.signal).then(program => {
       if (controller.signal.aborted || latest.current.draft.programs.length) return
       if (!program) throw new Error('공고를 찾을 수 없어요.')
+      initialSelected.current = true
       const reviewProgram: ReviewProgram = { ...identity, subProgramId: null, participation: unknownParticipation() }
       setNames(previous => ({ ...previous, [reviewProgramKey(reviewProgram)]: program.title }))
       vm.setDraft(previous => ({ ...previous, programs: [reviewProgram] }))
     }).catch(() => { if (!controller.signal.aborted) setNameError('출발한 공고를 확인하지 못했어요. 필터 검색에서 다시 선택해 주세요.') })
     return () => controller.abort()
-  }, [id, initialSourceCode, initialSourceProgramId, token, vm.setDraft])
+  }, [active, id, initialSourceCode, initialSourceProgramId, token, vm.setDraft])
 
   const name = (program: ReviewProgram, index: number) => names[reviewProgramKey(program)] ?? `사업 ${index + 1} · 공고명 확인 필요`
   function toggle(program: SupportProgram) {
@@ -162,6 +167,7 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
     if (savedId) onStepChange?.(savedId, next)
   }
   async function saveStep(next: CombinationReviewStep) {
+    if (disabled) return
     const saved = await vm.saveInputs()
     if (saved) changeStep(next, saved.id)
   }
@@ -170,9 +176,9 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
       { text: '취소', style: 'cancel' }, { text: '불러오기', onPress: () => { vm.reloadInputs(); changeStep('confirm') } },
     ])
   }
-  async function start(same = false) { if (await vm.start(same)) changeStep('analysis') }
+  async function start(same = false) { if (!disabled && await vm.start(same)) changeStep('analysis') }
   /** 바뀐 입력(내 상황 포함)을 저장한 뒤 그 버전으로 새 분석을 접수하고 결과 화면에서 새 실행을 보여 줘요. */
-  async function saveAndStart(additionalFacts?: string) { if (await vm.saveAndStart(additionalFacts)) changeStep('analysis') }
+  async function saveAndStart(additionalFacts?: string) { if (!disabled && await vm.saveAndStart(additionalFacts)) changeStep('analysis') }
   function supplement() { if (vm.run) vm.setFacts(vm.run.input.additionalFacts); changeStep('confirm') }
   const setSituation = (situation: ReviewSituation) => vm.setDraft(previous => ({ ...previous, programs: situation.programs, relation: situation.relation }))
   const unsupported = vm.draft.programs.some(program => !supportsAutomaticReview(program))
@@ -189,6 +195,39 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
     </Card>
     <SegmentedControl label="공고 선택 방법" options={[{ value: 'filter', label: '필터 검색' }, { value: 'saved', label: '관심 공고함' }]}
       value={method} onChange={value => { setMethod(value as typeof method); if (value === 'saved') setSavedVisited(true) }} />
+  </View>
+  if (inline) return <View style={{ gap: 12 }}>
+    {vm.loading && <ActivityIndicator accessibilityLabel="검토 불러오는 중" color={colors.primary} />}
+    {(vm.error || nameError) && <><Notice error>{vm.error ?? nameError}</Notice><Button label="검토·공고 다시 확인" variant="secondary" disabled={vm.busy} onPress={() => { vm.refresh(); setNameRevision(value => value + 1) }} /></>}
+    {vm.pending && <><Notice>결과를 확인하지 못한 분석 요청이 있어 새 실행을 막았습니다. 같은 요청으로 확인해 주세요.</Notice>
+      {vm.pending.reviewId !== (vm.review?.id ?? id) ? <Button label="미확인 검토 열기" onPress={() => onStepChange?.(vm.pending!.reviewId, 'analysis')} />
+        : <Button label="같은 요청으로 확인" busy={vm.busy} onPress={() => void start(true)} />}</>}
+    {selectionVisited && <View style={step !== 'selection' ? { display: 'none' } : undefined}
+      accessibilityElementsHidden={step !== 'selection'} importantForAccessibility={step === 'selection' ? 'auto' : 'no-hide-descendants'}>
+      <View style={method !== 'filter' ? { display: 'none' } : undefined} accessibilityElementsHidden={method !== 'filter'}
+        importantForAccessibility={method === 'filter' ? 'auto' : 'no-hide-descendants'}>
+        <CatalogScreen inline active={active && step === 'selection' && method === 'filter'} header={selectionHeader} onOpenProgram={onOpenProgram}
+          selection={{ keys: vm.selectedKeys, disabled: locked, onToggle: toggle }} />
+      </View>
+      {savedVisited && <View style={method !== 'saved' ? { display: 'none' } : undefined} accessibilityElementsHidden={method !== 'saved'}
+        importantForAccessibility={method === 'saved' ? 'auto' : 'no-hide-descendants'}>
+        <ReviewSavedPrograms inline active={active && step === 'selection' && method === 'saved'} header={selectionHeader} token={token}
+          keys={vm.selectedKeys} disabled={locked} onToggle={toggle} onOpen={onOpenProgram} />
+      </View>}
+    </View>}
+    {step === 'confirm' && <View style={{ gap: 12 }}>
+      {progress}{saveHint}<Text style={styles.heading}>이 내용으로 검토할까요?</Text><Notice>{scopeNotice}</Notice>
+      {vm.draft.programs.map((program, index) => <Text key={reviewProgramKey(program)} style={styles.body}>사업 {index + 1} · {name(program, index)}</Text>)}
+      <ReviewSituationFields value={vm.draft} names={names} disabled={locked} onChange={setSituation} />
+      <Field label="추가로 알려줄 내용 (선택)" multiline value={vm.facts} onChangeText={vm.setFacts} editable={!locked} maxLength={8000} />
+      {unsupported && <Notice error>선택한 공고는 현재 자동 분석을 지원하지 않아요.</Notice>}
+      <Notice>공식 원문을 바탕으로 AI가 분석하며 사용 비용이 발생할 수 있어요. 결과는 신청 자격이나 동시 수혜를 보장하지 않습니다.</Notice>
+      {vm.startBlocked && <Text accessibilityLiveRegion="polite" style={styles.muted}>{vm.startBlocked}</Text>}
+      <Button label="공고 다시 선택" variant="secondary" disabled={locked} onPress={() => changeStep('selection')} />
+    </View>}
+    {step === 'selection' ? <Button label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading || !vm.storageReady || vm.draft.programs.length !== 2} onPress={() => void saveStep('confirm')} />
+      : step === 'confirm' ? <Button label="검토 실행" busy={vm.busy} disabled={disabled || vm.loading || !vm.storageReady || Boolean(vm.startBlocked)} onPress={() => void saveAndStart()} />
+        : <Button label="검토 결과 화면에서 보기" onPress={() => { if (vm.review) onStepChange?.(vm.review.id, 'analysis') }} />}
   </View>
   return <View style={{ flex: 1 }}>
     {vm.loading && <ActivityIndicator accessibilityLabel="검토 불러오는 중" color={colors.primary} />}

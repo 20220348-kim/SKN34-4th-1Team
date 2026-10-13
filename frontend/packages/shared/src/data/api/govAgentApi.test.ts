@@ -19,6 +19,8 @@ it('uses the configured session, path and abort signal without sending a client 
 it.each([401, 403, 429, 503, 504])('returns an explicit safe error for HTTP %s without trying the search endpoint', async (status) => {
   const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({ detail: 'private upstream content' }, { status }))
   const client = createSupportProgramClient({ baseUrl: '', credentials: 'include', fetch })
-  await expect(client.sendGovAgentMessage(command)).rejects.toBeInstanceOf(GovAgentApiError)
+  const error = await client.sendGovAgentMessage(command).catch((cause: unknown) => cause)
+  expect(error).toBeInstanceOf(GovAgentApiError)
+  expect(error).toMatchObject({ status })
   expect(fetch).toHaveBeenCalledOnce()
 })

@@ -26,9 +26,10 @@ const options = (defaults: readonly string[], available?: readonly string[]) =>
 const statusOptions = [{ value: 'ALL', label: '전체 접수 상태' }, ...Object.entries(programStatusLabels).map(([value, label]) => ({ value, label }))]
 const sortOptions = [{ value: 'RECENT', label: '최신순' }, { value: 'DEADLINE', label: '마감일순' }] as const
 
-export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header, interests, onLogin }: {
+export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header, interests, onLogin, inline = false, active: enabled = true }: {
   onOpenProgram(identity: SupportProgramIdentity): void; keyboardOffset?: number; header?: ReactNode
   interests?: SearchProgramInterests; onLogin?(): void
+  inline?: boolean; active?: boolean
   selection?: { keys: string[]; disabled?: boolean; maximum?: number; labels?: ProgramSelectionLabels; onToggle(program: SupportProgram): void }
 }) {
   const defaults = { ...initialFilters, status: selection ? 'ALL' as const : initialFilters.status }
@@ -51,6 +52,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
     ...(['startupStage', 'applicantType', 'founderAge'] as const).filter(key => applied[key]).map(key => ({ key, value: applied[key], label: applied[key] })),
   ]
   useEffect(() => {
+    if (!enabled) return
     const controller = new AbortController()
     let active = true
     setLoading(true); setError(null); setCatalog(null)
@@ -60,7 +62,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       .catch((cause: unknown) => { if (active) setError(errorMessage(cause)) })
       .finally(() => { clearTimeout(timeout); if (active) setLoading(false) })
     return () => { active = false; clearTimeout(timeout); controller.abort() }
-  }, [applied, retry])
+  }, [applied, retry, enabled])
   function apply(filters: SupportProgramCatalogFilters) {
     setApplied(previous => JSON.stringify(previous) === JSON.stringify(filters) ? previous : filters)
   }
@@ -97,7 +99,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
   }
   const cached = available.current
   const periodMissing = draft.sourceCode === 'MSIT' || draft.sourceCode === 'CNTRADE_NOTICE'
-  return <Page keyboardOffset={keyboardOffset}>
+  const content = <>
     {header}
     <View style={local.search}><View style={local.keyword}>
       <Field label="공고명·기관명" value={keyword} onChangeText={setKeyword} maxLength={100} placeholder="공고명 또는 기관명"
@@ -152,7 +154,8 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       <Text style={styles.muted}>공고 분류 기준입니다. 실제 신청 자격은 공고 원문에서 확인해 주세요.</Text>
       {selection && <Text style={styles.muted}>공고 상세 조회와 작성·비교 대상 선택은 별도 동작입니다.</Text>}
     </PartnerSheet>
-  </Page>
+  </>
+  return inline ? <View style={{ gap: 12 }}>{content}</View> : <Page keyboardOffset={keyboardOffset}>{content}</Page>
 }
 const local = StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'flex-end', gap: 9 }, keyword: { flex: 1, minWidth: 0 },

@@ -58,6 +58,21 @@ test('polling uses GET only, pauses in the background and resumes without a new 
   view.unmount()
 })
 
+test('collapsed review stops reads and resumes with its draft intact without starting AI', async () => {
+  jest.useFakeTimers()
+  const view = renderHook<ReturnType<typeof useCombinationReview>, { enabled: boolean }>(({ enabled }) => useCombinationReview('token', 'owner@example.test', 5, undefined, enabled), { initialProps: { enabled: true } })
+  await waitFor(() => expect(view.result.current.run?.status).toBe('QUEUED'))
+  act(() => view.result.current.setDraft(previous => ({ ...previous, title: '접은 동안 보존할 제목' })))
+  view.rerender({ enabled: false })
+  const reads = mockRepository.run.mock.calls.length
+  await act(async () => { await jest.advanceTimersByTimeAsync(9_000) })
+  expect(mockRepository.run).toHaveBeenCalledTimes(reads)
+  view.rerender({ enabled: true })
+  await waitFor(() => expect(mockRepository.get).toHaveBeenCalledTimes(2))
+  expect(view.result.current.draft.title).toBe('접은 동안 보존할 제목')
+  expect(mockRepository.start).not.toHaveBeenCalled()
+})
+
 test('completed states are not regressed by an older queued response on a later read', async () => {
   mockRepository.runs.mockResolvedValue({ items: [reviewRunFixture('SUCCEEDED')], nextBeforeId: null })
   mockRepository.run.mockResolvedValueOnce(reviewRunFixture('SUCCEEDED')).mockResolvedValue(reviewRunFixture())

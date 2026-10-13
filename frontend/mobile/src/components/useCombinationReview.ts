@@ -33,7 +33,7 @@ function startBlockedOf({ pending, runs, draft }: { pending: PendingReviewReques
 }
 
 /** One account/route instance owns drafts, cancellation and the acknowledged run. */
-export function useCombinationReview(token: string, email: string, id: number | null, initialRunId?: number) {
+export function useCombinationReview(token: string, email: string, id: number | null, initialRunId?: number, enabled = true) {
   const useCase = useMemo(() => new CombinationReviewUseCase(new MobileCombinationReviewRepository(token)), [token])
   const { invalidateSession } = useAuth()
   const [review, setReview] = useState<CombinationReview | null>(null)
@@ -73,7 +73,7 @@ export function useCombinationReview(token: string, email: string, id: number | 
   }, [])
 
   useFocusEffect(useCallback(() => {
-    if (!foreground) return
+    if (!foreground || !enabled) return
     const controller = new AbortController()
     setLoading(true); setError(null); setOperation(null); setStorageReady(false)
     const reviewId = id ?? latest.current.review?.id
@@ -94,10 +94,10 @@ export function useCombinationReview(token: string, email: string, id: number | 
     })().catch(cause => { if (!controller.signal.aborted) fail(cause) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); mutation.current?.abort() }
-  }, [baseUrl, email, fail, foreground, id, revision, useCase]))
+  }, [baseUrl, email, enabled, fail, foreground, id, revision, useCase]))
 
   useFocusEffect(useCallback(() => {
-    if (!foreground || !effectiveId || !selectedRunId || loading || busy) return
+    if (!enabled || !foreground || !effectiveId || !selectedRunId || loading || busy) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async () => {
@@ -121,7 +121,7 @@ export function useCombinationReview(token: string, email: string, id: number | 
     }
     void poll()
     return () => { controller.abort(); if (timer) clearTimeout(timer) }
-  }, [baseUrl, busy, effectiveId, email, fail, foreground, loading, revision, selectedRunId, useCase]))
+  }, [baseUrl, busy, effectiveId, email, enabled, fail, foreground, loading, revision, selectedRunId, useCase]))
 
   function selectRun(runId: number) { setRun(null); setSelectedRunId(runId); setError(null); refresh() }
   function reloadInputs() { loaded.current = false; refresh() }
