@@ -1,3 +1,4 @@
+import { useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router'
 
 import { SelectField } from '../../../shared/workspace/SelectField'
@@ -14,15 +15,23 @@ type ViewModel = ReturnType<typeof useAdminAiCostViewModel>
  * 관리자 AI 비용입니다. 기간의 추정 비용(요청별 토큰 × 가격표)과 OpenAI 실제 비용을 나란히 보이고, 기능·모델·날짜·회원별로 나눠 봅니다.
  * 가격표는 고치지 않고 시작일이 다른 가격을 더합니다. 회원 이메일이 있어 이 화면을 열면 감사 기록에 남습니다.
  */
-export function AdminAiCostsPage() {
+export function AdminAiCostsPage({ title = 'AI 비용', children, onExpired }: {
+  title?: string
+  children?: ReactNode
+  onExpired?: () => void
+} = {}) {
   const vm = useAdminAiCostViewModel()
   const form = vm.form
+  useEffect(() => {
+    if (vm.phase === 'signed-out') onExpired?.()
+  }, [vm.phase, onExpired])
 
   return (
     <>
-      <WorkspacePageHeader title="AI 비용" />
+      <WorkspacePageHeader title={title} />
 
       <div className={workspacePageStyles.content}>
+        {children}
         <p className={styles.intro}>{vm.basis}</p>
 
         {vm.notice ? (
@@ -52,20 +61,22 @@ export function AdminAiCostsPage() {
         </div>
         {form.error ? <p className={styles.formError} role="alert">{form.error}</p> : null}
 
-        {vm.phase === 'forbidden' ? (
+        {vm.phase === 'signed-out' ? (
+          <p className={workspacePageStyles.emptyNote} role="status">로그인이 필요합니다.</p>
+        ) : vm.phase === 'forbidden' ? (
           <p className={workspacePageStyles.emptyNote} role="alert">{adminAccessMessages.forbidden}</p>
         ) : vm.phase === 'failed' ? (
           <p className={workspacePageStyles.emptyNote} role="alert">
             {adminAiCostMessages.failed}{' '}
             <button className={workspacePageStyles.quietLink} type="button" onClick={vm.retry}>다시 시도</button>
           </p>
-        ) : vm.stats.length === 0 ? (
+        ) : vm.phase === 'loading' ? (
           <p className={workspacePageStyles.emptyNote} role="status">{adminAiCostMessages.loading}</p>
         ) : (
           <CostSections vm={vm} />
         )}
 
-        <PriceSection vm={vm} />
+        {vm.phase === 'ready' && <PriceSection vm={vm} />}
       </div>
     </>
   )

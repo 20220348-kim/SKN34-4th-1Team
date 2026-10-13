@@ -39,6 +39,14 @@ let authenticated = true
 let fetchMock: Mock<(path: string, options?: RequestInit) => Promise<Response>>
 const session = () => ({ live_enabled: true, user: authenticated ? { id: 'core:99', username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+const usageTotals = { calls: 7, inputTokens: 1200, cachedInputTokens: 200, outputTokens: 400, estimatedUsd: '0.012000', unpricedCalls: 0 }
+const serviceUsage = {
+  from: '2026-10-01', to: '2026-10-13', totals: usageTotals, actualUsd: null, actualConfigured: false, actualFetchedAt: null, krwPerUsd: null,
+  byFeature: [{ key: 'AI_SEARCH', serviceTier: null, totals: usageTotals }],
+  byModel: [{ key: 'gpt-6-luna', serviceTier: 'default', totals: usageTotals }],
+  days: [{ date: '2026-10-13', calls: 7, estimatedUsd: '0.012000', actualUsd: null }],
+  topAccounts: [{ accountId: 11, email: 'member@example.com', planCode: 'PLUS', totals: usageTotals }],
+}
 
 beforeEach(() => {
   authenticated = true
@@ -47,6 +55,8 @@ beforeEach(() => {
   vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
+    if (path.includes('/api/v1/admin/ai-costs?')) return json(serviceUsage)
+    if (path.endsWith('/api/v1/admin/ai-costs/prices')) return json([])
     if (path === '/api/v1/ops/dashboard') return json({ as_of: '2026-10-07T00:00:00Z', configured_model: 'gpt-6-luna', window: { limit: 200, loaded: 0, total: 0, truncated: false }, states: { completed: 0, failed: 0, active: 0, cancelled: 0 }, excluded: { replay: 0, incomplete: 0, unverifiable: 0, duplicate: 0 }, series: [] })
     if (path.startsWith('/api/v1/ops/schedules?')) return json({ enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
     if (path.startsWith('/api/v1/ops/budget/reservations')) return json({
@@ -76,6 +86,99 @@ function open(path = '/ops/evaluations/new') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('실사용 메뉴에서 Core 사용량을 읽고 기간 조회·회원 상세·Langfuse를 연결한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+      ? Promise.resolve(json({ ...session(), search_traces_url: 'http://localhost:13000/project/development/traces' }))
+      : original(path, options))
+    open('/ops/dashboard')
+    fireEvent.click(await screen.findByRole('link', { name: '실사용 모니터링' }))
+    const stats = await screen.findByRole('region', { name: '비용 요약' })
+    expect(within(stats).getByText('7회')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '기능별' })).getByText('AI 대화 검색')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '모델별' })).getByText('gpt-6-luna')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'member@example.com' }).getAttribute('href')).toBe('/app/admin/accounts/detail?accountId=11')
+    expect(screen.getByRole('link', { name: '실사용 모니터링' }).getAttribute('aria-current')).toBe('page')
+    expect(document.title).toBe('GovBiz · 실사용 모니터링')
+    const traceLink = screen.getByRole('link', { name: 'Langfuse 실행 목록 열기 ↗' })
+    expect(traceLink.getAttribute('href')).toBe('http://localhost:13000/project/development/traces')
+    expect(traceLink.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(traceLink.getAttribute('target')).toBe('_blank')
+    fireEvent.change(screen.getByLabelText('시작일', { selector: 'input[name="from"]' }), { target: { value: '2026-10-01' } })
+    fireEvent.change(screen.getByLabelText('종료일'), { target: { value: '2026-10-13' } })
+    fireEvent.click(screen.getByRole('button', { name: '조회' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/admin/ai-costs?from=2026-10-01&to=2026-10-13'),
+      expect.objectContaining({ credentials: 'include', cache: 'no-store' })))
+    expect(fetchMock.mock.calls.some(([path]) => path.startsWith('/api/v1/ops/evaluations') || path.includes('/budget/'))).toBe(false)
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
+  it('실사용 주소를 바로 열면 추적 미설정과 빈 사용량을 명시한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path.includes('/api/v1/admin/ai-costs?')
+      ? Promise.resolve(json({ ...serviceUsage, totals: { calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, estimatedUsd: '0.000000', unpricedCalls: 0 }, byFeature: [], byModel: [], days: [], topAccounts: [] }))
+      : original(path, options))
+    open('/ops/usage')
+    expect(await screen.findByRole('heading', { level: 1, name: '실사용 모니터링' })).toBeTruthy()
+    expect(await screen.findByText('회원에게 붙은 AI 호출이 없어요.')).toBeTruthy()
+    expect(screen.getByText('실행 추적 연결이 설정되지 않았습니다.')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Langfuse 실행 목록 열기 ↗' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '실측 결과 추이' })).toBeNull()
+    expect(fetchMock.mock.calls.some(([path]) => path === '/api/v1/ops/dashboard')).toBe(false)
+  })
+
+  it('실사용 조회 장애는 빈 결과로 숨기지 않고 다시 조회한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let failed = true
+    fetchMock.mockImplementation((path, options) => failed && path.includes('/api/v1/admin/ai-costs?')
+      ? Promise.resolve(json({}, 503)) : original(path, options))
+    open('/ops/usage')
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('AI 비용을 불러오지 못했어요.'))
+    expect(screen.queryByRole('region', { name: '비용 요약' })).toBeNull()
+    failed = false
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(await screen.findByRole('region', { name: '비용 요약' })).toBeTruthy()
+  })
+
+  it.each(['summary', 'sync', 'price'] as const)('실사용 %s 요청의 세션이 만료되면 비용을 지우고 로그인으로 돌아간다', async (operation) => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => {
+      if ((operation === 'summary' && path.includes('/api/v1/admin/ai-costs?'))
+        || (operation === 'sync' && path.endsWith('/ai-costs/sync'))
+        || (operation === 'price' && path.endsWith('/ai-costs/prices') && options?.method === 'POST')) {
+        authenticated = false
+        return Promise.resolve(json({}, 401))
+      }
+      if (path.includes('/api/v1/admin/ai-costs?')) return Promise.resolve(json({ ...serviceUsage, actualConfigured: true }))
+      return original(path, options)
+    })
+    open('/ops/usage')
+    if (operation !== 'summary') {
+      await screen.findByRole('region', { name: '비용 요약' })
+      if (operation === 'sync') fireEvent.click(screen.getByRole('button', { name: '실제 비용 가져오기' }))
+      else {
+        const form = within(screen.getByRole('form', { name: '가격 추가' }))
+        fireEvent.change(form.getByLabelText('모델'), { target: { value: 'gpt-6-luna' } })
+        fireEvent.change(form.getByLabelText('입력'), { target: { value: '1' } })
+        fireEvent.change(form.getByLabelText('출력'), { target: { value: '2' } })
+        fireEvent.click(form.getByRole('button', { name: '가격 추가' }))
+      }
+    }
+    expect(await screen.findByRole('heading', { name: '로그인' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '비용 요약' })).toBeNull()
+    expect(screen.queryByText('member@example.com')).toBeNull()
+  })
+
+  it('Core에서 실사용 조회 권한을 거절하면 회원 정보를 표시하지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path.includes('/api/v1/admin/ai-costs?')
+      ? Promise.resolve(json({}, 403)) : original(path, options))
+    open('/ops/usage')
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('관리자 권한이 필요해요.'))
+    expect(screen.queryByRole('region', { name: '비용 요약' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '가격표' })).toBeNull()
+  })
+
   it('실행 상세의 Prefect 로그 버튼은 localhost 대신 관리자 API로 조회한다', async () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation((path, options) => path === `/api/v1/ops/evaluations/${id}/logs?offset=0`
