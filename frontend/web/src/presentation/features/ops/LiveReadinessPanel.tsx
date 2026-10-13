@@ -11,8 +11,8 @@ const budgetIssues = new Set([
 ])
 
 // A new selection or leaving this page aborts old checks; returning requires a fresh check.
-export function LiveReadinessPanel({ datasetId, executionProfile, onExpired }: {
-  datasetId: string; executionProfile: string; onExpired: () => void
+export function LiveReadinessPanel({ datasetId, executionProfile, model, onExpired }: {
+  datasetId: string; executionProfile: string; model?: string; onExpired: () => void
 }) {
   const [result, setResult] = useState<LiveReadiness | null>(null)
   const [error, setError] = useState('')
@@ -25,7 +25,7 @@ export function LiveReadinessPanel({ datasetId, executionProfile, onExpired }: {
     active.current = controller
     setBusy(true); setResult(null); setError('')
     try {
-      const value = await getLiveReadiness(datasetId, executionProfile, controller.signal)
+      const value = await getLiveReadiness(datasetId, executionProfile, controller.signal, model)
       if (!controller.signal.aborted) setResult(value)
     } catch (reason) {
       if (controller.signal.aborted) return

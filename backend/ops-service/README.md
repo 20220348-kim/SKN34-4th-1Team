@@ -58,6 +58,10 @@ React `/ops/dashboard`는 기존 Core 관리자 인증을 거쳐 `GET /api/v1/op
   미측정 지표는 `null`입니다. 비용을 추정하거나 사람 검토 합격률로 바꾸지 않습니다.
 - `configured_model`은 `LLMOPS_LIVE_MODEL`의 Ops 평가 설정입니다. 서비스 배포 모델 확인이나 실시간
   서비스 전체 품질 측정이 아닙니다. 자동 지표의 사람 검토는 기존 평가 상세에서 수행합니다.
+- 웹의 모델별 비교는 위 계열 정보에서 모델만 다른 최신 실측들을 나란히 표시합니다. 프롬프트·모델 외
+  생성 설정·지표별 측정 사례까지 같을 때만 선택 모델 대비 차이를 계산하며, 조회 중 새 평가는 접수하지 않습니다.
+  `generation_config_sha256`은 원본 live 실행의 생성 코드·설정과 입력/출력 상한·임베딩 설정을 묶습니다.
+  해당 설정을 확인할 수 없는 과거 실행은 `null`이며 원래 지표와 상세 조회는 유지합니다.
 
 집계/권한 단위 테스트는 `apps.evaluations.test_dashboard.DashboardAggregationTests`, 실제 MySQL API
 조회·제한·쿼리·읽기 전용 검증은 `apps.evaluations.test_dashboard.DashboardApiTests`입니다. 후자는 Ops CI의
@@ -102,6 +106,9 @@ MySQL 8.4 전체 테스트에 포함됩니다.
 - Django: Core 관리자 확인, CSRF 토큰, 평가 요청·조회, 인증된 HTML 보고서 API
 - Core: 기존 로그인·로그아웃과 관리자 세션 검증. 일반 회원은 Ops 접근 불가
 - 가상 6건 재현과 과거 프롬프트 실행의 공통 E01 비교를 선택 가능; 임의 경로·코드를 요청으로 받지 않음; 모델은 서버가 제시한 승인 설정과 일치해야 함
+- 새 응답 생성은 자료별 `live_options`의 모델·`live_config`·`execution_profile`을 함께 선택합니다.
+  기존 `live_config`와 `execution_profiles.live`는 기본 모델 옵션으로 유지해 이전 클라이언트도 지원합니다.
+  준비 조회(`evaluations/live-readiness`)는 선택한 `model`을 받으며 해당 모델의 실행 설정 해시를 확인합니다.
 - 후보는 서버의 `apps/evaluations/capture_catalog.json` 등록 캡처 또는 승인된 새 응답 생성만 허용. 기준은 같은 자료의 등록 캡처 또는 관리자가 검토 후 지정한 완료 실행을 허용
 - `EvaluationRun`: 요청 UUID, 요청자·자료·기준/후보·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약·비교 저장
 - 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
@@ -124,6 +131,20 @@ MySQL 8.4 전체 테스트에 포함됩니다.
 입니다. 인증 경로는 `Django → Core 관리자 API → AdminPrincipalArgumentResolver → AccountSessionService`입니다. 실행기는 기존 `pandas → Pandera → 지표 재계산 → Evidently / Langfuse` 흐름을 사용합니다.
 Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
 별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 저장 응답 재평가는 모델 호출 0회이며, 새 응답 생성은 아래 승인 계약을 따릅니다.
+
+평가 모델 기본 목록은 `gpt-6-luna,gpt-6-sol,gpt-5.6-luna`입니다. `LLMOPS_ALLOWED_MODELS`로 CSV 목록을
+조정할 수 있으며 `LLMOPS_LIVE_MODEL`은 기본 선택 모델로 항상 포함됩니다. 기본 모델만 허용하려면
+두 설정에 같은 모델 하나를 지정합니다. API·평가 실행기에 같은 목록을 적용해야 합니다. Kubernetes도
+같은 코드 기본값을 사용하며, 별도 환경변수로 덮어쓸 때는 Ops와 실행기 양쪽을 함께 반영합니다.
+서버가 허용하지 않은 모델이나 모델에 맞지 않는 실행 설정은 접수·실행 전에 거절합니다. 기존 요청·일정은
+저장한 모델을 유지하고 허용이 철회되면 차단되며 기본 모델로 대체하지 않습니다.
+
+현재 평가 호출의 `reasoning.effort=none`과 구조화 응답을 지원하는 모델을 목록에 넣어야 합니다.
+기본 후보는 [GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)과
+[GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)의 공식 호출 계약을 기준으로
+선정했습니다. 목록에 표시된다고 프로젝트 API 키의 접근 권한이나 실제 평가 성공이 검증된 것은 아닙니다.
+기존 예산은 호출 수·토큰 상한이며 모델별 금액 상한이 아닙니다. 각 유료 실행은 선택한 모델·자료·예산의
+확인이 필요합니다.
 
 ## 실제 공고의 과거 답변 검토
 

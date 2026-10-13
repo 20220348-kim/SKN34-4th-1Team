@@ -90,7 +90,9 @@ export function OpsApp() {
   </div>
 }
 
-type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string }
+type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string; model: string }
+const liveOptions = (dataset: OpsSession['datasets'][number] | undefined) => dataset?.live_options
+  ?? (dataset?.live_config && dataset.execution_profiles.live ? [{ live_config: dataset.live_config, execution_profile: dataset.execution_profiles.live }] : [])
 const opsPages = [
   { path: dashboardPath, label: '성능 대시보드', description: '현재 지표와 변화 추이' },
   { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
@@ -203,18 +205,24 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
   const [approved, setApproved] = useState(!!restored.pending?.live_config)
   const [dataset, setDataset] = useState(restored.pending?.dataset_id ?? draft?.dataset ?? datasets[0]?.id ?? '')
   const selected = datasets.find((item) => item.id === dataset)
+  const options = liveOptions(selected)
+  const [model, setModel] = useState(restored.pending?.live_config?.model ?? draft?.model ?? options[0]?.live_config.model ?? '')
+  const selectedOption = options.find((option) => option.live_config.model === model)
+  const liveConfig = pending?.live_config ?? selectedOption?.live_config
+  const liveProfile = selectedOption?.execution_profile
   const supported = selected?.evaluation_scope === 'fixed-answer-context-only' || selected?.evaluation_scope === 'source-chunks-retrieval-answer'
   const ragLive = selected?.evaluation_scope === 'source-chunks-retrieval-answer' && mode === 'live'
   const liveEnabled = allLiveEnabled && (!ragLive || ragLiveEnabled)
-  const canGenerate = supported && !!selected?.live_config && !!selected.execution_profiles.live
+  const canGenerate = supported && options.length > 0
   const [reference, setReference] = useState(restored.pending?.reference_capture_id ?? draft?.reference ?? datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
   const [candidate, setCandidate] = useState(restored.pending?.candidate_capture_id ?? draft?.candidate ?? datasets[0]?.captures.at(-1)?.id ?? '')
   const changeDataset = (id: string) => {
     const value = datasets.find((item) => item.id === id)
-    if (!value?.live_config) setMode('replay')
+    if (!liveOptions(value).length) setMode('replay')
     setApproved(false); setDataset(id); setReference(value?.baseline?.id ?? value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
   }
-  useEffect(() => { onDraftChange({ mode, dataset, reference, candidate }) }, [mode, dataset, reference, candidate, onDraftChange])
+  useEffect(() => { onDraftChange({ mode, dataset, reference, candidate, model }) }, [mode, dataset, reference, candidate, model, onDraftChange])
+  useEffect(() => { if (!pending) setApproved(false) }, [dataset, model, liveProfile, pending])
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const requestId = useRef<string | null>(restored.pending?.request_id ?? null)
@@ -243,8 +251,8 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
     return () => controller.abort()
   }, [restored, finish])
   const submit = async () => {
-    if (submitting.current || busy || storageError || (!pending && mode === 'live' && (!approved || !liveEnabled || !canGenerate))) return
-    if (!pending && (!supported || !selected?.execution_profiles[mode])) return
+    if (submitting.current || busy || storageError || (!pending && mode === 'live' && (!approved || !liveEnabled || !canGenerate || !selectedOption))) return
+    if (!pending && (!supported || !(mode === 'live' ? liveProfile : selected?.execution_profiles.replay))) return
     submitting.current = true; setBusy(true); setSubmitError(''); setRejected(false)
     try {
       let request = pending ?? readPendingEvaluation(owner)
@@ -252,9 +260,9 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
       if (!request) {
         request = {
           request_id: crypto.randomUUID(), dataset_id: dataset,
-          execution_profile: selected!.execution_profiles[mode]!,
+          execution_profile: mode === 'live' ? liveProfile! : selected!.execution_profiles.replay,
           candidate_capture_id: mode === 'live' ? 'new-model-response' : candidate,
-          reference_capture_id: reference, live_config: mode === 'live' ? selected!.live_config : null,
+          reference_capture_id: reference, live_config: mode === 'live' ? selectedOption!.live_config : null,
           baseline_version: reference === selected?.baseline?.id ? selected.baseline.version : null,
         }
         try { storePendingEvaluation(owner, request) }
@@ -284,29 +292,35 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
   return <>
     <WorkspacePageHeader title="새 평가" />
     <div className={styles.content}>
-      <p className="text-sm text-ink-muted">평가 자료와 비교 대상을 선택한 뒤 실행하세요. 메뉴를 오가도 선택값은 유지되며, 유료 실행 확인과 예산 점검은 다시 해야 합니다.</p>
+      <p className="text-sm text-ink-muted">평가 자료·모델과 비교 대상을 선택한 뒤 실행하세요. 메뉴를 오가도 선택값은 유지되며, 유료 실행 확인과 예산 점검은 다시 해야 합니다.</p>
       <section id="new-evaluation" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행">
         <h2 className={styles.cardTitle}>평가 자료와 실행 방식</h2>
-        <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice(selected?.live_config) : mode === 'live' ? liveNotice : notice}</p>
+        <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice(liveConfig) : mode === 'live' ? liveNotice : notice}</p>
         {selected && <p className="text-sm" role="status">평가 범위: {ragLive ? '등록 원문·청크의 검색·새 답변' : `${scopeLabel(selected.evaluation_scope)}. ${scopeNotice(selected.evaluation_scope)}`}</p>}
         <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void submit() }}>
           <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live" disabled={!canGenerate}>새 응답 생성 · 유료 모델 호출</option></select></label>
           <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-          {ragLive && <div className="md:col-span-2"><VectorPlan config={selected?.live_config} /></div>}
+          {mode === 'live' && <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">평가 모델<select className={field} value={model} disabled={busy || requestId.current !== null} onChange={(event) => { setModel(event.target.value); setApproved(false) }}>
+            {!selectedOption && <option value={model} disabled>{model ? `${model} · ${pending ? '보관한 요청의 모델' : '현재 선택 불가'}` : '평가할 모델을 선택하세요'}</option>}
+            {options.map((option) => <option key={option.live_config.model} value={option.live_config.model}>{option.live_config.model}</option>)}
+          </select></label>}
+          {mode === 'live' && !pending && !selectedOption && <p role="alert" className="text-sm text-red-700 md:col-span-2">선택했던 모델을 현재 자료에서 사용할 수 없습니다. 허용된 평가 모델을 다시 선택하세요.</p>}
+          {mode === 'live' && <p className="text-sm text-ink-muted md:col-span-2">한 번에 선택한 모델 하나를 평가합니다. 같은 평가 자료로 다른 모델도 실행하면 <Link className="text-brand-primary underline" to="/ops/dashboard">성능 대시보드</Link>에서 모델별 결과를 비교할 수 있습니다.</p>}
+          {ragLive && <div className="md:col-span-2"><VectorPlan config={liveConfig} /></div>}
           <label className="grid min-w-0 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           {mode === 'replay' && <label className="grid min-w-0 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
-          {mode === 'live' && selected?.live_config && <div className="min-w-0 rounded-xl border border-amber-200 md:col-span-2 bg-amber-50 p-4 text-sm leading-6">
-            <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {selected.live_config.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
-            {ragLive && <p>임베딩: {selected.live_config.embedding_model} · {selected.live_config.embedding_dimensions}차원. 최대 호출 수에는 새로 만드는 청크·질문 임베딩과 답변만 포함됩니다. 재사용하는 청크 벡터에는 임베딩 호출을 예약하지 않습니다. 전체 입력 예약 {selected.live_config.max_total_input_tokens?.toLocaleString()}토큰 · 전체 출력 예약 {selected.live_config.max_total_output_tokens?.toLocaleString()}토큰.</p>}
+          {mode === 'live' && selected && liveConfig && <div className="min-w-0 rounded-xl border border-amber-200 md:col-span-2 bg-amber-50 p-4 text-sm leading-6">
+            <p>모델: <strong>{liveConfig.model}</strong> · 최대 {liveConfig.max_model_calls}회 · 호출당 출력 최대 {liveConfig.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {liveConfig.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
+            {ragLive && <p>임베딩: {liveConfig.embedding_model} · {liveConfig.embedding_dimensions}차원. 최대 호출 수에는 새로 만드는 청크·질문 임베딩과 답변만 포함됩니다. 재사용하는 청크 벡터에는 임베딩 호출을 예약하지 않습니다. 전체 입력 예약 {liveConfig.max_total_input_tokens?.toLocaleString()}토큰 · 전체 출력 예약 {liveConfig.max_total_output_tokens?.toLocaleString()}토큰.</p>}
             <p>각 답변 생성 전에 같은 입력과 응답 형식을 OpenAI 입력 토큰 계산 API로 전송합니다. 계산 실패 또는 입력 상한 초과 시 생성을 중단합니다.</p>
             <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 자료에 따라 실제 공고의 저장 본문 또는 가상 근거를 사용하며, 실제 회원 대화는 사용하지 않습니다.</p>
             {!liveEnabled && <p role="status" className="font-semibold">새 모델 평가가 비활성화되어 있습니다. 실행기의 API 키와 서버 설정을 준비해야 합니다.</p>}
             <label className="mt-3 flex items-start gap-2"><input type="checkbox" className="mt-1" checked={approved} disabled={!liveEnabled || busy || requestId.current !== null} onChange={(event) => setApproved(event.target.checked)} />위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.</label>
           </div>}
-          {mode === 'live' && !pending && selected?.execution_profiles.live && <div className="min-w-0 md:col-span-2"><LiveReadinessPanel key={`${dataset}:${selected.execution_profiles.live}`} datasetId={dataset} executionProfile={selected.execution_profiles.live} onExpired={onExpired} /></div>}
-          <button className={`${styles.primaryButton} justify-self-start md:col-span-2`} disabled={busy || !!storageError || rejected || (!pending && (!supported || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled || !canGenerate))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
+          {mode === 'live' && !pending && liveProfile && <div className="min-w-0 md:col-span-2"><LiveReadinessPanel key={`${dataset}:${model}:${liveProfile}`} datasetId={dataset} executionProfile={liveProfile} model={model} onExpired={onExpired} /></div>}
+          <button className={`${styles.primaryButton} justify-self-start md:col-span-2`} disabled={busy || !!storageError || rejected || (!pending && (!supported || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled || !canGenerate || !selectedOption))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
         </form>
-        {selected && <p className="text-xs leading-5 text-ink-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {mode === 'live' ? '현재 모델의 새 응답과 선택한 기준 응답을 비교합니다.' : reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
+        {selected && <p className="text-xs leading-5 text-ink-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {mode === 'live' ? '선택한 모델의 새 응답과 선택한 기준 응답을 비교합니다.' : reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
         {pending && <div className="rounded-xl bg-amber-50 p-3 text-sm" role="status"><p>보관한 요청: {pending.request_id}</p><p>{pending.dataset_id} · 기준 {pending.reference_capture_id}{pending.baseline_version ? ` · 기준 버전 ${pending.baseline_version}` : ''} · {pending.live_config ? `${pending.live_config.model} · 최대 ${pending.live_config.max_model_calls}회 · 출력 ${pending.live_config.max_output_tokens}토큰/회 · 입력 ${pending.live_config.max_input_tokens ?? '기록 없음'}토큰/회` : '저장 응답 재평가'}</p><p>새로고침·재로그인 뒤에도 이 탭에서 같은 요청을 확인합니다. 탭을 닫기 전 실행 이력에서 접수 여부를 확인하세요.</p></div>}
         {storageError && <p role="alert" className="text-sm text-red-700">{storageError}</p>}
         {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}

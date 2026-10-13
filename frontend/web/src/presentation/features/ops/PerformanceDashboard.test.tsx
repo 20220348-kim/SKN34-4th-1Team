@@ -12,6 +12,7 @@ vi.mock('./DashboardReviewStatus', () => ({ DashboardReviewStatus: ({ runId }: {
 const point = (id: string, measuredAt: string, value: number): PerformancePoint => ({
   run_id: id, source_run_id: null, mode: 'live', measured_at: measuredAt, evaluated_at: measuredAt,
   prompt_sha256: 'a'.repeat(64),
+  generation_config_sha256: 'f'.repeat(64),
   values: { status: value, citation: 0, retrieval: null, latency: 1234, input_tokens: null, output_tokens: null },
   samples: { status: 6, citation: 2, retrieval: null, latency: null, input_tokens: null, output_tokens: null },
   coverage: { status: 'same-status-cases', citation: 'same-citation-cases', retrieval: null, latency: null, input_tokens: null, output_tokens: null },
@@ -80,7 +81,7 @@ describe('성능 대시보드', () => {
     expect(screen.getByText('이 지표는 측정되지 않았습니다.')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('평가 자료 · 채점 버전'), { target: { value: 'rag-series' } })
     expect(screen.getByRole('img').getAttribute('aria-label')).toContain('근거 검색 재현율 추이, 1회')
-    expect(screen.getByRole('table').textContent).toContain('75%')
+    expect(within(screen.getByRole('region', { name: '실측 이력' })).getByRole('table').textContent).toContain('75%')
     expect(screen.getByLabelText('현재 경로').textContent).toContain('series=rag-series')
   })
 
@@ -92,6 +93,79 @@ describe('성능 대시보드', () => {
     await screen.findByRole('region', { name: '최근 성능 지표' })
     expect(screen.queryByText('이전 대비 −50%p')).toBeNull()
     expect(screen.getByRole('img').querySelectorAll('line')).toHaveLength(3) // 축만 표시
+  })
+
+  it('같은 조건의 모델별 최신 결과와 기준 모델 대비 차이를 비교하고 추가 실행하지 않는다', async () => {
+    const payload = data()
+    const other = point('10000000-0000-4000-8000-000000000003', '2026-10-07T02:30:00Z', 0.75)
+    payload.series.push({ ...payload.series[0], id: 'other-series', model: 'other-model', points: [old, other] })
+    const fetch = vi.fn(async () => json(payload)); vi.stubGlobal('fetch', fetch)
+    mount()
+    const comparison = within(await screen.findByRole('region', { name: '모델별 결과 비교' }))
+    const otherRow = within(comparison.getByRole('rowheader', { name: 'other-model' }).closest('tr')!)
+    expect(otherRow.getByText('75%')).toBeTruthy()
+    expect(otherRow.getByText('기준 대비 +25%p')).toBeTruthy()
+    expect(otherRow.getByText('기준 대비 동일')).toBeTruthy()
+    expect(otherRow.getByRole('link', { name: 'other-model 최신 평가 상세' }).getAttribute('href')).toBe(`/ops/evaluations/${other.run_id}`)
+    expect(comparison.getByRole('link', { name: '다른 모델 평가하기' }).getAttribute('href')).toBe('/ops/evaluations/new')
+    fireEvent.change(screen.getByLabelText('측정 모델'), { target: { value: 'other-model' } })
+    expect(comparison.getByText('기준 대비 −25%p')).toBeTruthy()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('자료·사례·범위·채점 버전·검색 K 또는 기간이 다른 결과는 모델 비교에서 제외한다', async () => {
+    const payload = data()
+    const original = payload.series[0]
+    const variants = [
+      { dataset_id: 'other-dataset' }, { fixture_sha256: 'd'.repeat(64) },
+      { case_ids: ['H01'] }, { scope: 'source-chunks-retrieval-answer' as const },
+      { evaluator_version: 'e'.repeat(64) }, { retrieval_k: [['H01', 3]] as [string, number][] },
+      { points: [old] },
+    ]
+    payload.series.push(...variants.map((variant, index) => ({ ...original, ...variant, id: `different-${index}`, model: `different-model-${index}` })))
+    vi.stubGlobal('fetch', vi.fn(async () => json(payload)))
+    mount(vi.fn(), '/ops/dashboard?days=30')
+    const comparison = within(await screen.findByRole('region', { name: '모델별 결과 비교' }))
+    expect(comparison.getAllByRole('row')).toHaveLength(2)
+    expect(comparison.getByText(/아직 같은 조건으로 측정한 다른 모델이 없습니다/)).toBeTruthy()
+    expect(comparison.queryByText(/different-model/)).toBeNull()
+  })
+
+  it('프롬프트 또는 지표별 표본이 다른 모델에는 직접 비교 차이를 표시하지 않는다', async () => {
+    const payload = data()
+    const candidate = point('10000000-0000-4000-8000-000000000003', '2026-10-07T02:30:00Z', 0.75)
+    payload.series.push(
+      { ...payload.series[0], id: 'different-prompt', model: 'different-prompt', points: [{ ...candidate, prompt_sha256: 'd'.repeat(64) }] },
+      { ...payload.series[0], id: 'missing-prompt', model: 'missing-prompt', points: [{ ...candidate, prompt_sha256: null }] },
+      { ...payload.series[0], id: 'different-samples', model: 'different-samples', points: [{ ...candidate, coverage: { ...candidate.coverage, status: 'other-cases', citation: null } }] },
+    )
+    vi.stubGlobal('fetch', vi.fn(async () => json(payload)))
+    mount()
+    const comparison = within(await screen.findByRole('region', { name: '모델별 결과 비교' }))
+    expect(comparison.queryByText('기준 대비 +25%p')).toBeNull()
+    expect(comparison.getAllByText('프롬프트 다름')).toHaveLength(2)
+    expect(comparison.getAllByText('프롬프트 확인 불가')).toHaveLength(2)
+    expect(comparison.getByText('측정 사례 다름')).toBeTruthy()
+    expect(comparison.getByText('측정 사례 확인 불가')).toBeTruthy()
+    expect(comparison.getAllByText('75%')).toHaveLength(3)
+  })
+
+  it('모델 외 생성 설정이 다르거나 과거 서버에서 확인되지 않으면 차이를 표시하지 않는다', async () => {
+    const payload = data()
+    const candidate = point('10000000-0000-4000-8000-000000000003', '2026-10-07T02:30:00Z', 0.75)
+    const { generation_config_sha256: _omitted, ...legacy } = candidate
+    payload.series.push(
+      { ...payload.series[0], id: 'different-generation', model: 'different-generation', points: [{ ...candidate, generation_config_sha256: 'e'.repeat(64) }] },
+      { ...payload.series[0], id: 'missing-generation', model: 'missing-generation', points: [legacy as PerformancePoint] },
+    )
+    vi.stubGlobal('fetch', vi.fn(async () => json(payload)))
+    mount()
+    const comparison = within(await screen.findByRole('region', { name: '모델별 결과 비교' }))
+    expect(comparison.queryByText('기준 대비 +25%p')).toBeNull()
+    expect(comparison.getAllByText('생성 설정 다름')).toHaveLength(2)
+    expect(comparison.getAllByText('생성 설정 확인 불가')).toHaveLength(2)
+    expect(comparison.getAllByText('75%')).toHaveLength(2)
+    expect(comparison.getByRole('link', { name: 'missing-generation 최신 평가 상세' })).toBeTruthy()
   })
 
   it('실측이 없어도 구성 모델·집계 범위를 알리고 실행을 유도하지 않는다', async () => {

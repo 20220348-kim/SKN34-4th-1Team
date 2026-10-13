@@ -236,11 +236,69 @@ class LiveReadinessTests(TestCase):
             self.assertEqual(self.client.get(URL, self.query()).status_code, 400)
         self.assertFalse(EvaluationRun.objects.exists())
 
+    def test_selected_model_preview_matches_submission_and_budget_reservation(self):
+        dataset = self.datasets[FIXED]
+        option = next(
+            item for item in dataset["live_options"] if item["live_config"]["model"] == "gpt-6-sol"
+        )
+        query = self.query(model="gpt-6-sol", execution_profile=option["execution_profile"])
+        response = self.client.get(URL, query)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["model"], "gpt-6-sol")
+        with patch("apps.evaluations.prefect_client.create_run", return_value=uuid4()):
+            result = self.client.post(
+                "/api/v1/ops/evaluations",
+                {
+                    "request_id": str(uuid4()),
+                    "dataset_id": FIXED,
+                    "candidate_capture_id": "new-model-response",
+                    "reference_capture_id": FIXED,
+                    "execution_mode": "live",
+                    "confirm_paid_run": True,
+                    **option,
+                },
+                format="json",
+            )
+        self.assertEqual(result.status_code, 202, result.data)
+        run = EvaluationRun.objects.get()
+        self.assertEqual(run.live_config["model"], "gpt-6-sol")
+        self.assertEqual(
+            {item["model"] for item in run.execution_spec["model_operations"]}, {"gpt-6-sol"}
+        )
+        reservation = run.budget_reservation
+        self.assertEqual(
+            response.data["required"],
+            {
+                "calls": reservation.max_calls,
+                "input_tokens": reservation.reserved_input_tokens,
+                "output_tokens": reservation.reserved_output_tokens,
+            },
+        )
+
+    def test_model_profile_mismatch_or_removed_model_never_becomes_ready(self):
+        response = self.client.get(URL, self.query(model="gpt-6-sol"))
+        self.assertEqual(response.status_code, 409)
+        with patch.dict("os.environ", {"LLMOPS_ALLOWED_MODELS": "gpt-6-luna"}):
+            response = self.client.get(URL, self.query(model="gpt-6-sol"))
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(EvaluationRun.objects.exists())
+        self.assertFalse(EvaluationBudgetReservation.objects.exists())
+
+    def test_invalid_model_configuration_reports_unavailable_without_leaking_setting(self):
+        with patch.dict("os.environ", {"LLMOPS_ALLOWED_MODELS": "private invalid config"}):
+            for extra in ({}, {"model": "gpt-6-sol"}):
+                response = self.client.get(URL, self.query(**extra))
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.data["code"], "LIVE_PLAN_UNAVAILABLE")
+                self.assertNotIn("private invalid config", str(response.data))
+
     def test_rejects_invalid_query_and_write_methods(self):
         for query in (
             {},
             {"dataset_id": "absent", "execution_profile": "a" * 64},
             self.query(execution_profile="wrong"),
+            self.query(model="unknown-model"),
+            self.query(model=""),
         ):
             self.assertEqual(self.client.get(URL, query).status_code, 400)
         for method in (self.client.post, self.client.put, self.client.patch, self.client.delete):

@@ -269,7 +269,8 @@ def test_live_failure_preserves_capture_and_never_reexecutes(monkeypatch, tmp_pa
     assert json.loads((tmp_path / request_id / "capture/capture.json").read_text())["modelApiCalls"] == 1
 
 
-def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, tmp_path, stub_budget):
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-5.6-luna"])
+def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, tmp_path, stub_budget, model):
     import httpx2
     import llmops
     from apps.evaluations.catalog import LIVE_CAPTURE_ID, live_config
@@ -285,12 +286,12 @@ def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, 
         if request.url.path == "/v1/responses/input_tokens":
             return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 120})
         body = json.loads(request.content)
-        assert body["model"] == "gpt-6-luna"
+        assert body["model"] == model
         assert body["max_output_tokens"] == 2000
         requests.append(body)
         return httpx2.Response(200, json={
             "id": "resp_stub", "created_at": 0, "object": "response", "status": "completed",
-            "model": "gpt-6-luna", "error": None, "incomplete_details": None,
+            "model": model, "error": None, "incomplete_details": None,
             "output": [{"id": "msg_stub", "type": "message", "role": "assistant", "status": "completed",
                         "content": [{"type": "output_text", "annotations": [], "text": json.dumps({
                             "answerStatus": "ANSWERED", "answer": "무료 스텁 응답", "citationChunkIndexes": [0],
@@ -309,13 +310,13 @@ def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, 
     monkeypatch.setattr(llmops, "publish", lambda current: [])
     request_id = str(uuid4())
     result = run_live(request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
-        "fixed-context-20260906-diagnostic-v1", "live", live_config("fixed-context-e01-v1"))
+        "fixed-context-20260906-diagnostic-v1", "live", live_config("fixed-context-e01-v1", model=model))
     assert len(requests) == 1 and result["status"] == "completed"
     capture = json.loads((tmp_path / request_id / "capture/capture.json").read_text())
     assert capture["modelApiCalls"] == 1 and capture["caseIds"] == ["E01"]
     assert capture["cases"][0]["apiResponseIndexes"] == [0]
     comparison = json.loads((tmp_path / request_id / "evaluation/comparison.json").read_text())
-    assert comparison["candidate_execution"]["model"] == "gpt-6-luna"
+    assert comparison["candidate_execution"]["model"] == model
     assert comparison["reference_execution"]["model"] == "gpt-5.6-luna"
     tokens = next(metric for metric in comparison["metrics"] if metric["key"] == "meanInputTokens")
     assert tokens == {"key": "meanInputTokens", "reference": None, "candidate": 120.0, "delta": None}

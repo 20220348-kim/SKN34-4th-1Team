@@ -45,6 +45,30 @@ describe('실행 설정·예산 점검', () => {
     expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
   })
 
+  it('선택 모델을 점검 요청에 담고 다른 모델의 결과는 거절한다', async () => {
+    const fetch = vi.fn(async () => json(checked))
+    vi.stubGlobal('fetch', fetch)
+    render(<LiveReadinessPanel datasetId="fixed" executionProfile={profile} model="other-model" onExpired={vi.fn()} />, { wrapper: MemoryRouter })
+    fireEvent.click(screen.getByRole('button'))
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', '운영 서버 응답을 확인할 수 없습니다.')
+    expect(fetch).toHaveBeenCalledWith(`/api/v1/ops/evaluations/live-readiness?dataset_id=fixed&execution_profile=${profile}&model=other-model`, expect.anything())
+    expect(screen.queryByRole('table')).toBeNull()
+  })
+
+  it('모델을 바꾼 뒤 늦게 도착한 이전 모델의 예산 점검은 사용하지 않는다', async () => {
+    let resolve!: (value: Response) => void
+    const pending = new Promise<Response>((done) => { resolve = done })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(json({ ...checked, model: 'second-model' })))
+    const view = render(<LiveReadinessPanel key="first-model" datasetId="fixed" executionProfile={profile} model="test-model" onExpired={vi.fn()} />, { wrapper: MemoryRouter })
+    fireEvent.click(screen.getByRole('button'))
+    view.rerender(<LiveReadinessPanel key="second-model" datasetId="fixed" executionProfile={profile} model="second-model" onExpired={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button'))
+    await screen.findByText(/second-model/)
+    await act(async () => { resolve(json(checked)); await pending })
+    expect(screen.queryByText(/test-model/)).toBeNull()
+    expect(screen.getByText(/second-model/)).toBeTruthy()
+  })
+
   it('재점검 중 이전 성공을 지우고 오류를 표시한다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(checked)).mockResolvedValueOnce(json({ detail: '실행 설정이 변경됐습니다.' }, 409)))
     mount(); fireEvent.click(screen.getByRole('button'))

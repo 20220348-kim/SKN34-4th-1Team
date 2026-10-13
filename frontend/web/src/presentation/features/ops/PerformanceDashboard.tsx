@@ -26,6 +26,27 @@ function change(current: PerformancePoint, previous: PerformancePoint | undefine
   return delta === 0 ? '이전 측정과 동일' : `이전 대비 ${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%p`
 }
 
+function sameEvaluationConditions(left: PerformanceSeries, right: PerformanceSeries) {
+  return left.dataset_id === right.dataset_id && left.scope === right.scope
+    && left.fixture_sha256 === right.fixture_sha256 && left.evaluator_version === right.evaluator_version
+    && JSON.stringify([...left.case_ids].sort()) === JSON.stringify([...right.case_ids].sort())
+    && JSON.stringify(left.retrieval_k?.slice().sort(([a], [b]) => a.localeCompare(b)) ?? null)
+      === JSON.stringify(right.retrieval_k?.slice().sort(([a], [b]) => a.localeCompare(b)) ?? null)
+}
+
+function modelDifference(current: PerformancePoint, reference: PerformancePoint, key: Metric) {
+  const value = current.values[key], baseline = reference.values[key]
+  if (value === null || baseline === null) return '비교할 측정값 없음'
+  if (!current.prompt_sha256 || !reference.prompt_sha256) return '프롬프트 확인 불가'
+  if (current.prompt_sha256 !== reference.prompt_sha256) return '프롬프트 다름'
+  if (!current.generation_config_sha256 || !reference.generation_config_sha256) return '생성 설정 확인 불가'
+  if (current.generation_config_sha256 !== reference.generation_config_sha256) return '생성 설정 다름'
+  if (!current.coverage[key] || !reference.coverage[key]) return '측정 사례 확인 불가'
+  if (current.coverage[key] !== reference.coverage[key]) return '측정 사례 다름'
+  const delta = (value - baseline) * 100
+  return delta === 0 ? '기준 대비 동일' : `기준 대비 ${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%p`
+}
+
 export function PerformanceDashboard({ onExpired }: { onExpired: () => void }) {
   const [data, setData] = useState<Dashboard | null>(null)
   const [error, setError] = useState('')
@@ -82,6 +103,7 @@ export function PerformanceDashboard({ onExpired }: { onExpired: () => void }) {
             {metrics.map((metric) => <article key={metric.key} className="rounded-xl border border-line bg-white p-4 sm:p-5"><h3 className="text-sm font-medium text-ink-muted">{metric.label}</h3><p className="mt-3 text-2xl font-bold tabular-nums sm:text-3xl text-ink">{percent(latest.values[metric.key])}</p><p className="mt-2 text-xs font-medium text-ink">{change(latest, points.at(-2), metric.key)}</p><p className="mt-3 text-xs leading-5 text-ink-muted">{latest.values[metric.key] !== null ? `${latest.samples[metric.key] ?? '미확인'}개 사례 측정 / 전체 ${selected.case_ids.length}개` : metric.key === 'retrieval' && selected.scope === 'fixed-answer-context-only' ? '이 평가에는 검색 단계가 없습니다.' : '저장된 측정값이 없습니다.'}</p></article>)}
             <article className="rounded-xl border border-line bg-white p-4 sm:p-5"><h3 className="text-sm font-medium text-ink-muted">평균 답변 지연</h3><p className="mt-3 text-2xl font-bold tabular-nums sm:text-3xl text-ink">{latest.values.latency === null ? '미측정' : <>{(latest.values.latency / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}<span className="ml-1 text-base font-medium">초</span></>}</p><p className="mt-2 text-xs text-ink">저장된 답변 생성 시간</p><p className="mt-3 text-xs leading-5 text-ink-muted">전체 API 응답 시간과 다릅니다.</p></article>
           </section>
+          <ModelComparison series={data.series} selected={selected} reference={latest} cutoff={cutoff} />
           <DashboardReviewStatus key={`${latest.run_id}:${revision}`} runId={latest.run_id} onExpired={onExpired} />
           <TrendChart points={points} />
           <section className={styles.card} aria-label="실측 이력">
@@ -99,6 +121,30 @@ export function PerformanceDashboard({ onExpired }: { onExpired: () => void }) {
       </>}
     </div>
   </>
+}
+
+function ModelComparison({ series, selected, reference, cutoff }: { series: PerformanceSeries[]; selected: PerformanceSeries; reference: PerformancePoint; cutoff: number }) {
+  const rows = series.filter((item) => sameEvaluationConditions(item, selected))
+    .map((item) => ({ model: item.model, point: item.points.filter((point) => Date.parse(point.measured_at) >= cutoff).at(-1) }))
+    .filter((row): row is { model: string; point: PerformancePoint } => row.point !== undefined)
+    .sort((left, right) => left.model === selected.model ? -1 : right.model === selected.model ? 1 : left.model.localeCompare(right.model))
+  return <section className={styles.card} aria-label="모델별 결과 비교">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className={styles.cardTitle}>모델별 결과 비교</h2><p className={styles.cardDescription}>선택한 자료·사례·평가 범위·채점 버전·검색 K가 같은 모델의 기간 내 최신 실측입니다.</p></div><Link className={styles.secondaryButton} to="/ops/evaluations/new">다른 모델 평가하기</Link></div>
+    <p className="mt-4 text-sm text-ink">차이 기준: <strong>{selected.model}</strong> · 위의 측정 모델을 바꾸면 차이 기준도 바뀝니다.</p>
+    {rows.length < 2 && <p className="mt-3 rounded-lg bg-surface-muted p-3 text-sm leading-6 text-ink-muted">아직 같은 조건으로 측정한 다른 모델이 없습니다. 새 평가에서 같은 자료와 다른 모델을 선택해 실행한 뒤 지표를 새로고침하세요.</p>}
+    <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm">
+      <caption className="sr-only">같은 평가 조건의 모델별 최신 지표와 선택 모델 대비 차이</caption>
+      <thead className="border-b border-line text-xs text-ink-muted"><tr>{['모델', ...metrics.map((metric) => metric.label), '평균 답변 지연', '측정 시각 (서울)', '결과'].map((label) => <th key={label} scope="col" className="px-2 py-3 font-medium">{label}</th>)}</tr></thead>
+      <tbody>{rows.map(({ model, point }) => <tr key={model} className={`border-b border-line last:border-0 ${model === selected.model ? 'bg-brand-soft/40' : ''}`}>
+        <th scope="row" className="px-2 py-4 font-semibold">{model}{model === selected.model && <span className="mt-1 block text-xs font-normal text-brand-primary">차이 기준</span>}</th>
+        {metrics.map((metric) => <td key={metric.key} className="px-2 py-4 tabular-nums"><span className="font-medium">{percent(point.values[metric.key])}</span>{model !== selected.model && <span className="mt-1 block text-xs text-ink-muted">{modelDifference(point, reference, metric.key)}</span>}</td>)}
+        <td className="px-2 py-4 tabular-nums">{point.values.latency === null ? '미측정' : `${(point.values.latency / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}초`}</td>
+        <td className="px-2 py-4 text-xs">{date(point.measured_at)}{point.mode === 'recovery' && <span className="mt-1 block text-ink-muted">후처리 복구</span>}</td>
+        <td className="px-2 py-4"><Link to={runPath(point)} className="font-medium text-brand-primary underline underline-offset-4" aria-label={`${model} 최신 평가 상세`}>상세 보기</Link></td>
+      </tr>)}</tbody>
+    </table></div>
+    <p className="mt-4 text-xs leading-5 text-ink-muted">%p 차이는 프롬프트·모델 외 생성 설정·지표별 측정 사례까지 같을 때만 표시합니다. 조건이 다른 값은 직접적인 우열 비교에 사용하지 마세요. 모델별 측정 시각은 다를 수 있으며 자동 지표는 사람의 검토를 대신하지 않습니다.</p>
+  </section>
 }
 
 function TrendChart({ points }: { points: PerformancePoint[] }) {
