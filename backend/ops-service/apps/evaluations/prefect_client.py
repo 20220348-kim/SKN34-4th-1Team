@@ -8,13 +8,17 @@ from urllib.request import Request, urlopen
 from uuid import UUID
 
 from django.conf import settings
+from django.utils.dateparse import parse_datetime
+from django.utils.timezone import is_aware
+
+LOG_PAGE_SIZE = 100
 
 
 class PrefectUnavailable(Exception):
     pass
 
 
-def request_json(path, payload=None, *, expected_type=dict):
+def request_json(path, payload=None, *, expected_type=dict, max_bytes=None):
     request = Request(
         settings.PREFECT_API_URL + path,
         data=None if payload is None else json.dumps(payload).encode(),
@@ -23,7 +27,13 @@ def request_json(path, payload=None, *, expected_type=dict):
     )
     try:
         with urlopen(request, timeout=3) as response:
-            data = json.load(response)
+            if max_bytes is None:
+                data = json.load(response)
+            else:
+                raw = response.read(max_bytes + 1)
+                if len(raw) > max_bytes:
+                    raise ValueError("Response too large")
+                data = json.loads(raw)
         if not isinstance(data, expected_type):
             raise ValueError("Unexpected response type")
         return data
@@ -114,6 +124,54 @@ def read_run(flow_run_id):
     except (KeyError, TypeError, ValueError) as exc:
         raise PrefectUnavailable from exc
     return data
+
+
+def read_logs(flow_run_id, offset=0):
+    """Read only this flow's logs; an unavailable/missing flow is not an empty log."""
+    read_run(flow_run_id)
+    rows = request_json(
+        "/logs/filter",
+        {
+            "logs": {"flow_run_id": {"any_": [str(flow_run_id)]}},
+            "sort": "TIMESTAMP_DESC",
+            "offset": offset,
+            "limit": LOG_PAGE_SIZE + 1,
+        },
+        expected_type=list,
+        max_bytes=4 * 1024 * 1024,
+    )
+    try:
+        if len(rows) > LOG_PAGE_SIZE + 1:
+            raise ValueError("Unexpected log count")
+        results = []
+        for row in rows:
+            if UUID(str(row["flow_run_id"])) != flow_run_id:
+                raise ValueError("Unexpected flow log")
+            timestamp = parse_datetime(row["timestamp"])
+            if (
+                timestamp is None
+                or not is_aware(timestamp)
+                or type(row["level"]) is not int
+                or not isinstance(row["message"], str)
+                or not isinstance(row["name"], str)
+            ):
+                raise ValueError("Invalid log response")
+            results.append(
+                {
+                    "id": str(UUID(str(row["id"]))),
+                    "timestamp": timestamp.isoformat(),
+                    "level": row["level"],
+                    "name": row["name"],
+                    "message": row["message"],
+                }
+            )
+        return {
+            "offset": offset,
+            "next_offset": offset + LOG_PAGE_SIZE if len(results) > LOG_PAGE_SIZE else None,
+            "results": results[:LOG_PAGE_SIZE],
+        }
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise PrefectUnavailable from exc
 
 
 def cancel_run(flow_run_id):

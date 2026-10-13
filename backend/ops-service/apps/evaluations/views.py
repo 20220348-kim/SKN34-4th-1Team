@@ -19,6 +19,7 @@ from .admission import AdmissionUnavailable
 from .budget import BudgetUnavailable
 from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
+from .prefect_client import PrefectUnavailable, read_logs
 from .quality import assess, save_fixture_review
 from .rag_material import read_material as read_rag_material
 from .rag_quality import assess as assess_rag_quality
@@ -270,6 +271,28 @@ def api_run_detail(request, run_id):
     run = get_object_or_404(EvaluationRun.objects.select_related("requested_by"), pk=run_id)
     sync_run(run)
     return Response({**run_data(run, request.user.pk), "postprocessing": recovery_state(run)})
+
+
+class RunLogsQuerySerializer(serializers.Serializer):
+    offset = serializers.IntegerField(min_value=0, default=0)
+
+
+@never_cache
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def api_run_logs(request, run_id):
+    query = RunLogsQuerySerializer(data=request.query_params)
+    query.is_valid(raise_exception=True)
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    if run.prefect_flow_run_id is None:
+        return Response({"code": "PREFECT_RUN_NOT_SUBMITTED"}, status=409)
+    try:
+        logs = read_logs(run.prefect_flow_run_id, query.validated_data["offset"])
+    except PrefectUnavailable:
+        return Response({"code": "PREFECT_LOGS_UNAVAILABLE"}, status=503)
+    return Response(
+        {"run_id": str(run.id), "prefect_flow_run_id": str(run.prefect_flow_run_id), **logs}
+    )
 
 
 @never_cache

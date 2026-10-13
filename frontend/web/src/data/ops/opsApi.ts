@@ -530,6 +530,15 @@ export type SchedulesPage = z.infer<typeof schedulesPageSchema>
 export type ScheduleInput = Pick<EvaluationSchedule, 'daily_at' | 'starts_on' | 'ends_on' | 'reason'>
   & Omit<EvaluationSchedule['request'], 'execution_mode' | 'candidate_capture_id'> & { request_id: string }
 export type EvaluationRun = z.infer<typeof runSchema>
+const evaluationLogsSchema = z.object({
+  run_id: z.uuid(), prefect_flow_run_id: z.uuid(), offset: z.number().int().nonnegative(),
+  next_offset: z.number().int().positive().nullable(),
+  results: z.array(z.object({
+    id: z.uuid(), timestamp: z.iso.datetime({ offset: true }), level: z.number().int(),
+    name: z.string(), message: z.string(),
+  })).max(100),
+})
+export type EvaluationLogs = z.infer<typeof evaluationLogsSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
 export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
 export type BudgetSummary = z.infer<typeof budgetSummarySchema>
@@ -583,6 +592,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
       : error?.code === 'CANCEL_CONFLICT' ? '이미 종료된 평가입니다. 상태를 다시 확인하세요.'
       : error?.code === 'RESULTS_UNAVAILABLE' ? '저장된 검토 자료와 평가 결과의 무결성을 확인할 수 없습니다. 운영자에게 확인해 주세요.'
+      : error?.code === 'PREFECT_LOGS_UNAVAILABLE' ? 'Prefect 실행 로그를 가져오지 못했습니다. 잠시 후 다시 조회하세요.'
+      : error?.code === 'PREFECT_RUN_NOT_SUBMITTED' ? '아직 Prefect에 접수된 실행이 없습니다. 실행 상태를 다시 확인하세요.'
       : response.status === 401 ? '로그인이 만료되었습니다.'
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
@@ -657,6 +668,12 @@ export async function getDashboardReviewStatus(runId: string, signal?: AbortSign
   return result
 }
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
+export const getEvaluationLogs = (id: string, flowId: string, offset = 0, signal?: AbortSignal) => request(
+  `/evaluations/${encodeURIComponent(id)}/logs?offset=${offset}`,
+  evaluationLogsSchema.refine((value) => value.run_id === id && value.prefect_flow_run_id === flowId
+    && value.offset === offset && (value.next_offset === null || (value.next_offset === offset + 100 && value.results.length === 100))),
+  { signal },
+)
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-material`, ragMaterialSchema, { signal })
 export const getRagReviews = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, ragReviewStateSchema, { signal })
