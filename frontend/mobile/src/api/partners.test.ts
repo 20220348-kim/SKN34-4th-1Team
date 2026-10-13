@@ -1,10 +1,33 @@
 import { apiRequest, ApiError } from './client'
-import { browseProposals, browseRecruitments, createRecruitment, getPartnerWebUrl, updateRecruitment } from './partners'
+import { browseProposals, browseRecruitments, createRecruitment, getPartnerWebUrl, updateRecruitment, recommendRecruitments } from './partners'
 import { defaultPartnerRecruitmentQuery } from '@govbiz/shared/domain/entities/PartnerRecruitmentQuery'
 
 jest.mock('./client', () => ({ ...jest.requireActual('./client'), apiRequest: jest.fn() }))
 
 afterEach(() => { delete process.env.EXPO_PUBLIC_WEB_BASE_URL; jest.mocked(apiRequest).mockReset() })
+
+test('Gov recommendations preserve normalized conditions, composite program identity and bearer authentication', async () => {
+  jest.mocked(apiRequest).mockResolvedValue({ items: [], total: 0,
+    basis: { hasCompany: false, profileSet: false, roles: [], capabilityCount: 0, myProgramCount: 0, region: null }, relax: [], suggestedProgram: null })
+  const signal = new AbortController().signal
+  await recommendRecruitments({ seekingRoles: ['LEAD', 'PARTICIPANT'], regions: ['서울', ' 서울 '], keywords: [' AI ', 'AI', '제조'],
+    program: { sourceCode: 'KSTARTUP', sourceProgramId: 'P1' } }, 'admin-owner', signal)
+  const [path, options] = jest.mocked(apiRequest).mock.calls[0]
+  const url = new URL(path, 'https://api.example.test')
+  expect(url.pathname).toBe('/api/v1/partners/recruitments/recommended')
+  expect(url.searchParams.get('limit')).toBe('3')
+  expect(url.searchParams.getAll('seekingRole')).toEqual(['LEAD', 'PARTICIPANT'])
+  expect(url.searchParams.getAll('region')).toEqual(['서울'])
+  expect(url.searchParams.getAll('keyword')).toEqual(['AI', '제조'])
+  expect(url.searchParams.get('sourceCode')).toBe('KSTARTUP')
+  expect(url.searchParams.get('sourceProgramId')).toBe('P1')
+  expect(options).toEqual({ accessToken: 'admin-owner', signal })
+})
+
+test('an invalid recommended response is an error instead of a successful empty recommendation', async () => {
+  jest.mocked(apiRequest).mockResolvedValue({ items: [], total: 0 })
+  await expect(recommendRecruitments({ seekingRoles: [], regions: [], keywords: [], program: null }, 'admin-owner')).rejects.toThrow()
+})
 
 test('mobile recruitment search sends every selected role and region with the bearer token', async () => {
   jest.mocked(apiRequest).mockResolvedValue({ recruitments: [], total: 0, page: 2, pageSize: 20, totalPages: 2 })

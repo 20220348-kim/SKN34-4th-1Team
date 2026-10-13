@@ -2,6 +2,8 @@ import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/do
 import { ApiError, apiRequest, createApiFetch, errorMessage, getApiBaseUrl, programClient, readProgramDetail, requestResultUnconfirmed, requestRetryAfterSeconds } from './client'
 import { SupportProgramInterpretationApiError, SupportProgramRequestApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import { programDetail } from '../test/preparationFixtures'
+import { GovAgentApiError } from '@govbiz/shared/data/api/govAgentApi'
+import { emptyChatContext } from '../screens/chatConversationState'
 
 // 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
 beforeEach(() => {
@@ -25,6 +27,38 @@ test('validated request failures distinguish interpretation, admission and uncon
   expect(errorMessage(timeout)).toContain('새 요청')
   expect(errorMessage(new SupportProgramInterpretationApiError('unavailable'))).toContain('조건 해석')
   expect(requestRetryAfterSeconds(new ApiError(429, 'invalid wait', null, Number.MAX_VALUE))).toBeNull()
+})
+
+describe('mobile Gov API transport', () => {
+  const originalFetch = globalThis.fetch
+  const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL
+  const command = { conversation: { message: '공고를 선택할게요', context: emptyChatContext }, selectedProgram: null }
+  beforeEach(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test' })
+  afterEach(() => { globalThis.fetch = originalFetch; if (originalBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL; else process.env.EXPO_PUBLIC_API_BASE_URL = originalBase })
+  test('shared Gov requests use bearer authentication and send no client role', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ outcome: 'NEEDS_PROGRAM', message: '공고를 선택해 주세요.' }), { status: 200 }))
+    await expect(programClient('mobile-admin').sendGovAgentMessage(command)).resolves.toEqual({ outcome: 'NEEDS_PROGRAM', message: '공고를 선택해 주세요.' })
+    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0]
+    expect(url).toBe('https://api.example.test/api/v1/gov-agent/messages')
+    expect(init.headers.get('Authorization')).toBe('Bearer mobile-admin')
+    expect(init.credentials).toBe('omit')
+    expect(JSON.parse(init.body)).toEqual(command)
+  })
+  test.each([403, 504])('HTTP %s retains a safe Gov error without another endpoint', async status => {
+    globalThis.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'private server details' }), { status }))
+    const error = await programClient('mobile-admin').sendGovAgentMessage(command).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(GovAgentApiError)
+    expect(error).toMatchObject({ status })
+    expect(errorMessage(error)).toContain('Gov 에이전트')
+    expect(errorMessage(error)).not.toContain('private')
+    expect(requestResultUnconfirmed(error)).toBe(status === 504)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+  test('another program identity is rejected before exposing an application result', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ outcome: 'APPLICATION',
+      program: { sourceCode: 'BIZINFO', sourceProgramId: 'other-program' }, message: '신청 준비' }), { status: 200 }))
+    await expect(programClient('mobile-admin').sendGovAgentMessage({ ...command, selectedProgram: { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' } })).rejects.toThrow('Gov agent program mismatch')
+  })
 })
 
 describe('native API boundary', () => {

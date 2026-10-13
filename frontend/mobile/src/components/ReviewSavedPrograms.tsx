@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Text } from 'react-native'
+import { ActivityIndicator, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
@@ -8,16 +8,18 @@ import { useAuth } from '../auth/session'
 import { ProgramCard, type ProgramSelectionLabels } from './ProgramCard'
 import { Button, Notice, Page, colors, styles } from '../ui'
 
-export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, header, maximum = 2, labels }: {
+export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, header, maximum = 2, labels, inline = false, active = true }: {
   token: string; keys: string[]; disabled: boolean; onToggle(program: SupportProgram): void; onOpen(identity: SupportProgramIdentity): void
   header?: ReactNode
   maximum?: number; labels?: ProgramSelectionLabels
+  inline?: boolean; active?: boolean
 }) {
   const { invalidateSession } = useAuth()
   const [programs, setPrograms] = useState<SupportProgram[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   useEffect(() => {
+    if (!active) return
     const controller = new AbortController()
     setPrograms(null); setError(null)
     void listReviewSavedPrograms(token, controller.signal).then(result => {
@@ -28,8 +30,8 @@ export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, h
       setError(errorMessage(cause))
     })
     return () => controller.abort()
-  }, [invalidateSession, revision, token])
-  return <Page>
+  }, [invalidateSession, revision, token, active])
+  const content = <>
     {header}
     {programs === null && !error && <ActivityIndicator color={colors.primary} accessibilityLabel="관심 공고 불러오는 중" />}
     {error && <><Notice error>{error}</Notice><Button label="관심 공고 다시 확인" onPress={() => setRevision(value => value + 1)} /></>}
@@ -39,5 +41,6 @@ export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, h
       return <ProgramCard key={`${program.sourceCode}:${program.id}`} program={program} onOpen={onOpen}
         selection={{ selected, labels, disabled: disabled || (!selected && keys.length >= maximum), onToggle: () => onToggle(program) }} />
     })}
-  </Page>
+  </>
+  return inline ? <View style={{ gap: 12 }}>{content}</View> : <Page>{content}</Page>
 }

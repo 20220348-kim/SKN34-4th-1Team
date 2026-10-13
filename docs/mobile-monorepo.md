@@ -37,6 +37,11 @@ shared는 TypeScript 소스를 export하며 Vite와 Metro가 각 앱의 번들�
 공고 분류 선택지·날짜·상태는 shared 정의를 사용합니다. 화면 진입만으로 유료 미리보기를 생성하지 않습니다. 원본 시안·공통 UI 및 현재 구현 범위는
 [모바일 README](../frontend/mobile/README.md#화면-기준-skn-78--1단계)를 따릅니다.
 
+관리자 계정의 AI 검색은 shared GovAgent 계약에 모바일 Bearer 인증을 주입합니다. 공고 선택과 원문 질문,
+신청 준비·중복 검토의 인라인 카드는 모바일 UI이며 업무 실행과 요청 복구는 기존 앱 API·유스케이스를 재사용합니다.
+선택 공고와 Gov 메시지는 기존 shared 대화 스냅샷에 저장합니다.
+[관리자 Gov 에이전트](../frontend/mobile/README.md#관리자-gov-에이전트)를 참고하세요.
+
 ## 설치와 실행
 
 Node.js 24.x와 pnpm 11.22.x에서 **저장소 루트**로 이동해 실행합니다.

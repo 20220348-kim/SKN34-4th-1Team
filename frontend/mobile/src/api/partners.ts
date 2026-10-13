@@ -10,9 +10,31 @@ import { CreatePartnerRecruitmentUseCase, UpdatePartnerRecruitmentUseCase } from
 import type { PartnerProposalBox, PartnerProposalInput } from '@govbiz/shared/domain/entities/PartnerProposal'
 import type { PartnerProposalAction } from '@govbiz/shared/domain/repositories/PartnerProposalRepository'
 import { apiRequest, ApiError, errorMessage } from './client'
+import { RecommendPartnerRecruitmentsUseCase } from '@govbiz/shared/domain/usecases/PartnerRecruitmentUseCases'
+import type { PartnerRecruitmentConditions } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
+import { partnerRecruitmentRecommendationsDtoSchema, toPartnerRecruitmentRecommendations } from '@govbiz/shared/data/models/PartnerRecruitmentRecommendationDto'
 
 const recruitments = '/api/v1/partners/recruitments'
 const proposals = '/api/v1/partners/proposals'
+
+/** Gov 대화의 검증된 조건으로 기존 Core 추천 API를 조회합니다. AI 실행 API가 아닙니다. */
+export function recommendRecruitments(conditions: PartnerRecruitmentConditions, token: string, signal?: AbortSignal) {
+  return new RecommendPartnerRecruitmentsUseCase({
+    async recommend(value, limit, requestSignal) {
+      const params = new URLSearchParams({ limit: String(limit) })
+      value.seekingRoles.forEach(role => params.append('seekingRole', role))
+      value.regions.forEach(region => params.append('region', region))
+      value.keywords.forEach(keyword => params.append('keyword', keyword))
+      if (value.program) {
+        params.set('sourceCode', value.program.sourceCode)
+        params.set('sourceProgramId', value.program.sourceProgramId)
+      }
+      return toPartnerRecruitmentRecommendations(partnerRecruitmentRecommendationsDtoSchema.parse(
+        await apiRequest(`${recruitments}/recommended?${params}`, { accessToken: token, signal: requestSignal }),
+      ))
+    },
+  }).execute(conditions, 3, signal)
+}
 
 export async function browseRecruitments(query: PartnerRecruitmentQuery, token?: string, signal?: AbortSignal) {
   const params = new URLSearchParams({ keyword: query.keyword.trim(), mine: String(query.mineOnly),

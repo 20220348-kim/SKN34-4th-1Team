@@ -1,5 +1,6 @@
 import type { ChatConversationSnapshot, ChatMessage, ChatSearchOptions } from '@govbiz/shared/domain/entities/ChatConversation'
 import type { SupportProgramConversationContext, SupportProgramInterpretation, SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
+import type { GovAgentProgram } from '@govbiz/shared/domain/entities/GovAgent'
 
 export const emptyChatContext: SupportProgramConversationContext = {
   query: null, acceptingOnly: true,
@@ -12,10 +13,11 @@ export function chatSearchOptions(context: SupportProgramConversationContext): C
 }
 
 export function chatSnapshot(messages: ChatMessage[], context: SupportProgramConversationContext,
-  proposal: SupportProgramInterpretation | null, clarification: SupportProgramPendingClarification | null): ChatConversationSnapshot {
+  proposal: SupportProgramInterpretation | null, clarification: SupportProgramPendingClarification | null,
+  govProgram: GovAgentProgram | null = null): ChatConversationSnapshot {
   const lastResult = [...messages].reverse().find(message => message.programs !== undefined)
   const searchContext = lastResult ? contextFromSearch(lastResult.searchQuery ?? null, lastResult.searchOptions ?? chatSearchOptions(context)) : null
-  return { schemaVersion: 1, messages, searchOptions: chatSearchOptions(context), conversationQuery: context.query,
+  return { schemaVersion: 1, messages, govProgram, searchOptions: chatSearchOptions(context), conversationQuery: context.query,
     confirmedSearch: searchContext?.query ? { query: searchContext.query, ...chatSearchOptions(searchContext) } : null,
     lastSearch: searchContext ? { context: searchContext, resultCount: lastResult!.totalCount ?? 0 } : null,
     pendingProposal: proposal?.status === 'READY' ? proposal.proposedContext : null, pendingClarification: clarification,

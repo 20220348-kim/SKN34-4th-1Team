@@ -8,20 +8,29 @@ import { apiRequest, programClient } from '../api/client'
 import { CombinationReviewEditorScreen, CombinationReviewListScreen } from './CombinationReviewScreens'
 import { answerRunFixture, mobileReview, reviewPrograms, reviewRequestKey, reviewRunFixture } from '../test/reviewFixtures'
 import { colors } from '../ui'
+import { ChatScreen } from './ChatScreen'
+import { emptyChatContext } from './chatConversationState'
+import { saveChatConversation } from '../api/chatConversations'
 
 const mockRepository = { get: jest.fn(), create: jest.fn(), replace: jest.fn(), delete: jest.fn(), list: jest.fn(), runs: jest.fn(), run: jest.fn(), start: jest.fn(), source: jest.fn() }
 const mockInvalidate = jest.fn()
-let mockAuth: { status: string; session: null | { accessToken: string; account: { email: string } }; invalidateSession: typeof mockInvalidate }
+let mockUniqueUuids = false, mockChatId = 0
+let mockAuth: { status: string; session: null | { accessToken: string; account: { email: string; role?: 'ADMIN' | 'USER' } }; invalidateSession: typeof mockInvalidate }
 jest.mock('../auth/session', () => ({ useAuth: () => mockAuth }))
 jest.mock('expo-router', () => {
   const React = jest.requireActual<typeof import('react')>('react')
   const router = { push: jest.fn(), replace: jest.fn(), navigate: jest.fn() }
   return { router, useRouter: () => router, useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }
 })
-jest.mock('expo-crypto', () => ({ randomUUID: () => '00000000-0000-4000-8000-000000000001' }))
+jest.mock('expo-crypto', () => ({ randomUUID: () => mockUniqueUuids
+  ? `00000000-0000-4000-8000-${String(++mockChatId).padStart(12, '0')}` : '00000000-0000-4000-8000-000000000001' }))
 jest.mock('expo-secure-store', () => ({ getItemAsync: jest.fn(), setItemAsync: jest.fn(), deleteItemAsync: jest.fn(), WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'device-only' }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn(), apiRequest: jest.fn() }))
 jest.mock('../api/combinationReviews', () => ({ ...jest.requireActual('../api/combinationReviews'), MobileCombinationReviewRepository: jest.fn().mockImplementation(() => mockRepository) }))
+jest.mock('../api/planUsage', () => ({ planUsageUseCase: () => ({ usage: () => new Promise(() => undefined) }) }))
+jest.mock('../api/chatConversations', () => ({ saveChatConversation: jest.fn(async (_token, _email, id, version) => ({
+  id, title: '검토 대화', version: version + 1, updatedAt: '2026-10-13T09:00:00',
+})), getChatConversation: jest.fn(), listChatConversations: jest.fn(), deleteChatConversation: jest.fn() }))
 
 const entries = new Map<string, string>()
 const onOpen = jest.fn()
@@ -30,6 +39,7 @@ let request: RunRequest | null
 const editor = (id: number | null = null) => <CombinationReviewEditorScreen id={id} onLogin={jest.fn()} onOpenProgram={onOpen} />
 beforeEach(() => {
   entries.clear(); request = null; saved = structuredClone(mobileReview)
+  mockUniqueUuids = false; mockChatId = 0
   mockAuth = { status: 'signedIn', session: { accessToken: 'first-token', account: { email: 'first@example.test' } }, invalidateSession: mockInvalidate }
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
   for (const method of Object.values(mockRepository)) method.mockReset()
@@ -57,6 +67,66 @@ beforeEach(() => {
   })) })
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL })
+
+test('a real inline review inside the admin conversation saves its ID and opens results after acknowledgement', async () => {
+  mockAuth.session!.account.role = 'ADMIN'
+  mockUniqueUuids = true
+  try {
+    const currentClient = jest.mocked(programClient)()
+    const program = { ...reviewPrograms[0], sourceUrl: 'https://www.bizinfo.go.kr/program' }
+    jest.mocked(programClient).mockReturnValue({ ...currentClient,
+      sendGovAgentMessage: jest.fn().mockResolvedValue({ outcome: 'SEARCH', interpretation: {
+        status: 'READY', proposedContext: { ...emptyChatContext, query: '사업화 지원' }, clarificationQuestion: null, changedFields: [],
+      } }), getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+      search: jest.fn().mockResolvedValue({ query: '사업화 지원', programs: [program], totalCount: 1, resultToken: null, expiresAt: null }),
+    } as unknown as ReturnType<typeof programClient>)
+    const openResults = jest.fn()
+    render(<ChatScreen onLogin={jest.fn()} onOpenProgram={onOpen} onOpenReview={openResults} />)
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '사업화 지원 찾아줘')
+    await act(async () => fireEvent.press(screen.getByLabelText('AI에게 보내기')))
+    await act(async () => fireEvent.press(screen.getByLabelText('이 조건으로 검색')))
+    await act(async () => fireEvent.press(screen.getByLabelText(`${program.title}, 이 공고 선택`)))
+    await act(async () => fireEvent.press(screen.getByLabelText('중복 검토')))
+    await screen.findByText('1 / 2 선택')
+    fireEvent.changeText(screen.getByLabelText('검토 제목'), '대화에서 실행할 검토')
+    const card = screen.getByTestId('review-program-BIZINFO-PBLN_200')
+    fireEvent.press(within(card).getAllByRole('button').at(-1)!)
+    await act(async () => fireEvent.press(screen.getByLabelText('다음 · 분석 확인')))
+    await waitFor(() => expect(screen.getByLabelText('검토 실행')).toBeEnabled())
+    expect(jest.mocked(saveChatConversation).mock.calls.at(-1)![4].messages.at(-1)!.govReview?.reviewId).toBe(5)
+    fireEvent.changeText(screen.getByLabelText('추가로 알려줄 내용 (선택)'), '같은 비용을 쓰지 않아요.')
+    await act(async () => fireEvent.press(screen.getByLabelText('검토 실행')))
+    await waitFor(() => expect(openResults).toHaveBeenCalledWith(expect.objectContaining({ reviewId: 5 })))
+    expect(mockRepository.start).toHaveBeenCalledTimes(1)
+  } finally { mockUniqueUuids = false }
+})
+
+test('inline review keeps the shared save/start boundary and reports execution to the native result route', async () => {
+  const changed = jest.fn()
+  render(<CombinationReviewEditorScreen inline id={5} initialStep="confirm" onStepChange={changed} onLogin={jest.fn()} onOpenProgram={onOpen} />)
+  await waitFor(() => expect(screen.getByLabelText('검토 실행')).toBeEnabled())
+  expect(mockRepository.start).not.toHaveBeenCalled()
+  fireEvent.changeText(screen.getByLabelText('추가로 알려줄 내용 (선택)'), '서로 다른 비용으로 사용해요.')
+  await act(async () => fireEvent.press(screen.getByLabelText('검토 실행')))
+  expect(mockRepository.start).toHaveBeenCalledTimes(1)
+  expect(mockRepository.start).toHaveBeenCalledWith(5, expect.objectContaining({ expectedRevision: 1,
+    requestKey: reviewRequestKey, additionalFacts: '서로 다른 비용으로 사용해요.' }), expect.any(AbortSignal))
+  expect(changed).toHaveBeenCalledWith(5, 'analysis')
+  expect(screen.getByLabelText('검토 결과 화면에서 보기')).toBeTruthy()
+  expect(screen.queryByText('실행 결과 선택')).toBeNull()
+})
+
+test('a disabled inline review cannot start another operation during conversation persistence', async () => {
+  const props = { inline: true, id: 5, initialStep: 'confirm' as const, onLogin: jest.fn(), onOpenProgram: onOpen }
+  const view = render(<CombinationReviewEditorScreen disabled {...props} />)
+  await waitFor(() => expect(mockRepository.get).toHaveBeenCalled())
+  expect(screen.getByLabelText('검토 실행')).toBeDisabled()
+  fireEvent.press(screen.getByLabelText('검토 실행'))
+  expect(mockRepository.start).not.toHaveBeenCalled()
+  view.rerender(<CombinationReviewEditorScreen disabled={false} {...props} />)
+  await waitFor(() => expect(screen.getByLabelText('검토 실행')).toBeEnabled())
+  expect(mockRepository.start).not.toHaveBeenCalled()
+})
 
 /** 공고 선택 다음은 바로 분석 확인 단계예요. 내 상황(상태 · 관계 · 추가 설명)은 그 단계의 선택 칸이에요. */
 async function prepare() {

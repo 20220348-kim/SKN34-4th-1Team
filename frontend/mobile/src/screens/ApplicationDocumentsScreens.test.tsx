@@ -10,7 +10,7 @@ import { readPendingPreparation, savePendingPreparation, clearPendingPreparation
 import { ApplicationDocumentsListScreen } from './ApplicationDocumentsListScreen'
 import { ApplicationPreparationNewScreen } from './ApplicationPreparationNewScreen'
 import { ApplicationDocumentScreen } from './ApplicationDocumentScreen'
-import { documentFile, documentForm, documentJob, documentPreparation, documentProgram, documentSummary } from '../test/applicationDocumentFixtures'
+import { discoveryJob, documentFile, documentForm, documentJob, documentPreparation, documentProgram, documentSummary } from '../test/applicationDocumentFixtures'
 
 jest.mock('expo-crypto', () => ({ randomUUID: () => '11111111-1111-4111-8111-111111111111' }))
 
@@ -62,6 +62,39 @@ beforeEach(() => {
     regions: ['서울'], categories: ['기술'], startupStages: [], applicantTypes: [], founderAges: [] }) } as unknown as ReturnType<typeof programClient>)
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMocks() })
+
+test('inline application reuses stored forms without AI and pauses reads while collapsed', async () => {
+  const openForms = jest.fn()
+  const props = { ...newProps, inline: true, initialProgram: { sourceCode: documentProgram.sourceCode, sourceProgramId: documentProgram.id }, onOpenForms: openForms }
+  const view = render(<ApplicationPreparationNewScreen active {...props} />)
+  await screen.findByLabelText('양식 선택하고 쓰기')
+  expect(api.discover).not.toHaveBeenCalled()
+  expect(api.create).not.toHaveBeenCalled()
+  fireEvent.press(screen.getByLabelText('양식 선택하고 쓰기'))
+  expect(openForms).toHaveBeenCalledTimes(1)
+  const signal = api.availability.mock.calls[0][2] as AbortSignal
+  view.rerender(<ApplicationPreparationNewScreen active={false} {...props} />)
+  expect(signal.aborted).toBe(true)
+  view.rerender(<ApplicationPreparationNewScreen active {...props} />)
+  await waitFor(() => expect(api.availability).toHaveBeenCalledTimes(2))
+  expect(api.discover).not.toHaveBeenCalled()
+})
+
+test('inline analysis preserves the existing request key boundary and never creates a preparation', async () => {
+  api.availability.mockResolvedValue({ state: { status: 'PENDING' }, forms: { items: [] } })
+  api.discover.mockResolvedValue(discoveryJob)
+  api.discoveryJobs.mockResolvedValueOnce([]).mockResolvedValue([discoveryJob])
+  render(<ApplicationPreparationNewScreen inline initialProgram={{ sourceCode: documentProgram.sourceCode, sourceProgramId: documentProgram.id }} {...newProps} />)
+  await waitFor(() => expect(screen.getByLabelText('입력칸 분석 시작')).toBeEnabled())
+  expect(api.discover).not.toHaveBeenCalled()
+  await act(async () => fireEvent.press(screen.getByLabelText('입력칸 분석 시작')))
+  await waitFor(() => expect(api.discover).toHaveBeenCalledTimes(1))
+  expect(savePendingPreparation).toHaveBeenCalledWith('https://api.example.test', 'first@test.com', expect.objectContaining({
+    kind: 'discovery', sourceCode: documentProgram.sourceCode, sourceProgramId: documentProgram.id, requestKey: '11111111-1111-4111-8111-111111111111',
+  }))
+  expect(api.discover).toHaveBeenCalledWith(documentProgram.sourceCode, documentProgram.id, expect.any(AbortSignal), '11111111-1111-4111-8111-111111111111')
+  expect(api.create).not.toHaveBeenCalled()
+})
 
 test.each(['GOOGLE_FORMS', 'EXTERNAL_SITE', 'UNKNOWN'] as const)('document results offer an input helper only for %s', async type => {
   jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...documentProgram,

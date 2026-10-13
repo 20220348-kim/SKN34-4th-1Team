@@ -3,6 +3,7 @@ import { readPlanQuotaProblem } from '@govbiz/shared/data/models/PlanUsageDto'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { createSupportProgramClient } from '@govbiz/shared/data/api/supportProgramClient'
+import { GovAgentApiError } from '@govbiz/shared/data/api/govAgentApi'
 import { SupportProgramInterpretationApiError, SupportProgramRequestApiError, SupportProgramSearchTimeoutApiError, SupportProgramEvidenceApiError } from '@govbiz/shared/data/api/supportProgramApi'
 
 export class ApiError extends Error {
@@ -107,6 +108,7 @@ export async function readProgramDetail(client: ReturnType<typeof programClient>
 }
 
 export function errorMessage(error: unknown): string {
+  if (error instanceof GovAgentApiError) return error.message
   // 요금제 한도 오류는 shared 공고 클라이언트(검색·원문 질문)가 안내 문구를 담아 던집니다.
   if (error instanceof PlanQuotaExceededError || error instanceof QuotaUnavailableError) return error.message
   if (error instanceof SupportProgramRequestApiError) return error.code === 'SUPPORT_PROGRAM_RATE_LIMITED'
@@ -128,7 +130,8 @@ export function requestRetryAfterSeconds(error: unknown): number | null {
 }
 
 export function requestResultUnconfirmed(error: unknown): boolean {
-  return error instanceof SupportProgramSearchTimeoutApiError
+  return error instanceof GovAgentApiError && error.status === 504
+    || error instanceof SupportProgramSearchTimeoutApiError
     || error instanceof SupportProgramInterpretationApiError && error.reason === 'timeout'
     || error instanceof Error && ['AbortError', 'TimeoutError', 'TypeError'].includes(error.name)
 }
