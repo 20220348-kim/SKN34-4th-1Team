@@ -59,7 +59,7 @@ export function PerformanceDashboard({ onExpired }: { onExpired: () => void }) {
     setParams(next)
   }
   return <>
-    <WorkspacePageHeader title="성능 대시보드" actions={<><button className={styles.secondaryButton} disabled={loading} onClick={() => setRevision((value) => value + 1)}>{loading ? '불러오는 중…' : '지표 새로고침'}</button><Link className={styles.secondaryButton} to="/ops/evaluations">평가 이력 보기</Link></>} />
+    <WorkspacePageHeader title="성능 대시보드" actions={<button className={styles.secondaryButton} disabled={loading} onClick={() => setRevision((value) => value + 1)}>{loading ? '불러오는 중…' : '지표 새로고침'}</button>} />
     <div className={styles.content}>
       <p className="text-sm leading-6 text-ink-muted">저장된 실제 모델 실행을 기준으로 최근 성능과 변화를 확인합니다. 실시간 서비스 전체의 품질을 의미하지 않습니다.</p>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}{data && ' 마지막 조회 결과를 표시하고 있습니다.'}</p>}
