@@ -6,18 +6,19 @@ import { clearIntroductionCompleted } from '../auth/introductionStorage'
 import { AppIcon, type AppIconName } from '../components/AppIcon'
 import { MenuPressable } from '../components/MenuPressable'
 import { Button, Notice, Page, colors } from '../ui'
-import { ServiceInformationSheet } from '../components/ServiceInformationSheet'
-import { serviceContact, serviceInformation, type ServiceInformationSection } from '../content/serviceInformation'
+// skn-501: 운영 문서·문의처 확정 전에는 안내 진입점을 노출하지 않습니다. 확정 후 주석을 해제합니다.
+// import { ServiceInformationSheet } from '../components/ServiceInformationSheet'
+// import { serviceContact, serviceInformation, type ServiceInformationSection } from '../content/serviceInformation'
 
 export type MenuDestination = 'account' | 'company' | 'settings' | 'filter' | 'ai' | 'saved' | 'report'
   | 'partners' | 'documents' | 'reviews' | 'recruitments' | 'received' | 'sent' | 'mine' | 'pricing' | 'assistant'
-type MenuItem = { destination: MenuDestination | ServiceInformationSection; label: string; description: string; icon: AppIconName }
+type MenuItem = { destination: MenuDestination /* | ServiceInformationSection */; label: string; description: string; icon: AppIconName }
 
 export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): void }) {
   const { status, session, restoreError } = useAuth()
   const [introBusy, setIntroBusy] = useState(false)
   const [introError, setIntroError] = useState<string | null>(null)
-  const [information, setInformation] = useState<ServiceInformationSection | null>(null)
+  // const [information, setInformation] = useState<ServiceInformationSection | null>(null)
   async function replayIntroduction() {
     if (introBusy) return
     setIntroBusy(true); setIntroError(null)
@@ -30,10 +31,12 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
   if (status === 'loading') return <Page headerless backgroundColor={colors.surface}><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page headerless><Notice error>{restoreError ?? '로그인 상태를 확인하지 못했습니다.'}</Notice>
     <Button label="로그인 상태 확인" onPress={() => onOpen('account')} />
+    {/* skn-501: 미확정 정책·도움말·문의 안내 보류
     <Button label="개인정보 처리방침" variant="ghost" onPress={() => setInformation('privacy')} />
     <Button label="이용약관" variant="ghost" onPress={() => setInformation('terms')} />
     <Button label="도움말·문의" variant="ghost" onPress={() => setInformation('support')} />
-    <ServiceInformationSheet section={information} onClose={() => setInformation(null)} /></Page>
+    <ServiceInformationSheet section={information} onClose={() => setInformation(null)} />
+    */}</Page>
   const account = status === 'signedIn' ? session?.account : null
   const groups: { title: string; items: MenuItem[] }[] = [
     { title: '내 정보', items: [
@@ -56,9 +59,11 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
     { title: '서비스 안내', items: [
       ...(account ? [{ destination: 'assistant' as const, label: 'GovBiz 도우미', description: '사용법 · 질문하기', icon: 'message' as const }] : []),
       { destination: 'pricing', label: screenTitles.pricing, description: '기능 · 이용 안내', icon: 'creditCard' },
+      /* skn-501: 미확정 정책·도움말·문의 안내 보류
       { destination: 'privacy', label: '개인정보 처리방침', description: serviceInformation.privacy.preparing ? '문서 초안' : '문서 읽기', icon: 'document' },
       { destination: 'terms', label: '이용약관', description: serviceInformation.terms.preparing ? '문서 초안' : '문서 읽기', icon: 'document' },
       { destination: 'support', label: '도움말·문의', description: serviceContact.email || serviceContact.url ? '도움말 · 문의처' : '도움말 · 문의처 준비 중', icon: 'message' },
+      */
     ] },
   ]
   return <Page headerless backgroundColor={colors.surface}>
@@ -73,15 +78,20 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
       <Text accessibilityRole="header" style={local.heading}>{group.title}</Text>
       {group.items.map((item) => <MenuPressable key={item.destination} accessibilityRole="button" accessibilityLabel={item.label}
         accessibilityHint={item.description} onPress={() => {
+          /* skn-501: 미확정 안내 시트 연결 보류
           if (item.destination === 'terms' || item.destination === 'privacy' || item.destination === 'support') setInformation(item.destination)
-          else onOpen(item.destination)
+          else
+          */
+          onOpen(item.destination)
         }}
         style={({ pressed }) => [local.row, pressed && { backgroundColor: `${colors.text}05` }]}>
         <View style={local.icon}><AppIcon name={item.icon} color={colors.primary} size={22} /></View>
         <Text style={local.label}>{item.label}</Text><Text style={local.description}>{!account && !['filter', 'ai', 'recruitments', 'pricing', 'terms', 'privacy', 'support'].includes(item.destination) ? '로그인 후 이용' : item.description}</Text>
       </MenuPressable>)}
     </View>)}
+    {/* skn-501: 미확정 안내 시트 연결 보류
     <ServiceInformationSheet section={information} onClose={() => setInformation(null)} />
+    */}
     {__DEV__ && status === 'signedOut' && <>
       {introError && <Notice error>{introError}</Notice>}
       <Button label="기능 소개 다시 보기" variant="secondary" busy={introBusy} onPress={() => void replayIntroduction()} />

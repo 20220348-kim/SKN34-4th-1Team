@@ -156,8 +156,8 @@ test('a signed-in account shows its plan and every usage limit as progress witho
   // 앱에서는 이용 현황만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
   expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제하기/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
-  // 이름 붙은 버튼은 그대로입니다. 무엇을 한 번으로 세는지는 요금제 탭에 있어 내 계정에는 두지 않습니다.
-  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
+  // 미확정 서비스 안내를 제외한 계정 관리 버튼을 유지합니다. 세는 기준은 요금제 탭에만 둡니다.
+  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제'])
   expect(view.queryByText(/세는 기준|조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeNull()
 })
 
@@ -172,7 +172,7 @@ test('a trial shows only the trial plan and when it ends, without any button to 
   expect(view.getByText('10월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')).toBeTruthy()
   expect(view.queryByText(/체험 시작|요금제 바꾸기|업그레이드/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
-  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
+  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제'])
 })
 
 test('a thirty-day pass groups every feature into this period and says when the period and the pass end', async () => {
@@ -251,29 +251,31 @@ test('signup rejects a password with Korean characters before sending it', async
   expect(signUp).not.toHaveBeenCalled()
 })
 
-test('signup opens draft policy documents without sending authentication requests or clearing its input', () => {
-  const view = render(<AccountScreen onCompany={jest.fn()} initialMode="signup" />)
+test.each(['login', 'signup'] as const)('%s hides unconfirmed policy documents and keeps the authentication form', initialMode => {
+  const view = render(<AccountScreen onCompany={jest.fn()} initialMode={initialMode} />)
   fireEvent.changeText(view.getByLabelText('이메일'), 'owner@example.test')
   fireEvent.changeText(view.getByLabelText('비밀번호'), 'password123')
-  expect(view.getByText(/이용약관과 개인정보 처리방침은 운영 문서 확정 전의 초안/)).toBeTruthy()
-  fireEvent.press(view.getByLabelText('이용약관 읽기'))
-  expect(view.getByText('문서 초안 · 운영 문서 확정 전')).toBeTruthy()
-  fireEvent.press(view.getAllByLabelText('닫기')[0])
+  for (const label of ['이용약관 읽기', '개인정보 처리방침 읽기', '개인정보 처리방침', '이용약관', '도움말·문의']) expect(view.queryByLabelText(label)).toBeNull()
+  expect(view.queryByText(/이용약관과 개인정보 처리방침/)).toBeNull()
+  expect(view.queryByText('문서 초안 · 운영 문서 확정 전')).toBeNull()
+  if (initialMode === 'signup') {
+    expect(view.getByLabelText('비밀번호 확인')).toBeTruthy()
+    expect(view.getByText('비밀번호는 영문·숫자·특수문자만 사용할 수 있으며, 8~72자로 입력해 주세요.')).toBeTruthy()
+    expect(view.getByLabelText('회원가입').props.accessibilityState.disabled).toBe(true)
+  }
   expect(view.getByLabelText('이메일').props.value).toBe('owner@example.test')
   expect(view.getByLabelText('비밀번호').props.value).toBe('password123')
-  fireEvent.press(view.getByLabelText('개인정보 처리방침 읽기'))
-  expect(view.getByText(/실제 운영 정책으로 확정된 내용이 아니에요/)).toBeTruthy()
   expect(apiRequest).not.toHaveBeenCalled()
   expect(signUp).not.toHaveBeenCalled()
 })
 
-test('a signed-in account can open support while keeping its session', async () => {
+test('a signed-in profile hides unconfirmed service information while keeping its session', async () => {
   signIn()
   jest.mocked(apiRequest).mockResolvedValue({ plan: 'FREE', items: [] })
   const view = render(<AccountScreen onCompany={jest.fn()} />)
   await view.findByText('무료')
-  fireEvent.press(view.getByLabelText('도움말·문의'))
-  expect(view.getByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeTruthy()
+  for (const label of ['개인정보 처리방침', '이용약관', '도움말·문의']) expect(view.queryByLabelText(label)).toBeNull()
+  expect(view.queryByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeNull()
   expect(view.queryByLabelText('문의처 열기')).toBeNull()
   expect(jest.mocked(useAuth)().session?.accessToken).toBe('owner')
 })
