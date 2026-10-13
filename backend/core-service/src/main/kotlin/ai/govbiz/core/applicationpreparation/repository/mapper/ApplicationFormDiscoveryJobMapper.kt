@@ -14,6 +14,7 @@ interface ApplicationFormDiscoveryJobMapper {
     fun findOwned(ownerId: Long, id: Long): ApplicationFormDiscoveryJobDbRow?
     fun listOwned(ownerId: Long): List<ApplicationFormDiscoveryJobDbRow>
     fun markSeen(ownerId: Long, sourceCode: String, sourceProgramId: String, now: LocalDateTime): Int
+    fun dismiss(ownerId: Long, id: Long, now: LocalDateTime): Int
     fun claim(id: Long, now: LocalDateTime): Int
     fun beginAi(id: Long, now: LocalDateTime): Int
     fun finish(id: Long, status: String, resultJson: String?, failureCode: String?, now: LocalDateTime): Int

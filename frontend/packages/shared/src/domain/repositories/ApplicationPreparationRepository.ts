@@ -36,6 +36,8 @@ export interface ApplicationPreparationRepository {
   markDocumentJobsSeen(id: number, signal?: AbortSignal): Promise<void>
   /** 그 공고의 끝난 양식 분석 결과를 확인한 것으로 표시합니다. 그 공고의 새 문서 화면을 열 때 부릅니다. */
   markDiscoveryJobsSeen(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<void>
+  /** 끝난 양식 분석을 신청 문서 작성 목록에서 지웁니다. 기록은 서버에 남고 `dismissed`만 바뀝니다. */
+  dismissDiscoveryJob(id: number, signal?: AbortSignal): Promise<void>
   confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string,
     signal?: AbortSignal): Promise<ApplicationDocumentMigrationConfirmation>
   downloadDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob>

@@ -49,6 +49,8 @@ class ApplicationFormDiscoveryJobRepository(
     fun findOwned(ownerId: Long, id: Long) = mapper.findOwned(ownerId, id)?.toDomain()
     fun listOwned(ownerId: Long) = mapper.listOwned(ownerId).map { it.toDomain() }
     fun markSeen(ownerId: Long, sourceCode: String, programId: String) { mapper.markSeen(ownerId, sourceCode, programId, now()) }
+    /** 끝난 분석을 목록에서 지운다. 이미 지웠거나 아직 끝나지 않았으면 false다. */
+    fun dismiss(ownerId: Long, id: Long): Boolean = mapper.dismiss(ownerId, id, now()) == 1
     @Transactional
     fun claim(id: Long): ApplicationFormDiscoveryJob? =
         if (mapper.claim(id, now()) == 1) requireNotNull(mapper.find(id)).toDomain() else null
@@ -77,6 +79,6 @@ class ApplicationFormDiscoveryJobRepository(
     private fun ApplicationFormDiscoveryJobDbRow.toDomain() = ApplicationFormDiscoveryJob(
         id, ownerAccountId, requestKey, sourceCode, sourceProgramId, programTitle, programSourceUrl,
         ApplicationFormDiscoveryJobStatus.valueOf(status),
-        resultJson?.let { json.readValue(it, ApplicationFormDiscoveryResult::class.java) }, failureCode, requireNotNull(createdAt), seenAt,
+        resultJson?.let { json.readValue(it, ApplicationFormDiscoveryResult::class.java) }, failureCode, requireNotNull(createdAt), seenAt, dismissedAt,
     )
 }

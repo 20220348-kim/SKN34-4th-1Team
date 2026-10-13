@@ -555,9 +555,12 @@ describe('review screens and execution safety', () => {
     expect(within(cards[0]!).getByText('분석 중')).toBeTruthy()
     expect(within(cards[0]!).getByText(/2분 지남/)).toBeTruthy()
     expect(within(cards[0]!).getByRole('link', { name: '진행 보기: 진행 중인 검토' }).getAttribute('href')).toBe('/app/combination-reviews/15?step=analysis')
-    fireEvent.click(within(cards[0]!).getByRole('button', { name: '검토 메뉴: 진행 중인 검토' }))
-    expect((within(screen.getByRole('menu', { name: '검토 메뉴' })).getByRole('menuitem', { name: '삭제' }) as HTMLButtonElement).disabled).toBe(true)
+    // [⋯] 메뉴 없이 삭제는 카드 오른쪽 위 버튼으로 바로 보이고, 분석 중에는 막힙니다.
+    expect(within(cards[0]!).queryByRole('button', { name: /검토 메뉴/ })).toBeNull()
+    expect((within(cards[0]!).getByRole('button', { name: '삭제: 진행 중인 검토' }) as HTMLButtonElement).disabled).toBe(true)
     expect(within(cards[1]!).getByText('분석 완료')).toBeTruthy()
+    // 실행한 검토는 주 버튼(결과 보기) 옆에 [입력 수정]을 보조 링크로 둡니다.
+    expect(within(cards[1]!).getByRole('link', { name: '입력 수정: 끝난 검토' }).getAttribute('href')).toBe('/app/combination-reviews/14')
     expect(within(cards[1]!).getByRole('link', { name: '결과 보기: 끝난 검토' }).getAttribute('href')).toBe('/app/combination-reviews/14/runs/40')
     expect(within(cards[2]!).getByText(/입력을 바꾼 뒤에는 아직 실행하지 않았어요/)).toBeTruthy()
     expect(within(cards[3]!).getByText('분석 실패')).toBeTruthy()
@@ -611,10 +614,9 @@ describe('review screens and execution safety', () => {
   it('deletes a review only after explicit confirmation and removes it from the list', async () => {
     repository.list.mockResolvedValue({ items: [reviewFixture], nextBeforeId: null })
     mount('/app/combination-reviews')
-    fireEvent.click(await screen.findByRole('button', { name: `검토 메뉴: ${reviewFixture.title}` }))
-    const menu = screen.getByRole('menu', { name: '검토 메뉴' })
-    expect(within(menu).getByRole('menuitem', { name: '입력 수정' }).getAttribute('href')).toBe('/app/combination-reviews/12')
-    fireEvent.click(within(menu).getByRole('menuitem', { name: '삭제' }))
+    // 실행 전 검토는 주 버튼이 이미 입력 화면이라 [입력 수정]을 따로 두지 않습니다.
+    expect(screen.queryByRole('link', { name: /^입력 수정/ })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: `삭제: ${reviewFixture.title}` }))
     const dialog = screen.getByRole('dialog', { name: '검토를 삭제할까요?' })
     expect(repository.delete).not.toHaveBeenCalled()
     fireEvent.click(within(dialog).getByRole('button', { name: '삭제' }))
@@ -625,8 +627,7 @@ describe('review screens and execution safety', () => {
   it.each(['QUEUED', 'RUNNING', 'UNKNOWN'])('blocks list deletion while the latest run is %s', async (status) => {
     repository.list.mockResolvedValue({ items: [{ ...reviewFixture, latestRun: { ...runFixture, status } }], nextBeforeId: null })
     mount('/app/combination-reviews')
-    fireEvent.click(await screen.findByRole('button', { name: `검토 메뉴: ${reviewFixture.title}` }))
-    const button = within(screen.getByRole('menu', { name: '검토 메뉴' })).getByRole('menuitem', { name: '삭제' }) as HTMLButtonElement
+    const button = await screen.findByRole('button', { name: `삭제: ${reviewFixture.title}` }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
     fireEvent.click(button)
     expect(screen.queryByRole('dialog', { name: '검토를 삭제할까요?' })).toBeNull()
@@ -636,8 +637,7 @@ describe('review screens and execution safety', () => {
     repository.list.mockResolvedValue({ items: [reviewFixture], nextBeforeId: null })
     repository.delete.mockRejectedValue(new CombinationReviewError(409, 'COMBINATION_REVIEW_DELETE_CONFLICT'))
     mount('/app/combination-reviews')
-    fireEvent.click(await screen.findByRole('button', { name: `검토 메뉴: ${reviewFixture.title}` }))
-    fireEvent.click(within(screen.getByRole('menu', { name: '검토 메뉴' })).getByRole('menuitem', { name: '삭제' }))
+    fireEvent.click(await screen.findByRole('button', { name: `삭제: ${reviewFixture.title}` }))
     const dialog = screen.getByRole('dialog', { name: '검토를 삭제할까요?' })
     fireEvent.click(within(dialog).getByRole('button', { name: '삭제' }))
     expect((await within(dialog).findByRole('alert')).textContent).toContain('검토를 삭제할 수 없습니다')

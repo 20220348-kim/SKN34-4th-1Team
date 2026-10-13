@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -50,6 +50,8 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     expect(screen.getByRole('textbox', { name: '공고 원문에 질문하기' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '질문 패널 닫기' }))
     await screen.findByRole('heading', { name: supportPrograms[0].title })
+    // 패널을 닫으면 포커스가 [원문에 질문하기]로 돌아옵니다(키보드로 이어 쓰거나 시트를 Esc로 닫을 수 있음).
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '원문에 질문하기' })))
     expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
   })
 

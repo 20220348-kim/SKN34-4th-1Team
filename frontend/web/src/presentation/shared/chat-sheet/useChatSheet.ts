@@ -1,7 +1,7 @@
 import { createContext, useContext, useState } from 'react'
 import { type Location, matchPath, type NavigationType, useLocation, useNavigate, useNavigationType } from 'react-router'
 
-import { appPaths } from '../routes/appPaths'
+import { appPaths, isAppPath } from '../routes/appPaths'
 
 /**
  * 대화에서 열면 대화 위 시트로 띄우는 화면과 시트 머리의 이름입니다. 목록 화면은 넣지 않아, 시트 안에서 목록으로 가면
@@ -58,19 +58,38 @@ function historyIndex(): number | null {
   return typeof index === 'number' ? index : null
 }
 
+/**
+ * 대화가 아닌 작업 화면(신청 문서 작성 · 관심 공고함 · 중복 검토 · 파트너 · 리포트 등)에서 열어도 그 화면 위 시트로 띄우는 화면입니다.
+ * 공고 상세 · 원문 질문은 어디서 열든 같은 모양으로 보고 닫으면 보던 목록으로 돌아갑니다. 신청 문서 · 검토처럼 그 자체가 목적지인
+ * 화면은 대화에서 열 때만 시트이고, 목록에서 열면 지금처럼 전체 화면입니다.
+ */
+const peekPaths = [appPaths.supportProgramDetail, appPaths.supportProgramQuestion]
+
+function isPeekPath(pathname: string): boolean {
+  return peekPaths.some((path) => matchPath(path, pathname))
+}
+
+/** [from] 화면 위에 [to]를 시트로 띄울지입니다. 대화는 모든 시트 화면을, 다른 작업 화면은 공고 상세 · 원문 질문만 띄웁니다. */
+function opensOver(from: string, to: string): boolean {
+  const path = from.replace(/\/+$/, '')
+  if (path === appPaths.chat) return true
+  return isAppPath(path) && !isPeekPath(path) && isPeekPath(to)
+}
+
 function advance(state: SheetState, location: Location, navigationType: NavigationType): SheetState {
   if (chatSheetKind(location.pathname) === null) {
     return { location, background: null, chatIndex: null, closed: state.background ? state.closed + 1 : state.closed }
   }
   if (state.background) return { ...state, location }
-  // 대화에서 누른 링크(또는 앞으로 가기)일 때만 시트로 엽니다. 주소를 바꿔 치우는 이동·새로고침·공유 링크는 전체 화면입니다.
-  if (state.location.pathname.replace(/\/+$/, '') !== appPaths.chat || navigationType === 'REPLACE') return { ...state, location }
+  // 화면에서 누른 링크(또는 앞으로 가기)일 때만 시트로 엽니다. 주소를 바꿔 치우는 이동·새로고침·공유 링크는 전체 화면입니다.
+  if (!opensOver(state.location.pathname, location.pathname) || navigationType === 'REPLACE') return { ...state, location }
   const index = historyIndex()
   return { location, background: state.location, chatIndex: index === null ? null : index - 1, closed: state.closed }
 }
 
 /**
  * 대화에서 공고 상세·신청 문서·중복 검토·파트너 모집글로 가면 대화를 뒤에 그대로 두고 그 화면을 시트로 띄웁니다.
+ * 다른 작업 화면에서 연 공고 상세·원문 질문도 그 화면을 뒤에 둔 같은 시트로 띄웁니다(목록 필터 · 스크롤 유지).
  * 주소는 그 화면의 주소로 바뀌므로 새로고침·공유 링크는 지금처럼 전체 화면으로 열리고, 뒤로 가기는 시트를 닫습니다.
  * 시트 안에서 다른 시트 화면으로 옮겨도(새 문서 → 답변 입력 → 초안) 시트를 유지하고, 그 밖의 화면으로 가면 시트를 닫고 그 화면을 엽니다.
  * 대화가 뒤에 남아 있으므로 닫으면 스크롤 위치와 쓰던 글이 그대로입니다.

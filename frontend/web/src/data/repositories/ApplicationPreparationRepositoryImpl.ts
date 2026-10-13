@@ -72,6 +72,9 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
   markDiscoveryJobsSeen(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
     return request('/forms/discovery-jobs/seen', z.undefined(), 'POST', { sourceCode, sourceProgramId }, signal)
   }
+  dismissDiscoveryJob(id: number, signal?: AbortSignal) {
+    return request(`/forms/discovery-jobs/${id}`, z.undefined(), 'DELETE', undefined, signal)
+  }
   async confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string, signal?: AbortSignal) {
     const result = await request(`/${id}/documents/mapping-migration/confirm`, applicationDocumentMigrationConfirmationSchema,
       'POST', { expectedRevision, approvalToken }, signal, 'preparation')

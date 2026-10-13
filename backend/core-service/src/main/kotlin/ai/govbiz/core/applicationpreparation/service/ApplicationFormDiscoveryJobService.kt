@@ -3,6 +3,7 @@ package ai.govbiz.core.applicationpreparation.service
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.account.domain.Account
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryJobStatus
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormDiscoveryJobRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException.Reason
@@ -51,6 +52,18 @@ class ApplicationFormDiscoveryJobService(
     fun get(account: Account, id: Long) = repository.findOwned(account.id, id)
         ?: throw ApplicationFormDiscoveryException(Reason.JOB_NOT_FOUND)
     fun list(account: Account) = repository.listOwned(account.id)
+
+    /**
+     * 끝난 분석을 신청 문서 작성 목록에서 지운다. 기록은 남겨 새 문서 화면의 최근 분석 판단과 사용량에 그대로 쓰고, 목록 카드만 숨긴다.
+     * 진행 중·결과 불명 작업은 지울 수 없다. 이미 지운 작업을 다시 지워도 같은 결과다.
+     */
+    fun dismiss(account: Account, id: Long) {
+        val job = get(account, id)
+        if (job.status != ApplicationFormDiscoveryJobStatus.SUCCEEDED && job.status != ApplicationFormDiscoveryJobStatus.FAILED) {
+            throw ApplicationFormDiscoveryException(Reason.JOB_CONFLICT)
+        }
+        repository.dismiss(account.id, id)
+    }
 
     /** 그 공고에서 끝난 분석 결과를 확인한 것으로 표시한다. 사용자가 결과 화면을 열었을 때 부른다. */
     fun markSeen(account: Account, sourceCode: String, programId: String) {

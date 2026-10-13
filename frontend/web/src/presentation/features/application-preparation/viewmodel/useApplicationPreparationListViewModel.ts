@@ -20,7 +20,7 @@ import {
 } from '../../../shared/preparation-jobs/usePreparationJobs'
 import type { WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 
-type FailedRequest = { kind: 'list'; beforeId?: number } | { kind: 'delete'; id: number }
+type FailedRequest = { kind: 'list'; beforeId?: number } | { kind: 'delete'; id: number } | { kind: 'dismiss'; id: number }
 
 /** 끝난 분석을 목록에 남겨 두는 시간과 작업을 다시 읽는 간격입니다. 값은 사이드바 배지와 함께 쓰는 공용 작업 목록의 것입니다. */
 export const formAnalysisWindowMs = finishedAnalysisWindowMs
@@ -128,6 +128,9 @@ export function useApplicationPreparationListViewModel() {
   const [error, setError] = useState<Error | null>(null)
   const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  // 지운 양식 분석입니다. 작업 목록을 다시 읽기 전에도 카드를 바로 숨깁니다.
+  const [dismissingAnalysisId, setDismissingAnalysisId] = useState<number | null>(null)
+  const [dismissedAnalysisIds, setDismissedAnalysisIds] = useState<readonly number[]>([])
   /** 작업이 끝났을 때 공고명을 알리려고 지금 목록을 들고 있습니다. */
   const pageRef = useRef<ApplicationPreparationPage | null>(null)
   useEffect(() => { pageRef.current = page }, [page])
@@ -254,10 +257,33 @@ export function useApplicationPreparationListViewModel() {
     }
   }, [refreshJobs, useCase])
 
+  /** 끝난 양식 분석 카드를 목록에서 지웁니다. 서버 기록은 남아 새 문서 화면의 최근 분석 판단에 그대로 쓰입니다. */
+  const dismissAnalysis = useCallback(async (id: number): Promise<boolean> => {
+    if (dismissingAnalysisId !== null) return false
+    setDismissingAnalysisId(id)
+    setError(null)
+    setFailedRequest(null)
+    try {
+      await useCase.dismissDiscoveryJob(id)
+      setDismissedAnalysisIds((current) => [...current, id])
+      // 사이드바의 확인 전 수에도 남지 않게 작업 목록을 다시 읽습니다(지우면 서버가 확인한 것으로도 둡니다).
+      refreshJobs()
+      setToast({ id: Date.now(), text: '삭제했어요.' })
+      return true
+    } catch (caught) {
+      setError(asError(caught))
+      setFailedRequest({ kind: 'dismiss', id })
+      return false
+    } finally {
+      setDismissingAnalysisId(null)
+    }
+  }, [dismissingAnalysisId, refreshJobs, useCase])
+
   const retry = useCallback(() => {
     if (failedRequest?.kind === 'list') load(failedRequest.beforeId)
     if (failedRequest?.kind === 'delete') void deletePreparation(failedRequest.id)
-  }, [failedRequest, load, deletePreparation])
+    if (failedRequest?.kind === 'dismiss') void dismissAnalysis(failedRequest.id)
+  }, [failedRequest, load, deletePreparation, dismissAnalysis])
 
   const setStatus = useCallback((next: ApplicationPreparationListStatus | undefined) => {
     setSearchParams(next === undefined ? {} : { status: next }, { replace: true })
@@ -271,7 +297,9 @@ export function useApplicationPreparationListViewModel() {
      */
     analyses: status === undefined && page !== null
       // "하루 안"은 사이드바 배지와 같은 시각(마지막으로 읽은 때)으로 판정하고, 확인 전 결과는 다른 끝난 분석보다 앞에 두어 카드 수 한도에 밀리지 않게 합니다.
-      ? recentFormAnalyses(analysisJobs, analysesReadAt).filter(({ job, state }) => state === 'active' || state === 'unknown'
+      // 사용자가 지운 분석은 빼고, 나머지에서 고릅니다.
+      ? recentFormAnalyses(analysisJobs, analysesReadAt).filter(({ job }) => !job.dismissed && !dismissedAnalysisIds.includes(job.id))
+        .filter(({ job, state }) => state === 'active' || state === 'unknown'
         || unseen.programKeys.includes(preparationProgramKey(job))
         || !page.items.some((item) => item.sourceCode === job.sourceCode && item.sourceProgramId === job.sourceProgramId))
         .map((row, index) => ({ row, index, rank: row.state === 'active' ? 0 : row.state === 'unknown' ? 1 : unseen.programKeys.includes(preparationProgramKey(row.job)) ? 2 : 3 }))
@@ -293,6 +321,8 @@ export function useApplicationPreparationListViewModel() {
     retry,
     deletePreparation,
     deletingId,
+    dismissAnalysis,
+    dismissingAnalysisId,
     loadMore: () => page?.nextBeforeId ? load(page.nextBeforeId) : undefined,
     /** 첫 쪽을 읽는 중입니다. 처음 들어왔을 때와 필터를 바꿨을 때 모두 해당하며, 뒤쪽은 `page`에 이전 목록이 남아 있습니다. */
     isInitialLoading: busy === 'initial',

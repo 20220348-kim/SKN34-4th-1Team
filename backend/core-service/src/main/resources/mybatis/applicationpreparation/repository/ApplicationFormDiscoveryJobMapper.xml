@@ -14,6 +14,7 @@
         <result column="failure_code" property="failureCode" />
         <result column="created_at" property="createdAt" />
         <result column="seen_at" property="seenAt" />
+        <result column="dismissed_at" property="dismissedAt" />
     </resultMap>
     <sql id="summary">
         id, owner_account_id, request_key, source_code, source_program_id,
@@ -26,7 +27,7 @@
         (SELECT p.source_url FROM support_program p
          WHERE p.source_code = application_form_discovery_job.source_code
            AND p.source_program_id = application_form_discovery_job.source_program_id) AS program_source_url,
-        status, failure_code, created_at, seen_at
+        status, failure_code, created_at, seen_at, dismissed_at
     </sql>
     <select id="lockActiveAccount" resultType="long">
         SELECT id FROM account WHERE id = #{ownerId} AND deleted_at IS NULL AND suspended_at IS NULL FOR UPDATE
@@ -60,6 +61,11 @@
         UPDATE application_form_discovery_job SET seen_at = #{now}
         WHERE owner_account_id = #{ownerId} AND source_code = #{sourceCode} AND source_program_id = #{sourceProgramId}
           AND status IN ('SUCCEEDED', 'FAILED') AND seen_at IS NULL
+    </update>
+    <!-- 이 계정의 끝난 분석을 신청 문서 작성 목록에서 지운다. 지우면 확인한 것으로도 둔다. 진행 중·결과 불명 작업은 건드리지 않는다. -->
+    <update id="dismiss">
+        UPDATE application_form_discovery_job SET dismissed_at = #{now}, seen_at = COALESCE(seen_at, #{now})
+        WHERE id = #{id} AND owner_account_id = #{ownerId} AND status IN ('SUCCEEDED', 'FAILED') AND dismissed_at IS NULL
     </update>
     <update id="claim">
         UPDATE application_form_discovery_job j INNER JOIN account a ON a.id = j.owner_account_id

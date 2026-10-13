@@ -23,11 +23,11 @@ import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.sty
 import { WorkSteps } from '../../../shared/workspace/WorkSteps'
 import { reviewWorkSteps } from '../../../shared/workspace/workStepNames'
 import { SelectField } from '../../../shared/workspace/SelectField'
+import { CardDeleteButton } from '../../../shared/workspace/CardDeleteButton'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
-import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
 import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { ReviewEditorSkeleton, ReviewListSkeleton, ReviewRunResultSkeleton } from './ReviewSkeletons'
 
@@ -61,29 +61,6 @@ function ReviewError({ error }: { error: { message: string; status?: number; run
 export function CombinationReviewListPage() {
   const account = useAppSelector(selectCurrentAccount)
   return account ? <ReviewList key={sessionKey(account)} account={account.email} /> : null
-}
-
-/** 검토 행의 [⋯] 메뉴입니다. 입력 수정으로 가거나 삭제 확인을 엽니다. 바깥 클릭 · Esc로 닫힙니다. */
-function ReviewMenu({ item, disabled, onDelete }: { item: ReviewListItem; disabled: boolean; onDelete: () => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const floating = useFloatingPopover({ open, placement: 'bottom-end' })
-  useEffect(() => {
-    if (!open) return
-    const close = (event: Event) => { if (!(event.target instanceof Node) || !ref.current?.contains(event.target)) setOpen(false) }
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', onKey) }
-  }, [open])
-  return <div ref={ref} className="relative">
-    <button ref={floating.reference} type="button" className={s.menuButton} aria-label={`검토 메뉴: ${item.title}`} aria-haspopup="menu" aria-expanded={open}
-      onClick={() => setOpen((current) => !current)}>⋯</button>
-    {open && <div ref={floating.floating} style={floating.floatingStyles} className={s.menu} role="menu" aria-label="검토 메뉴">
-      <Link className={s.menuItem} role="menuitem" to={`${appPaths.combinationReviews}/${item.id}`} onClick={() => setOpen(false)}>입력 수정</Link>
-      <button type="button" className={`${s.menuItem} ${s.menuItemDanger}`} role="menuitem" disabled={disabled} onClick={() => { setOpen(false); onDelete() }}>삭제</button>
-    </div>}
-  </div>
 }
 
 /**
@@ -127,6 +104,8 @@ function ReviewListCard({ item, now, deleteDisabled, onDelete }: { item: ReviewL
     <div className="flex flex-wrap items-center gap-2">
       <span className={`${s.badge} ${view.tone}`}>{run?.status === 'RUNNING' && <span className={s.buttonSpinner} aria-hidden="true" />}{view.badge}</span>
       <span className="text-xs text-ink-muted">입력 버전 {item.inputRevision}</span>
+      {/* 분석 중이거나 결과를 확인하는 중에는 삭제를 막습니다. 끝나면 다시 지울 수 있습니다. */}
+      <CardDeleteButton label={`삭제: ${item.title}`} disabled={deleteDisabled || working || view.state === 'checking'} onClick={onDelete} />
     </div>
     <Link className="flex min-w-0 flex-col gap-0.5 no-underline hover:[&>strong]:text-brand-primary" to={view.to}>
       <strong className={s.listTitle}>{item.title}</strong>
@@ -139,8 +118,8 @@ function ReviewListCard({ item, now, deleteDisabled, onDelete }: { item: ReviewL
     <div className={s.listFooter}>
       <span className={s.listStamp}>{run && (working || view.state === 'checking') ? `${formatReviewClock(run.startedAt)} 시작` : `${formatReviewDateTime(item.updatedAt)} 수정`}</span>
       <div className="flex items-center gap-2">
-        {/* 분석 중이거나 결과를 확인하는 중에는 삭제를 막습니다. 끝나면 다시 지울 수 있습니다. */}
-        <ReviewMenu item={item} disabled={deleteDisabled || working || view.state === 'checking'} onDelete={onDelete} />
+        {/* 주 버튼이 이미 입력 화면으로 가는 실행 전 카드에는 [입력 수정]을 따로 두지 않습니다. */}
+        {run && <Link className={workspacePageStyles.cardTextLink} to={`${appPaths.combinationReviews}/${item.id}`}>입력 수정<span className="sr-only">: {item.title}</span></Link>}
         <Link className={s.secondarySm} to={view.to}>{view.action}<span className="sr-only">: {item.title}</span></Link>
       </div>
     </div>

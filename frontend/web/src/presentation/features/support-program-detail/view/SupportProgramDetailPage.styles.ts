@@ -19,6 +19,9 @@ export const supportProgramDetailStyles = {
   // 빼기 확인입니다. 본문 위에 한 줄로 둡니다.
   removeConfirm: 'mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-warning-line bg-warning-soft px-4 py-3 text-[0.85rem] text-ink max-[599px]:mx-5',
   layout: 'mt-3.5 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-7 max-[1023px]:grid-cols-1 max-[1023px]:gap-6 max-[599px]:mt-0 max-[599px]:px-5 max-[599px]:pt-5',
+  // 원문 질문을 연 동안 넓은 화면의 오른쪽 칸을 질문 패널 폭(400px)으로 넓히고, 할 일 카드는 그 자리를 비켜 줍니다.
+  layoutAsking: 'min-[1024px]:grid-cols-[minmax(0,1fr)_400px]',
+  asideAsking: 'min-[1024px]:hidden',
   article: 'flex min-w-0 flex-col gap-6 max-[599px]:gap-[18px]',
   // 요약 hero 카드입니다. 상태·D-day·출처, 제목, 기관.
   heading: 'flex flex-col gap-2 rounded-2xl border border-line bg-surface px-6 py-5 max-[599px]:px-4 max-[599px]:py-4',

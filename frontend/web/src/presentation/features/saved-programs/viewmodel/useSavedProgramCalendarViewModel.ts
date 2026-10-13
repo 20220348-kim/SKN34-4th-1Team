@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { appContainer } from '../../../../app/appContainer'
 import type { SavedSupportProgram } from '../../../../domain/entities/SavedSupportProgram'
 import type { BrowseSavedSupportProgramsUseCase, RemoveSavedSupportProgramUseCase, SaveSupportProgramUseCase } from '../../../../domain/usecases/SavedSupportProgramUseCases'
+import { useChatSheetClosedCount } from '../../../shared/chat-sheet/useChatSheet'
 import type { SavedProgramsViewMode } from '../../../shared/routes/appPaths'
 import {
   buildCalendarWeeks,
@@ -108,6 +109,8 @@ export function useSavedProgramCalendarViewModel(
     }
   }
 
+  // 목록 위 시트로 연 공고 상세에서 관심을 뺐을 수 있으므로, 시트를 닫으면 목록을 다시 읽습니다.
+  const sheetClosed = useChatSheetClosedCount()
   useEffect(() => {
     if (initial.programs) return
     const controller = new AbortController()
@@ -116,7 +119,7 @@ export function useSavedProgramCalendarViewModel(
       .then((items) => { if (!controller.signal.aborted) setLoadState({ phase: 'ready', items }) })
       .catch(() => { if (!controller.signal.aborted) setLoadState((current) => ({ phase: 'failed', items: current.items })) })
     return () => controller.abort()
-  }, [browseUseCase, initial.programs, loadVersion])
+  }, [browseUseCase, initial.programs, loadVersion, sheetClosed])
 
   function chooseMonth(year: number, month: number) {
     if (!Number.isInteger(year) || !Number.isInteger(month) || year < firstCalendarYear || year > lastCalendarYear || month < 1 || month > 12) return
