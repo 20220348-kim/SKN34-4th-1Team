@@ -33,7 +33,9 @@ function summaryOf(overrides: Partial<AdminAiCostSummary> = {}): AdminAiCostSumm
     byModel: [{ key: 'gpt-5.6-sol-2026-07-30', serviceTier: 'priority', totals }],
     days: [
       { date: '2026-10-09', estimatedUsd: '0.000000', calls: 0, actualUsd: null },
+      { date: '2026-10-07', estimatedUsd: '0.000001', calls: 1, actualUsd: null },
       { date: '2026-10-10', estimatedUsd: '0.012346', calls: 12, actualUsd: null },
+      { date: '2026-10-08', estimatedUsd: '0.000000', calls: 0, actualUsd: '0.000002' },
     ],
     topAccounts: [{ accountId: 11, email: 'member@company.co.kr', planCode: 'PLUS', totals }],
     ...overrides,
@@ -84,8 +86,11 @@ describe('관리자 AI 비용', () => {
     expect(within(screen.getByRole('region', { name: '기능별' })).getByText('AI 대화 검색')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '기능별' })).getByText('시스템·기타(색인·조건 정리·공고 분석)')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '모델별' })).getByText('Fast(priority)')).toBeTruthy()
-    // 호출도 실제 비용도 없는 날은 표에서 뺍니다.
-    expect(within(screen.getByRole('region', { name: '날짜별' })).queryByText('2026-10-09')).toBeNull()
+    // 호출도 실제 비용도 없는 날은 빼고, API 순서와 관계없이 최신 날짜부터 표시합니다.
+    const days = within(screen.getByRole('region', { name: '날짜별' }))
+    expect(days.queryByText('2026-10-09')).toBeNull()
+    expect(days.getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[0].textContent))
+      .toEqual(['2026-10-10', '2026-10-08', '2026-10-07'])
     const member = within(screen.getByRole('region', { name: '많이 쓴 회원' })).getByRole('link', { name: 'member@company.co.kr' })
     expect(member.getAttribute('href')).toBe('/app/admin/accounts/detail?accountId=11')
     expect(within(screen.getByRole('region', { name: '가격표' })).getByText('gpt-5.6-luna')).toBeTruthy()
