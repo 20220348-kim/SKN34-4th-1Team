@@ -2,6 +2,7 @@ import type { CompanyProfileInput } from '../../domain/entities/Company'
 import type { CompanyPartnerProfileInput } from '../../domain/entities/CompanyPartnerProfile'
 import { AccountApiError } from './accountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 import {
   businessLookupDtoSchema,
   companyDtoSchema,
@@ -20,7 +21,7 @@ const withSessionCookie: RequestCredentials = 'include'
 
 export async function lookupBusinessApi(businessNumber: string, signal?: AbortSignal): Promise<BusinessLookupDto> {
   const query = new URLSearchParams({ businessNumber })
-  const response = await fetch(`${getCoreApiBaseUrl()}${LOOKUP_PATH}?${query}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${LOOKUP_PATH}?${query}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     signal,
@@ -31,7 +32,7 @@ export async function lookupBusinessApi(businessNumber: string, signal?: AbortSi
 }
 
 export async function getMyCompanyApi(signal?: AbortSignal): Promise<CompanyDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${COMPANY_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${COMPANY_PATH}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -47,7 +48,7 @@ export async function registerCompanyApi(
   profile: CompanyProfileInput,
   signal?: AbortSignal,
 ): Promise<CompanyDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${COMPANY_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${COMPANY_PATH}`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ businessNumber, ...profile }),
@@ -60,7 +61,7 @@ export async function registerCompanyApi(
 }
 
 export async function updateCompanyApi(profile: CompanyProfileInput, signal?: AbortSignal): Promise<CompanyDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${COMPANY_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${COMPANY_PATH}`, {
     method: 'PUT',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(profile),
@@ -73,7 +74,7 @@ export async function updateCompanyApi(profile: CompanyProfileInput, signal?: Ab
 }
 
 export async function getPartnerProfileApi(signal?: AbortSignal): Promise<CompanyPartnerProfileDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${PARTNER_PROFILE_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${PARTNER_PROFILE_PATH}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -85,7 +86,7 @@ export async function getPartnerProfileApi(signal?: AbortSignal): Promise<Compan
 }
 
 export async function updatePartnerProfileApi(input: CompanyPartnerProfileInput, signal?: AbortSignal): Promise<CompanyPartnerProfileDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${PARTNER_PROFILE_PATH}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${PARTNER_PROFILE_PATH}`, {
     method: 'PUT',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(input),

@@ -1249,6 +1249,8 @@ Redux `receivedProposals` slice와 `useReceivedProposals` Hook이 계정당 한 
 Hook 로컬 상태로 두는 것이 규칙입니다.
 세션 토큰은 브라우저의 HttpOnly 쿠키가 관리하므로 앱은 다루지 않고, `data/storage`에는 앱 시작 시 `/me`를 부를지
 정하는 힌트만 둡니다. Repository가 로그인·로그아웃과 함께 힌트를 저장·삭제합니다.
+세션 만료 판단은 서버가 합니다. 웹은 시작 때 한 번 복원한 뒤에도 `useWatchAuthSession`으로 따라가며, 쿠키 세션 Core API의 401(`data/api/coreFetch`)·
+5분이 지난 뒤 화면 이동·탭 복귀 때의 `/auth/me` 재확인·다른 창의 힌트 변경(`storage` 이벤트)으로 로그아웃하고 로그인 화면에 끝난 이유를 알립니다.
 화면은 로그인 전 `/` 아래 공개 경로(공용 헤더)와 로그인 뒤 `/app` 아래 내부 경로(사이드바)로 나뉩니다. `PublicOnly`는
 로그인한 사용자를 공개 URL에서 같은 내용의 `/app` 화면으로, `GuestOnly`는 로그인·회원가입에서 복귀 경로로, `RequireAuth`는
 비로그인 사용자를 `/login?next=`로 보냅니다. 경로 상수와 공개↔내부 대응은 `presentation/shared/routes/appPaths.ts`가 소유합니다.

@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 export class ChatConversationApiError extends Error {
   readonly status: number
@@ -14,7 +15,7 @@ export async function chatConversationRequest<T>(accountEmail: string, path: str
   else signal?.addEventListener('abort', abort, { once: true })
   const timeout = setTimeout(abort, 20_000)
   try {
-    const response = await fetch(`${getCoreApiBaseUrl()}/api/v1/me/chat-conversations${path}`, {
+    const response = await coreFetch(`${getCoreApiBaseUrl()}/api/v1/me/chat-conversations${path}`, {
       method, credentials: 'include', cache: 'no-store', signal: controller.signal,
       // 다른 탭에서 계정이 바뀌었을 때 이전 화면의 대화를 새 계정에 저장하는 것을 서버에서 거부합니다.
       headers: { Accept: 'application/json', 'X-Chat-Account': encodeURIComponent(accountEmail), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },

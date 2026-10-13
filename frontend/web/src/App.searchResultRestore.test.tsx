@@ -138,8 +138,21 @@ describe('회원 검색에 도착한 비회원 미리보기의 전체 공개', (
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('전체 복원 HTTP 401은 세션이 끝난 것으로 보고 로그인 화면으로 보내며 만료를 알린다', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(Response.json(limited)).mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValue(new Response(null, { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = await startSearch(account)
+    // 회원 데이터는 기존 로그아웃 정리를 그대로 타고, 돌아올 주소를 담아 로그인 화면에 만료를 알립니다.
+    expect(await screen.findByText('로그인이 만료됐어요. 다시 로그인하면 보던 화면으로 돌아가요.')).toBeTruthy()
+    expect(store.getState().auth.status).toBe('anonymous')
+    expect(store.getState().auth.endReason).toBe('expired')
+    expect(screen.queryByRole('region', { name: '지원사업 검색 결과' })).toBeNull()
+    // 남은 서버 세션을 끝내는 로그아웃 요청은 401이어도 다시 세션 만료를 부르지 않습니다.
+    await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('/api/v1/auth/logout'))
+  })
+
   it.each([
-    [401, '로그인 상태를 확인하지 못했습니다. 새로고침한 뒤 다시 로그인해 주세요.'],
     [410, '검색 결과 보관 시간이 지났거나 확인할 수 없는 결과입니다. 새로 검색해 주세요.'],
     [503, '검색 결과를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'],
   ])('전체 복원 HTTP %s는 회원에게 가입 안내를 표시하지 않고 오류로 알린다', async (status, message) => {

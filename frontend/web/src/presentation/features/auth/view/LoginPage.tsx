@@ -14,6 +14,7 @@ import { OAuthSignInButtons } from './OAuthSignInButtons'
 export function LoginPage() {
   const {
     signupPath,
+    sessionNotice,
     oauthOptions,
     email,
     password,
@@ -32,6 +33,7 @@ export function LoginPage() {
         <form className={authPageStyles.card} onSubmit={submit} aria-label="로그인" noValidate>
           <AuthLogo />
           <h1 className="sr-only">로그인</h1>
+          {sessionNotice ? <p className={authPageStyles.notice} role="status">{sessionNotice}</p> : null}
 
           <OAuthSignInButtons mode="login" options={oauthOptions} />
 

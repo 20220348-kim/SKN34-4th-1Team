@@ -4,6 +4,7 @@ import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/do
 import { ApplicationPreparationError } from '../../domain/errors/ApplicationPreparationError'
 import { applicationPreparationProblemSchema } from '../models/ApplicationPreparationDto'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 export type ApplicationPreparationNotFoundScope = 'feature' | 'preparation'
 
@@ -28,7 +29,7 @@ export async function applicationPreparationRequest<T>(
     abort()
   }, path.endsWith('/mapping-migration/confirm') ? 90_000 : path.endsWith('/messages') || path.endsWith('/drafts') ? 45_000 : 15_000)
   try {
-    const response = await fetch(`${getCoreApiBaseUrl()}/api/v1/application-preparations${path}`, {
+    const response = await coreFetch(`${getCoreApiBaseUrl()}/api/v1/application-preparations${path}`, {
       method,
       credentials: 'include',
       cache: 'no-store',
@@ -84,7 +85,7 @@ export function downloadApplicationDocumentArchive(id: number, revision: number,
 async function downloadApplicationBinary(path: string, signal?: AbortSignal): Promise<Blob> {
   const timeout = AbortSignal.timeout(60_000)
   try {
-    const response = await fetch(`${getCoreApiBaseUrl()}${path}`, {
+    const response = await coreFetch(`${getCoreApiBaseUrl()}${path}`, {
       credentials: 'include', cache: 'no-store', signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
     if (!response.ok) {

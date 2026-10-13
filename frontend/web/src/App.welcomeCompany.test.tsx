@@ -56,6 +56,8 @@ describe('온보딩 2단계 기업 등록', () => {
   it('조회 전에는 폼이 없고 등록 버튼이 잠기며, 계속사업자를 조회하면 폼이 열려 등록한 뒤 검색 화면으로 간다', async () => {
     const lookup = vi.spyOn(appContainer.resolve('lookupBusinessUseCase'), 'execute').mockResolvedValue({ outcome: 'found', business: activeBusiness })
     const register = vi.spyOn(appContainer.resolve('registerCompanyUseCase'), 'execute').mockResolvedValue({ outcome: 'registered', company: registeredCompany })
+    // 기업이 생기면 사이드바가 받은 제안함을 읽습니다. 실제 서버로 나가지 않게 응답 없이 둡니다.
+    vi.spyOn(appContainer.resolve('browsePartnerProposalsUseCase'), 'execute').mockReturnValue(new Promise(() => {}))
     const store = renderApp('/app/welcome/company', businessAccount)
 
     expect(await screen.findByRole('heading', { name: '기업 정보를 알려 주세요' })).toBeTruthy()

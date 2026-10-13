@@ -2,6 +2,7 @@ import type { PartnerProposalBox, PartnerProposalInput } from '../../domain/enti
 import type { PartnerProposalAction } from '../../domain/repositories/PartnerProposalRepository'
 import { AccountApiError } from './accountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 import {
   partnerProposalBoxDtoSchema,
   partnerProposalDtoSchema,
@@ -21,7 +22,7 @@ export async function sendPartnerProposalApi(
   input: PartnerProposalInput,
   signal?: AbortSignal,
 ): Promise<PartnerProposalDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${recruitmentId}/proposals`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${RECRUITMENTS_PATH}/${recruitmentId}/proposals`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -38,7 +39,7 @@ export async function respondPartnerProposalApi(
   action: PartnerProposalAction,
   signal?: AbortSignal,
 ): Promise<PartnerProposalDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${PROPOSALS_PATH}/${id}/${action}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${PROPOSALS_PATH}/${id}/${action}`, {
     method: 'POST',
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
@@ -51,7 +52,7 @@ export async function respondPartnerProposalApi(
 
 export async function browsePartnerProposalsApi(box: PartnerProposalBox, signal?: AbortSignal): Promise<PartnerProposalBoxDto> {
   const query = new URLSearchParams({ box })
-  const response = await fetch(`${getCoreApiBaseUrl()}${MY_PROPOSALS_PATH}?${query}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${MY_PROPOSALS_PATH}?${query}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',

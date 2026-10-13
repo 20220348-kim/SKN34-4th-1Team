@@ -3,6 +3,7 @@ import { readPlanQuotaProblem } from '@govbiz/shared/data/models/PlanUsageDto'
 import { CombinationReviewError } from '../../domain/errors/CombinationReviewError'
 import { reviewProblemSchema } from '../models/CombinationReviewDto'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 /** 분석은 접수만 요청한다. 15초 후 HTTP 대기를 끝내도 접수된 서버 작업이 취소되지는 않는다. */
 export async function combinationReviewRequest<T>(path: string, schema: z.ZodType<T> | null | 'empty', method: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -12,7 +13,7 @@ export async function combinationReviewRequest<T>(path: string, schema: z.ZodTyp
   if (signal?.aborted) controller.abort()
   const timer = setTimeout(abort, 15_000)
   try {
-    const response = await fetch(`${getCoreApiBaseUrl()}/api/v1/combination-reviews${path}`, {
+    const response = await coreFetch(`${getCoreApiBaseUrl()}/api/v1/combination-reviews${path}`, {
       method, credentials: 'include', cache: 'no-store', signal: controller.signal,
       ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })

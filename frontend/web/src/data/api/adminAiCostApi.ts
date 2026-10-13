@@ -9,6 +9,7 @@ import {
 } from '../models/AdminAiCostDto'
 import { rejectFailedResponse } from './adminAccountApi'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 const ADMIN_AI_COSTS_PATH = '/api/v1/admin/ai-costs'
 
@@ -17,7 +18,7 @@ const withSessionCookie: RequestCredentials = 'include'
 
 export async function getAdminAiCostSummaryApi(from: string, to: string, signal?: AbortSignal): Promise<AdminAiCostSummaryDto> {
   const params = new URLSearchParams({ from, to })
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}?${params}`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}?${params}`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -28,7 +29,7 @@ export async function getAdminAiCostSummaryApi(from: string, to: string, signal?
 }
 
 export async function syncAdminAiCostsApi(signal?: AbortSignal): Promise<AdminAiCostSyncDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}/sync`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}/sync`, {
     method: 'POST',
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
@@ -39,7 +40,7 @@ export async function syncAdminAiCostsApi(signal?: AbortSignal): Promise<AdminAi
 }
 
 export async function getAdminAiModelPricesApi(signal?: AbortSignal): Promise<AdminAiModelPriceDto[]> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}/prices`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}/prices`, {
     headers: { Accept: 'application/json' },
     credentials: withSessionCookie,
     cache: 'no-store',
@@ -50,7 +51,7 @@ export async function getAdminAiModelPricesApi(signal?: AbortSignal): Promise<Ad
 }
 
 export async function addAdminAiModelPriceApi(price: NewAdminAiModelPrice, signal?: AbortSignal): Promise<AdminAiModelPriceDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}/prices`, {
+  const response = await coreFetch(`${getCoreApiBaseUrl()}${ADMIN_AI_COSTS_PATH}/prices`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(price),

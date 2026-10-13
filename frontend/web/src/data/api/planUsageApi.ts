@@ -2,6 +2,7 @@ import { planUsageSchema, readPlanTrialProblem } from '@govbiz/shared/data/model
 import type { PlanUsage, TrialPlanCode } from '@govbiz/shared/domain/entities/PlanUsage'
 import { PlanTrialError } from '@govbiz/shared/domain/errors/PlanTrialError'
 import { getCoreApiBaseUrl } from './coreApiConfig'
+import { coreFetch } from './coreFetch'
 
 /** 이용량 조회 실패입니다. 서버 원문 대신 HTTP 상태만 남깁니다. 계약과 다른 응답은 502로 둡니다. */
 export class PlanUsageApiError extends Error {
@@ -22,7 +23,7 @@ async function coreRequest(path: string, init: RequestInit, signal?: AbortSignal
   if (signal?.aborted) controller.abort()
   const timer = setTimeout(abort, 15_000)
   try {
-    return await fetch(`${getCoreApiBaseUrl()}${path}`, { ...init, credentials: 'include', cache: 'no-store', signal: controller.signal })
+    return await coreFetch(`${getCoreApiBaseUrl()}${path}`, { ...init, credentials: 'include', cache: 'no-store', signal: controller.signal })
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', abort)
