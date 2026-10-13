@@ -8,7 +8,7 @@ from uuid import uuid4, uuid5
 
 from django.core.management import call_command
 from django.db import IntegrityError, close_old_connections, transaction
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
 
 from . import prefect_client
@@ -473,17 +473,6 @@ class ScheduleTests(ScheduleFixture, TestCase):
         self.assertEqual(pending.status, "PENDING")
         self.dispatch.assert_not_called()
 
-    def test_worker_default_off_does_not_touch_schedule_tables(self):
-        with (
-            override_settings(LLMOPS_SCHEDULES_ENABLED=False),
-            patch(
-                "apps.evaluations.management.commands.sync_evaluations.sync_pending_runs",
-                return_value=0,
-            ),
-            self.assertNumQueries(0),
-        ):
-            call_command("sync_evaluations", stdout=StringIO())
-
     def test_session_and_csrf_are_required_for_writes(self):
         client = APIClient(enforce_csrf_checks=True)
         self.assertEqual(client.get(URL).status_code, 401)
@@ -504,6 +493,23 @@ class ScheduleTests(ScheduleFixture, TestCase):
             EvaluationScheduleOccurrence.objects.create(
                 id=uuid4(), schedule=schedule, scheduled_on=NOW.date()
             )
+
+
+@override_settings(LLMOPS_SCHEDULES_ENABLED=False)
+class ScheduleWorkerTests(SimpleTestCase):
+    def test_worker_default_off_does_not_touch_schedule_tables(self):
+        # Worker는 연결을 정리하므로 TestCase의 열린 transaction 안에서 실행하지 않는다.
+        # 다른 작업만 격리하고 실제 schedule 분기의 모든 DB 접근은 SimpleTestCase가 막는다.
+        prefix = "apps.evaluations.management.commands.sync_evaluations."
+        with (
+            patch(prefix + "prune_expired_samples", return_value=0) as prune,
+            patch(prefix + "process_pending_samples", return_value=0) as process,
+            patch(prefix + "sync_pending_runs", return_value=0) as sync,
+        ):
+            call_command("sync_evaluations", stdout=StringIO())
+        prune.assert_called_once_with()
+        process.assert_called_once_with(batch_size=25)
+        sync.assert_called_once_with(batch_size=25, interval_seconds=10)
 
 
 @override_settings(

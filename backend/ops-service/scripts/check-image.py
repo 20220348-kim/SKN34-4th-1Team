@@ -113,6 +113,17 @@ def main():
             docker("exec", name, "id", "-u", capture=True).stdout.strip() == "10001",
             "The running process must not use root.",
         )
+        docker(
+            "exec",
+            "--env",
+            "OPS_TEST_GUNICORN_COMMAND=" + json.dumps(config["Cmd"]),
+            name,
+            "python",
+            "manage.py",
+            "test",
+            "apps.health.test_wsgi_concurrency",
+            "--noinput",
+        )
         # Run the image's own tests under /app, without mounting Ops code or a DB.
         # The runner source is a test-only input, not a production image dependency.
         receipt_tests = [
@@ -153,7 +164,7 @@ def main():
         require(state["ExitCode"] == 0, "Gunicorn did not terminate gracefully.")
         print(
             "Gunicorn image: non-root/read-only, health, DB failure, Host, "
-            "receipt contract/input rejection and SIGTERM OK."
+            "concurrency, receipt contract/input rejection and SIGTERM OK."
         )
     except BaseException:
         if created:

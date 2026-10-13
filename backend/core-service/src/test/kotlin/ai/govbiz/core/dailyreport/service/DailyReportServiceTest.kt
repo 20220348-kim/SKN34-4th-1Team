@@ -80,8 +80,8 @@ class DailyReportServiceTest {
         doReturn(SupportProgramSearchResult("q", programs)).`when`(search).search(anyString(), eq(true), anyValue())
         doReturn(SupportProgramEvidenceAnswerResult("사업계획서를 제출합니다.", SupportProgramEvidenceAnswerStatus.ANSWERED,
             listOf(SupportProgramEvidenceCitationResult("사업계획서", "https://www.bizinfo.go.kr/detail?id=1", "기업마당 상세 본문", 0))))
-            .`when`(evidence).answer(equalValue("BIZINFO"), equalValue("1"), anyString())
-        doThrow(IllegalStateException("private upstream failure")).`when`(evidence).answer(equalValue("BIZINFO"), equalValue("2"), anyString())
+            .`when`(evidence).answer(equalValue("BIZINFO"), equalValue("1"), anyString(), eq(false))
+        doThrow(IllegalStateException("private upstream failure")).`when`(evidence).answer(equalValue("BIZINFO"), equalValue("2"), anyString(), eq(false))
         var content: DailyReportContent? = null
         doAnswer { call -> content = call.getArgument(1); true }.`when`(repository).succeed(equalValue(report), anyValue())
 
@@ -94,8 +94,8 @@ class DailyReportServiceTest {
         assertTrue(saved.warnings.any { it.contains("실패") })
         assertTrue(saved.warnings.any { it.contains("선정확률") })
         assertFalse(saved.toString().contains("private upstream"))
-        verify(evidence, never()).answer(equalValue("KSTARTUP"), anyString(), anyString())
-        verify(evidence, never()).answer(equalValue("BIZINFO"), equalValue("ignored"), anyString())
+        verify(evidence, never()).answer(equalValue("KSTARTUP"), anyString(), anyString(), eq(false))
+        verify(evidence, never()).answer(equalValue("BIZINFO"), equalValue("ignored"), anyString(), eq(false))
         verifyNoInteractions(mail)
     }
 

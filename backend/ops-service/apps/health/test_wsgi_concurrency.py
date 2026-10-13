@@ -17,14 +17,23 @@ from django.test import SimpleTestCase
 
 class WsgiConcurrencyTests(SimpleTestCase):
     def test_fast_request_completes_while_two_requests_wait_for_external_response(self):
-        dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
-        command = json.loads(
-            next(
+        # 이미지에는 Dockerfile이 없으므로 컨테이너 검증 도구가 inspect한 실제 CMD를 전달한다.
+        command_json = os.environ.get("OPS_TEST_GUNICORN_COMMAND")
+        if command_json is None:
+            dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
+            self.assertTrue(
+                dockerfile.is_file(),
+                "WSGI tests require the checkout Dockerfile or the inspected image CMD "
+                "in OPS_TEST_GUNICORN_COMMAND.",
+            )
+            command_json = next(
                 line.removeprefix("CMD ")
                 for line in dockerfile.read_text().splitlines()
                 if line.startswith("CMD ")
             )
-        )
+        command = json.loads(command_json)
+        self.assertIsInstance(command, list)
+        self.assertTrue(command and all(isinstance(argument, str) for argument in command))
         self.assertEqual(command[0], "gunicorn")
         with TemporaryDirectory(prefix="govbiz-wsgi-test-") as directory:
             root = Path(directory)
