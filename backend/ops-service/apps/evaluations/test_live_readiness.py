@@ -31,6 +31,40 @@ class LiveReadinessPermissionTests(SimpleTestCase):
             self.assertEqual(client.get(URL).status_code, 403)
 
 
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class LiveReadinessQueryTests(SimpleTestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(get_user_model()(username="readiness-operator"))
+        self.query = {"dataset_id": FIXED, "execution_profile": "a" * 64}
+
+    def test_invalid_model_is_rejected_before_reading_live_plan(self):
+        with patch("apps.evaluations.runtime_views.live_config", return_value=None) as config:
+            for model in ("", " ", "\t", "unknown-model"):
+                with self.subTest(model=model):
+                    response = self.client.get(URL, {**self.query, "model": model})
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("model", response.data)
+            config.assert_not_called()
+
+    def test_omitted_or_allowed_model_reaches_live_plan(self):
+        with patch("apps.evaluations.runtime_views.allowed_models", return_value=["gpt-6-sol"]):
+            for model in (None, "gpt-6-sol"):
+                with (
+                    self.subTest(model=model),
+                    patch(
+                        "apps.evaluations.runtime_views.live_config", return_value=None
+                    ) as config,
+                ):
+                    query = self.query if model is None else {**self.query, "model": model}
+                    response = self.client.get(URL, query)
+                    config.assert_called_once_with(FIXED, model=model)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(
+                        response.data, {"detail": "등록된 새 모델 호출 계획이 없습니다."}
+                    )
+
+
 @override_settings(
     LLMOPS_LIVE_ENABLED=True, LLMOPS_RAG_LIVE_ENABLED=True, LLMOPS_BUDGET_TOKEN=TOKEN
 )

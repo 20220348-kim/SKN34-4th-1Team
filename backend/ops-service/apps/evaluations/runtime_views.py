@@ -48,7 +48,8 @@ class LiveReadinessQuery(serializers.Serializer):
 @api_view(["GET"])
 def live_readiness(request):
     """Read configured admission and budget only; never reserve, dispatch or call a provider."""
-    query = LiveReadinessQuery(data=request.query_params)
+    # Preserve explicit blanks; DRF treats optional blank QueryDict fields as omitted HTML inputs.
+    query = LiveReadinessQuery(data=request.query_params.dict())
     try:
         query.is_valid(raise_exception=True)
     except ValueError:
