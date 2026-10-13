@@ -76,6 +76,9 @@ dependencies {
 }
 
 tasks.named('test') {
+    // Bound retained Spring contexts (including their pools and Testcontainers).
+    maxHeapSize = '1g'
+    systemProperty 'spring.test.context.cache.maxSize', '4'
     useJUnitPlatform {
         if (!project.hasProperty('includeLiveSources')) {
             excludeTags 'live-source'

@@ -1284,6 +1284,10 @@ Langfuse를 거치는 여섯 사례는 기존 격리 CI에 `--evidence-traces-ou
 ./gradlew clean test --no-daemon
 ```
 
+Gradle 테스트 JVM의 최대 힙은 1GiB, Spring 테스트 컨텍스트 캐시는 최대 4개로 제한합니다.
+서로 다른 통합 테스트의 컨텍스트·DB 풀·Testcontainers가 오래 누적되지 않도록 오래된 컨텍스트를
+퇴출하고 종료합니다. 이 설정은 테스트에만 적용되며 전체 테스트와 실제 MySQL 검증은 유지합니다.
+
 테스트는 Controller 계약·Client/Facade 응답 검증·상태 계산·동기화 순서·공식 원문 HTML 검증·근거 청크/인용 계약과
 MySQL의 JSON, 복합 식별자, UPSERT, rollback, 시작 세대에 따른 공개 제어, 공개 스냅샷 준비 상태 전이를 검증합니다. 전체 서비스 연결 검증은
 [인프라 README](../../infrastructure/README.md)의 Compose 검증 절차를 참고하세요.
