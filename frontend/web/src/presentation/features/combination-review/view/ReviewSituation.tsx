@@ -21,8 +21,8 @@ export function ReviewSituationFields({ value, names, onChange }: { value: Revie
   const prefix = useId()
   return <div className="space-y-4">
     <div className="grid gap-3 @min-[40rem]/workspace:grid-cols-2">
-      {value.programs.map((program, index) => <div key={reviewProgramKey(program)} className="min-w-0">
-        <label htmlFor={`${prefix}-status-${index}`} className="block text-sm font-semibold [overflow-wrap:anywhere]">사업 {index + 1} · {names[reviewProgramKey(program)] ?? '공고 정보 확인 중'}</label>
+      {value.programs.map((program, index) => <div key={reviewProgramKey(program)} className="flex min-w-0 flex-col">
+        <label htmlFor={`${prefix}-status-${index}`} className="block flex-1 text-sm font-semibold [overflow-wrap:anywhere]">사업 {index + 1} · {names[reviewProgramKey(program)] ?? '공고 정보 확인 중'}</label>
         <SelectField id={`${prefix}-status-${index}`} label={`사업 ${index + 1} 지금 상태`} className={s.input} value={participationToReviewStatus(program.participation)} options={statusOptions}
           onChange={(status) => onChange({ ...value, programs: value.programs.map((item, itemIndex) => itemIndex === index
             ? { ...item, participation: reviewStatusToParticipation(status as ReviewProgramStatus, item.participation) } : item) })} />
