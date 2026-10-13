@@ -116,10 +116,10 @@ function documentJob(status: ApplicationDocumentGenerationJob['status'], stage: 
     mappingMigration: null, createdAt: created.updatedAt, finishedAt: null }
 }
 
-it('the 신청서 쓰기 chip adds the card and opens the application page, which starts input analysis when no form is stored', async () => {
+it('the 신청 문서 쓰기 chip adds the card and opens the application page, which starts input analysis when no form is stored', async () => {
   const api = mockPreparation([])
   const store = await mount(false, undefined, false)
-  await act(async () => fireEvent.click(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('button', { name: '신청서 쓰기' })))
+  await act(async () => fireEvent.click(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('button', { name: '신청 문서 쓰기' })))
   // 직접 누른 칩이라 신청 문서 화면을 바로 엽니다(대화에서는 시트로 뜸). 자동 분석 판단은 그 화면이 한 번 합니다.
   expect(screen.getByTestId('location').textContent).toBe(`${newPath}&analyze=1`)
   expect(store.getState().chat.messages.at(-1)?.govApplication?.program).toEqual(program)
@@ -177,7 +177,7 @@ it('routes a started preparation to its editor page from the card and the chip',
   await mount(true, 12)
   expect(card().textContent).toContain('필수 답변 1/3')
   expect(currentStep(card())).toContain('답변 작성')
-  // 이 공고로 쓰는 신청 문서가 있으면 [신청서 쓰기] 칩 대신 그 화면을 여는 [이어서 쓰기 · n/m]을 둡니다.
+  // 이 공고로 쓰는 신청 문서가 있으면 [신청 문서 쓰기] 칩 대신 그 화면을 여는 [이어서 쓰기 · n/m]을 둡니다.
   expect(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('link', { name: '이어서 쓰기 · 1/3' })
     .getAttribute('href')).toBe('/app/application-preparations/12')
   const link = within(card()).getByRole('link', { name: '이어서 쓰기' })

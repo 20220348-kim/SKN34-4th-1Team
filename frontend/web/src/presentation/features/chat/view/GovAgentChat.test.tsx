@@ -67,7 +67,7 @@ const sheetAt = (path: string): Location => {
 }
 
 function setup(role: 'ADMIN' | 'USER') {
-  // 카드와 [신청서 쓰기] 칩은 공고로 내 신청 준비를 찾습니다. 이 파일의 대화에는 신청 준비가 없습니다.
+  // 카드와 [신청 문서 쓰기] 칩은 공고로 내 신청 준비를 찾습니다. 이 파일의 대화에는 신청 준비가 없습니다.
   vi.spyOn(appContainer.resolve('applicationPreparationUseCase'), 'list').mockResolvedValue({ items: [], nextBeforeId: null })
   const store = createAppStore()
   store.dispatch(signedIn({ email: 'test@govbiz.local', role, tier: role === 'ADMIN' ? 'ADMIN' : 'MEMBER',
@@ -91,7 +91,7 @@ it('관리자는 검색 확인 후 같은 입력창에서 선택 공고의 근�
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
   expect(search).not.toHaveBeenCalled()
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
-  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   expect(screen.getByText('선택한 공고:')).toBeTruthy()
   const program = supportPrograms[0]
   gov.mockResolvedValue({ outcome: 'EVIDENCE', program: { sourceCode: program.sourceCode, sourceProgramId: program.id },
@@ -118,19 +118,17 @@ it('관리자는 공고를 고르면 원문 질문 기본 질문을 눌러 바�
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
   // 공고를 고르기 전에는 기본 질문 칩이 없습니다.
   expect(screen.queryByRole('group', { name: '이 공고에 바로 묻기' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   // 고르면 마지막 메시지 아래에 기본 질문 넷이 칩으로 나옵니다(이어 묻기 칩, 막대에는 두지 않음).
   const quick = screen.getByRole('group', { name: '이 공고에 바로 묻기' })
   expect(Array.from(quick.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['지원 대상', '신청 방법', '신청 기간', '문의처'])
-  // 두 줄 막대: 첫 줄은 제목(마우스를 올리면 전체) · 원문 질문 남은 횟수 · 해제(✕), 둘째 줄은 작업 칩뿐입니다.
+  // 두 줄 막대: 첫 줄은 제목(마우스를 올리면 전체) · 해제(✕), 둘째 줄은 작업 칩뿐입니다. 원문 질문 남은 횟수는 넉넉하면(5회 중 3회) 두지 않습니다.
   const bar = screen.getByRole('region', { name: '선택한 공고' })
   expect(within(bar).queryByRole('button', { name: '신청 기간' })).toBeNull()
   expect(bar.querySelector('strong')?.getAttribute('title')).toBe(supportPrograms[0].title)
   const clear = within(bar).getByRole('button', { name: '선택 해제' })
-  const usageLine = within(bar).getByText('공고 원문 질문').closest('p')!
-  expect(usageLine.textContent).toContain('오늘 3회 남음')
-  expect(usageLine.parentElement).toBe(clear.parentElement)
-  expect(usageLine.nextElementSibling).toBe(clear)
+  expect(within(bar).queryByText('공고 원문 질문')).toBeNull()
+  expect(clear).toBeTruthy()
 
   const program = supportPrograms[0]
   const evidenceAnswer: Parameters<typeof gov.mockResolvedValue>[0] = { outcome: 'EVIDENCE', program: { sourceCode: program.sourceCode, sourceProgramId: program.id },
@@ -165,10 +163,51 @@ it('관리자는 공고를 고르면 원문 질문 기본 질문을 눌러 바�
   expect(list?.hidden).toBe(false)
   expect(list?.querySelector('blockquote')?.textContent).toBe('신청기간\n2026.10.01 ~ 2026.10.31 18:00')
   expect(screen.queryByRole('button', { name: '전체 보기' })).toBeNull()
-  // 해제하면 막대와 이어 묻기 칩이 사라지고 공고 선택 안내로 돌아갑니다.
+  // 해제하면 막대와 이어 묻기 칩이 사라지고 공고를 고르기 전 미리 보기 칩으로 돌아갑니다.
   fireEvent.click(screen.getByRole('button', { name: '선택 해제' }))
   expect(screen.queryByRole('group', { name: '이어서 묻기' })).toBeNull()
-  expect(screen.getByText(/‘이 공고 선택’을 누르면/)).toBeTruthy()
+  expect(screen.getByRole('group', { name: '공고를 고르면 할 수 있는 작업' })).toBeTruthy()
+})
+
+it('공고를 고르기 전 작업 칩은 실행하지 않고 [이 공고로 작업]을 먼저 누르도록 이끌며, 고른 뒤 누른 칩을 강조한다', async () => {
+  const gov = vi.spyOn(supportProgramClient, 'sendGovAgentMessage').mockResolvedValue({ outcome: 'SEARCH',
+    interpretation: readyConversationProposal({ ...emptyConversationContext, query: 'AI 창업' }) })
+  vi.spyOn(appContainer.resolve('searchSupportProgramsUseCase'), 'execute')
+    .mockResolvedValue(completeSearchResult({ query: 'AI 창업', programs: [supportPrograms[0]] }))
+  setup('ADMIN')
+  const input = screen.getByRole('textbox', { name: '지원사업 검색어' })
+  const preview = () => screen.getByRole('group', { name: '공고를 고르면 할 수 있는 작업' })
+  expect(Array.from(preview().querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청 문서 쓰기', '중복 검토', '파트너 찾기'])
+  // 검색 결과가 없으면 검색부터 하도록 알리고 입력칸으로 옮깁니다.
+  fireEvent.click(within(preview()).getByRole('button', { name: '중복 검토' }))
+  expect(within(preview()).getByText('먼저 지원사업을 검색해 주세요.')).toBeTruthy()
+  expect(document.activeElement).toBe(input)
+
+  fireEvent.change(input, { target: { value: 'AI 창업지원 찾아줘' } })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
+  const calls = gov.mock.calls.length
+  // 결과가 생기면 지난 안내는 지우고, 칩을 누르면 결과 카드의 [이 공고로 작업]을 빨간 계열 고리로 잠깐 강조하고 초점을 옮깁니다(실행하지 않음).
+  expect(within(preview()).queryByText('먼저 지원사업을 검색해 주세요.')).toBeNull()
+  fireEvent.click(within(preview()).getByRole('button', { name: '신청 문서 쓰기' }))
+  expect(within(preview()).getByText('[이 공고로 작업]을 눌러 공고를 골라 주세요.')).toBeTruthy()
+  const previewClass = within(preview()).getByRole('button', { name: '중복 검토' }).className
+  const select = screen.getByRole('button', { name: '이 공고로 작업' })
+  expect(select.className).toContain('animate-gov-select-cue')
+  expect(document.activeElement).toBe(select)
+  expect(gov.mock.calls.length).toBe(calls)
+  expect(screen.getByTestId('location').textContent).toBe('/app/chat')
+
+  // 고르면 안내와 고리가 사라지고, 막대에서 누른 칩만 강조합니다. 실행은 칩을 다시 눌러야 합니다.
+  fireEvent.click(select)
+  expect(screen.queryByRole('group', { name: '공고를 고르면 할 수 있는 작업' })).toBeNull()
+  expect(screen.getByRole('button', { name: '이 공고로 작업' }).className).not.toContain('animate-gov-select-cue')
+  const tools = screen.getByRole('group', { name: '이 공고로 작업하기' })
+  // 고르기 전과 같은 모양·크기의 칩입니다.
+  expect(within(tools).getByRole('button', { name: '중복 검토' }).className).toBe(previewClass)
+  expect(within(tools).getByRole('button', { name: '신청 문서 쓰기' }).className).toContain('animate-gov-tool-cue')
+  expect(within(tools).getByRole('button', { name: '중복 검토' }).className).not.toContain('animate-gov-tool-cue')
+  expect(screen.getByTestId('location').textContent).toBe('/app/chat')
 })
 
 it('관리자는 선택 공고 막대의 작업 칩으로 신청 문서·중복 검토를 경로 선택 없이 바로 시작한다', async () => {
@@ -182,9 +221,9 @@ it('관리자는 선택 공고 막대의 작업 칩으로 신청 문서·중복 
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
   expect(screen.queryByRole('group', { name: '이 공고로 작업하기' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   const tools = screen.getByRole('group', { name: '이 공고로 작업하기' })
-  expect(Array.from(tools.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청서 쓰기', '중복 검토', '파트너 찾기'])
+  expect(Array.from(tools.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청 문서 쓰기', '중복 검토', '파트너 찾기'])
   // 입력칸에 글을 쓰는 동안에는 두지 않습니다.
   fireEvent.change(input, { target: { value: '메모' } })
   expect(screen.queryByRole('group', { name: '이 공고로 작업하기' })).toBeNull()
@@ -214,9 +253,11 @@ it('오늘 원문 질문을 다 쓴 관리자에게는 기본 질문 칩을 두�
   fireEvent.change(screen.getByRole('textbox', { name: '지원사업 검색어' }), { target: { value: 'AI 창업지원 찾아줘' } })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
-  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   expect(screen.queryByRole('group', { name: '이 공고에 바로 묻기' })).toBeNull()
   expect(screen.getByRole('group', { name: '이 공고로 작업하기' })).toBeTruthy()
+  // 다 쓰면 기본 질문 칩이 사라지는 이유를 막대 첫 줄에 알립니다(남은 횟수가 넉넉할 때는 두지 않음).
+  expect(within(screen.getByRole('region', { name: '선택한 공고' })).getByText(/공고 원문 질문 5회를 모두 썼어요/)).toBeTruthy()
 })
 
 it('일반 회원은 AI 대화 검색 이름을 유지한다', () => {
@@ -358,7 +399,7 @@ it('공고를 고르지 않아 답하지 못한 질문은 공고를 고르면 [�
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
   // 공고를 고르기 전에는 다시 묻기 칩을 두지 않습니다.
   expect(screen.queryByRole('button', { name: /방금 질문을 이 공고로 묻기/ })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   const resume = screen.getByRole('button', { name: '방금 질문을 이 공고로 묻기: 이 공고 신청 자격 알려줘' })
   expect(resume.textContent).toBe('‘이 공고 신청 자격 알려줘’ 이 공고로 묻기')
   gov.mockResolvedValueOnce({ outcome: 'UNSUPPORTED', message: '아직 도와드릴 수 없는 요청이에요.' })
@@ -379,7 +420,7 @@ it('관리자는 선택 공고 막대의 [파트너 찾기]로 경로 선택 없
   fireEvent.change(screen.getByRole('textbox', { name: '지원사업 검색어' }), { target: { value: 'AI 창업지원 찾아줘' } })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
-  fireEvent.click(screen.getByRole('button', { name: '이 공고 선택' }))
+  fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   const calls = gov.mock.calls.length
   await act(async () => fireEvent.click(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('button', { name: '파트너 찾기' })))
   expect(gov.mock.calls.length).toBe(calls)

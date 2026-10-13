@@ -214,7 +214,8 @@ describe('App navigation', () => {
 
     const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
     expect(document.getElementById('support-program-search-readiness')).toBeNull()
-    expect(searchInput.getAttribute('aria-describedby')).toBeNull()
+    // 로그인 뒤 대화 입력칸은 키보드 안내(Enter·Shift+Enter)를 화면 낭독기에만 알립니다.
+    expect(searchInput.getAttribute('aria-describedby')).toBe(path === '/app/chat' ? 'chat-composer-keys' : null)
     expect(screen.queryByText('공고 검색이 가능합니다.')).toBeNull()
     expect(screen.queryByText('현재 저장된 공고를 바로 검색할 수 있습니다.')).toBeNull()
     expect(screen.queryByRole('button', { name: '상태 다시 확인' })).toBeNull()
@@ -714,12 +715,12 @@ describe('App navigation', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('K-Startup 질문 URL로 직접 진입하면 미지원 안내만 표시하고 API를 호출하지 않는다', async () => {
+  it('원문 질문을 받지 않는 제공처(과학기술정보통신부) 질문 URL로 직접 진입하면 미지원 안내만 표시하고 API를 호출하지 않는다', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
     await act(async () => {
-      renderApp(createAppStore(), '/support-programs/detail/question?sourceCode=KSTARTUP&sourceProgramId=kstartup-program')
+      renderApp(createAppStore(), '/support-programs/detail/question?sourceCode=MSIT&sourceProgramId=3186573')
     })
 
     expect(screen.getByText('이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.'))
@@ -730,8 +731,8 @@ describe('App navigation', () => {
       screen.getByRole('link', { name: '← 공고 상세로 돌아가기' }).getAttribute('href')!,
       'http://localhost',
     )
-    expect(backUrl.searchParams.get('sourceCode')).toBe('KSTARTUP')
-    expect(backUrl.searchParams.get('sourceProgramId')).toBe('kstartup-program')
+    expect(backUrl.searchParams.get('sourceCode')).toBe('MSIT')
+    expect(backUrl.searchParams.get('sourceProgramId')).toBe('3186573')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -1075,7 +1076,7 @@ describe('App navigation', () => {
     const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
     expect(within(notice).getByText('공고 데이터 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.')).toBeTruthy()
     expect(notice.getAttribute('role')).toBe('alert')
-    expect(searchInput.getAttribute('aria-describedby')).toBe(notice.id)
+    expect(searchInput.getAttribute('aria-describedby')).toBe(path === '/app/chat' ? `${notice.id} chat-composer-keys` : notice.id)
     expectReadinessDetailsAbsent()
     fireEvent.change(searchInput, { target: { value: '창업' } })
     await act(async () => fireEvent.submit(searchInput.closest('form')!))
@@ -1090,7 +1091,7 @@ describe('App navigation', () => {
     fireEvent.change(searchInput, { target: { value: '' } })
 
     expect(document.getElementById('support-program-search-readiness')).toBeNull()
-    expect(searchInput.getAttribute('aria-describedby')).toBeNull()
+    expect(searchInput.getAttribute('aria-describedby')).toBe(path === '/app/chat' ? 'chat-composer-keys' : null)
     expect(screen.queryByRole('button', { name: '상태 다시 확인' })).toBeNull()
     expect((screen.getByRole('button', { name: '이 조건으로 검색' }) as HTMLButtonElement).disabled).toBe(false)
     await confirmLatestProposal()

@@ -52,7 +52,7 @@ export function ApplicationPreparationNewPage() {
   const addressSourceCode = /^[A-Z][A-Z0-9_]{0,63}$/.test(requestedSourceCode) ? requestedSourceCode : ''
   const addressProgramId = addressSourceCode ? (searchParams.get('sourceProgramId') ?? '').trim() : ''
   // 고른 공고를 주소에 적어 두면 새로고침·뒤로 가기·같은 주소로 돌아왔을 때 그 공고와 진행 중인 분석을 이어서 봅니다.
-  // Gov 대화의 [신청서 쓰기] 칩은 `analyze=1`로 엽니다. 한 번 판단한 뒤 주소에서 지워 새로고침으로 다시 시작하지 않습니다.
+  // Gov 대화의 [신청 문서 쓰기] 칩은 `analyze=1`로 엽니다. 한 번 판단한 뒤 주소에서 지워 새로고침으로 다시 시작하지 않습니다.
   return <NewPreparation
     key={account.email}
     addressSourceCode={addressSourceCode}
@@ -399,7 +399,7 @@ function NewPreparation({ addressSourceCode, addressProgramId, autoAnalyze, onAu
   onProgramChosen: (program: SelectableSupportProgram) => void
 }) {
   const vm = useApplicationPreparationNewViewModel(addressSourceCode, addressProgramId)
-  // [신청서 쓰기] 칩으로 연 경우, 저장된 양식 조회와 이 계정의 지난 분석 확인이 끝난 뒤 한 번만 판단합니다. 아직 분석한 적 없는 공고(또는 원문이
+  // [신청 문서 쓰기] 칩으로 연 경우, 저장된 양식 조회와 이 계정의 지난 분석 확인이 끝난 뒤 한 번만 판단합니다. 아직 분석한 적 없는 공고(또는 원문이
   // 바뀐 공고)이고 진행 중 · 최근 분석이 없을 때만 유료 분석을 시작합니다. 양식이 있거나 이미 결과(양식 없음 · 읽을 수 없는 첨부 등)가 나온 공고는 시작하지 않습니다.
   const autoHandled = useRef(false)
   const { availability, discovery, googleFormUrl, lastAnalysis, analysisBlocked, discoverForms } = vm

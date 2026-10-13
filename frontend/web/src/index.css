@@ -12,6 +12,9 @@
   --animate-search-intro-enter: search-intro-enter 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-search-intro-highlight: search-intro-highlight 3s ease-in-out 450ms both;
   --animate-search-intro-type: search-intro-type 1ms linear both;
+  --animate-gov-select-cue: gov-select-cue 0.75s ease-out 4;
+  --animate-gov-select-cue-still: gov-select-cue-still 3s linear 1;
+  --animate-gov-tool-cue: gov-tool-cue 1.2s ease-out 3;
 
   /* 자식 opacity는 부모의 gradient text를 숨기지 못하므로 글자 공간을 유지하는 visibility를 씁니다. */
   /* steps(1, end)는 긴 delay 뒤 소수점 오차로 hidden에 멈출 수 있어 짧은 linear 전환을 씁니다. */
@@ -51,6 +54,24 @@
   @keyframes workspace-toast-bar {
     from { width: 100%; }
     to { width: 0; }
+  }
+
+  /* Gov 대화에서 먼저 눌러야 할 [이 공고로 작업]에 빨간 계열 고리가 잠깐 퍼졌다 사라집니다(끝나면 고리를 남기지 않음). */
+  @keyframes gov-select-cue {
+    0% { box-shadow: 0 0 0 2px #fff, 0 0 0 4px color-mix(in srgb, var(--color-danger) 75%, transparent); }
+    100% { box-shadow: 0 0 0 2px #fff, 0 0 0 10px transparent; }
+  }
+
+  /* 움직임 줄이기를 켠 사용자에게는 퍼지지 않는 고리를 잠깐 보였다 지웁니다. */
+  @keyframes gov-select-cue-still {
+    0%, 85% { box-shadow: 0 0 0 2px #fff, 0 0 0 4px color-mix(in srgb, var(--color-danger) 75%, transparent); }
+    100% { box-shadow: none; }
+  }
+
+  /* 공고를 고른 뒤 막대에서 먼저 누른 작업 칩에 두르는 초록 고리가 퍼졌다 돌아옵니다. */
+  @keyframes gov-tool-cue {
+    0%, 100% { box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgb(8 127 70 / 55%); }
+    50% { box-shadow: 0 0 0 2px #fff, 0 0 0 9px rgb(8 127 70 / 15%); }
   }
 
   @keyframes chat-loading-sweep {

@@ -98,12 +98,23 @@ export const chatPageStyles = {
     'hover:border-brand-primary hover:bg-[#eef8f2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
     'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-brand-line disabled:hover:bg-white',
   ),
-  /** 선택 공고로 일을 시작하는 작업 칩(신청서 쓰기·중복 검토)입니다. 질문 칩과 달리 채운 초록입니다. */
+  /** 선택 공고로 일을 시작하는 작업 칩(신청 문서 쓰기·중복 검토)입니다. 질문 칩과 달리 채운 초록입니다. */
   govToolButton: classes(
     'cursor-pointer rounded-full border border-brand-primary bg-brand-primary px-3 py-1 text-[0.78rem] font-semibold whitespace-nowrap text-white',
     'hover:border-brand-hover hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
     'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-brand-primary disabled:hover:bg-brand-primary',
   ),
+  /** 공고를 고르기 전 작업 칩 줄입니다. 배경 없이 막대 안 칩과 같은 들여쓰기로 둡니다. */
+  govToolPreviewRow: 'pr-1.5 pl-3',
+  /** 공고를 고르기 전 작업 칩 옆에 한 줄로 두는 안내입니다. */
+  govToolPreviewMessage: 'text-[0.78rem] text-brand-hover',
+  /**
+   * 미리 보기 칩을 누르면 최근 검색 결과의 [이 공고로 작업]에 빨간 계열 고리를 약 3초 동안 네 번 퍼뜨렸다 지웁니다.
+   * 움직임 줄이기를 켠 사용자에게는 퍼지지 않는 고리를 같은 시간만 보여 줍니다.
+   */
+  govSelectCue: 'motion-safe:animate-gov-select-cue motion-reduce:animate-gov-select-cue-still',
+  /** 공고를 고른 뒤, 고르기 전에 누른 작업 칩을 막대에서 초록 고리로 세 번 강조합니다. 움직임 줄이기를 켜면 고리만 둡니다. */
+  govToolCue: 'motion-safe:animate-gov-tool-cue motion-reduce:shadow-[0_0_0_2px_#fff,0_0_0_4px_rgb(8_127_70_/_55%)]',
   govProgramClearButton: classes(
     'grid size-8 shrink-0 cursor-pointer place-items-center rounded-full text-ink-muted hover:bg-white hover:text-ink',
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-50',

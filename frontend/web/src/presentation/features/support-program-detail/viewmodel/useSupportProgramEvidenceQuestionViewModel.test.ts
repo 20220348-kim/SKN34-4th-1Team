@@ -100,7 +100,25 @@ describe('useSupportProgramEvidenceQuestionViewModel', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it.each(['KSTARTUP', 'OTHERSOURCE'])('blocks %s questions before executing the use case', async (sourceCode) => {
+  it('K-Startup 공고도 질문을 채우면 보낼 수 있다', async () => {
+    const execute = vi.fn().mockResolvedValue(answerResult())
+    const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(
+      { sourceCode: 'KSTARTUP', sourceProgramId: '179285' },
+      createEvidenceQuestionUseCase(execute),
+    ))
+
+    act(() => result.current.updateQuestion('지원 대상이 어떻게 되나요?'))
+    expect(result.current.isSupported).toBe(true)
+    expect(result.current.canSubmit).toBe(true)
+    await act(async () => result.current.submitQuestion())
+
+    expect(execute).toHaveBeenCalledWith(
+      { sourceCode: 'KSTARTUP', sourceProgramId: '179285', question: '지원 대상이 어떻게 되나요?' },
+      expect.any(AbortSignal),
+    )
+  })
+
+  it.each(['MSIT', 'OTHERSOURCE'])('blocks %s questions before executing the use case', async (sourceCode) => {
     const execute = vi.fn()
     const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(
       { ...getIdentity(), sourceCode },
@@ -317,7 +335,7 @@ describe('하루 원문 질문 이용량', () => {
 
   it('원문 질문을 지원하지 않는 공고는 이용량을 읽지 않는다', () => {
     const planUsage = { usage: vi.fn(() => new Promise<PlanUsage>(() => {})) }
-    renderHook(() => useSupportProgramEvidenceQuestionViewModel({ sourceCode: 'KSTARTUP', sourceProgramId: 'K-1' },
+    renderHook(() => useSupportProgramEvidenceQuestionViewModel({ sourceCode: 'MSIT', sourceProgramId: '3186573' },
       createEvidenceQuestionUseCase(vi.fn()), planUsage))
     expect(planUsage.usage).not.toHaveBeenCalled()
   })

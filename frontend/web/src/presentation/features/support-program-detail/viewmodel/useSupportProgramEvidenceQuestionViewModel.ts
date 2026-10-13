@@ -12,9 +12,9 @@ import { supportProgramRequestFailureMessage } from '../../../shared/support-pro
 
 export const maximumSupportProgramEvidenceQuestionLength = 500
 
-/** 원문 근거 답변은 기업마당 공고만 지원합니다. */
+/** 원문 근거 답변은 기업마당·K-Startup 공고만 지원합니다. Core `SupportProgramEvidenceService`의 제공처 목록과 같게 둡니다. */
 export function supportsEvidenceQuestion(sourceCode: string) {
-  return sourceCode === 'BIZINFO'
+  return sourceCode === 'BIZINFO' || sourceCode === 'KSTARTUP'
 }
 
 /** 원문 수집(10초)과 AI 답변(35초)에 여유를 두고 질문 요청 시간을 제한합니다. */

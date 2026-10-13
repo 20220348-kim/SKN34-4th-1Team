@@ -92,7 +92,7 @@ export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
             id="support-program-ask-question"
             className={q.panelInput}
             aria-label="공고 원문에 질문하기"
-            aria-describedby={`support-program-ask-count${thread.usage ? ' support-program-ask-usage' : ''}${isTooLong ? ' support-program-ask-length-error' : ''}`}
+            aria-describedby={`support-program-ask-count support-program-ask-keys${thread.usage ? ' support-program-ask-usage' : ''}${isTooLong ? ' support-program-ask-length-error' : ''}`}
             aria-invalid={isValidationFailed || isTooLong}
             disabled={thread.isAnswering || thread.isLimitReached}
             value={thread.question}
@@ -108,8 +108,10 @@ export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
             rows={3}
           />
           <span id="support-program-ask-count" className={q.evidenceCount}>
-            {thread.questionLength} / {maximumSupportProgramEvidenceQuestionLength}자 · Shift+Enter로 줄바꿈
+            {thread.questionLength} / {maximumSupportProgramEvidenceQuestionLength}자
           </span>
+          {/* 키보드 안내는 대화 입력칸처럼 화면 낭독기에만 알립니다. */}
+          <span id="support-program-ask-keys" className="sr-only">Enter로 보내기, Shift+Enter로 줄바꿈</span>
           {/* 오늘 질문 이용량입니다. 다 쓰면 입력을 막고 다시 채워지는 때를 알립니다. */}
           {thread.usage ? <PlanUsageLine id="support-program-ask-usage" view={thread.usage} className={q.evidenceUsage} /> : null}
           {isTooLong ? (

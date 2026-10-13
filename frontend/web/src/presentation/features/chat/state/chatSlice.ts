@@ -22,11 +22,11 @@ export type GovAgentTool = 'APPLICATION' | 'COMBINATION_REVIEW' | 'PARTNERS'
 
 /**
  * 작업 칩이 만드는 사용자 말풍선과 안내 문구입니다. 중복 검토 안내는 같은 요청을 말로 했을 때 Core가 돌려주는 문구와 같고,
- * 신청서 쓰기는 칩을 누르면 저장된 양식이 없을 때 입력칸 분석을 바로 시작하므로 그 사실을 알립니다(말로 요청하면 버튼으로 시작).
+ * 신청 문서 쓰기는 칩을 누르면 저장된 양식이 없을 때 입력칸 분석을 바로 시작하므로 그 사실을 알립니다(말로 요청하면 버튼으로 시작).
  * 파트너 찾기는 고른 공고를 조건으로 맞춤 모집글을 조회합니다(AI 호출 없음).
  */
 export const govToolTexts: Record<GovAgentTool, { label: string; request: string; message: string }> = {
-  APPLICATION: { label: '신청서 쓰기', request: '이 공고 신청서 쓰기',
+  APPLICATION: { label: '신청 문서 쓰기', request: '이 공고 신청 문서 쓰기',
     message: '저장된 신청 양식을 확인하고, 없으면 입력칸 분석을 바로 시작할게요. 분석은 보통 1~2분 걸려요.' },
   COMBINATION_REVIEW: { label: '중복 검토', request: '이 공고 중복 검토',
     message: '함께 지원할 두 공고를 선택하고 참여 상태와 사업 관계를 확인한 뒤 중복 검토를 실행해 주세요.' },
