@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -47,6 +48,108 @@ SOURCE_PATHS = (
     "infrastructure/eks/gitops-values.yaml",
 )
 DOCUMENT_JOBS_FLAG = "APPLICATION_DOCUMENT_JOBS_ENABLED"
+
+
+def failure_diagnostic(stage, error, resource=None):
+    """Report only fixed codes and numeric metadata, never exception/command text."""
+    details = {
+        "event": "eks_gitops_error",
+        "stage": stage,
+        "error_type": type(error).__name__,
+        "code": "UNEXPECTED_ERROR",
+    }
+    if resource is not None:
+        details["resource"] = resource
+    if isinstance(error, subprocess.TimeoutExpired):
+        details["code"] = "COMMAND_TIMEOUT"
+    elif isinstance(error, subprocess.CalledProcessError):
+        details["code"] = "COMMAND_FAILED"
+        if type(error.returncode) is int:
+            details["exit_code"] = error.returncode
+    elif isinstance(error, json.JSONDecodeError):
+        details["code"] = "INVALID_JSON"
+    elif isinstance(error, yaml.YAMLError):
+        details["code"] = "INVALID_YAML"
+    elif isinstance(error, KeyError):
+        details["code"] = "MISSING_FIELD"
+    elif isinstance(error, TypeError):
+        details["code"] = "INVALID_TYPE"
+    elif isinstance(error, OSError):
+        details["code"] = "OS_ERROR"
+        if type(error.errno) is int:
+            details["errno"] = error.errno
+    elif isinstance(error, ValueError):
+        details["code"] = {
+            "Missing GitOps revision": "INVALID_RECEIPT_REVISION",
+            "Source superseded while waiting for Argo CD": "SOURCE_SUPERSEDED",
+            "Source superseded; deploy the latest tested main": "SOURCE_SUPERSEDED",
+            "Main changed during CI verification": "SOURCE_SUPERSEDED",
+            "Argo sync failed; inspect hooks before retrying": "ARGO_SYNC_FAILED",
+            "Argo sync timed out; Vercel promotion is blocked": "ARGO_SYNC_TIMEOUT",
+        }.get(str(error), "VALIDATION_REJECTED")
+        prefix = "Required CI is not ready: "
+        if str(error).startswith(prefix):
+            details["code"] = "REQUIRED_CI_NOT_READY"
+            reason, _, workflow = str(error)[len(prefix):].partition(":")
+            if reason in {
+                "ci_run_missing", "ci_run_not_successful_or_untrusted",
+                "ci_jobs_not_successful_or_incomplete", "ci_run_changed",
+            } and workflow in release.gate.WORKFLOWS:
+                details.update(reason=reason, workflow=workflow)
+    if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        # Select an executable name, not its arguments (which may contain tokens).
+        command = error.cmd
+        tool = None
+        if isinstance(command, (list, tuple)) and command and isinstance(command[0], str):
+            tool = Path(command[0]).name
+        if tool in {"gh", "kubectl", "aws", "git", "helm"}:
+            details["tool"] = tool
+        if isinstance(error, subprocess.CalledProcessError):
+            stderr = error.stderr or ""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            status = None
+            if tool == "gh":
+                match = re.search(r"\(HTTP ([45][0-9]{2})\)", stderr)
+                status = int(match[1]) if match else None
+            elif tool == "kubectl":
+                match = re.search(
+                    r"Error from server \((Unauthorized|Forbidden|NotFound|TooManyRequests|ServiceUnavailable)\)",
+                    stderr,
+                )
+                if match:
+                    status = {
+                        "Unauthorized": 401, "Forbidden": 403, "NotFound": 404,
+                        "TooManyRequests": 429, "ServiceUnavailable": 503,
+                    }[match[1]]
+            if status is not None:
+                details["http_status"] = status
+                details["code"] = "HTTP_ERROR"
+                if status == 429:
+                    details["code"] = "RATE_LIMITED"
+                elif status in (401, 403):
+                    details["code"] = "ACCESS_DENIED"
+                elif status >= 500:
+                    details["code"] = "REMOTE_SERVER_ERROR"
+            if tool == "gh" and "api rate limit exceeded" in stderr.lower():
+                details["code"] = "RATE_LIMITED"
+    return details
+
+
+class GitOpsDiagnosticError(ValueError):
+    def __init__(self, stage, error, resource=None):
+        self.details = failure_diagnostic(stage, error, resource)
+        super().__init__(json.dumps(self.details, sort_keys=True))
+
+
+@contextmanager
+def diagnostic_stage(stage, resource=None):
+    try:
+        yield
+    except GitOpsDiagnosticError:
+        raise
+    except Exception as error:
+        raise GitOpsDiagnosticError(stage, error, resource) from None
 
 
 def document_jobs_patches(patches):
@@ -717,28 +820,45 @@ def synced(app, record, deployments, settings=None):
 
 
 def wait(sha, receipt, timeout=1200):
-    record = json.loads(receipt.read_text())
-    validate_record(record, sha)
-    release.require(
-        re.fullmatch(r"[a-f0-9]{40}", record.get("gitopsRevision", "")), "Missing GitOps revision"
-    )
-    connect()
-    release.check(sha)
-    settings = read_settings(ROOT, sha)
+    with diagnostic_stage("wait.receipt"):
+        record = json.loads(receipt.read_text())
+        validate_record(record, sha)
+        release.require(
+            re.fullmatch(r"[a-f0-9]{40}", record.get("gitopsRevision", "")), "Missing GitOps revision"
+        )
+    with diagnostic_stage("wait.connect"):
+        connect()
+    with diagnostic_stage("wait.initial_ci"):
+        release.check(sha)
+    with diagnostic_stage("wait.settings"):
+        settings = read_settings(ROOT, sha)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        release.require(
-            release.gate.api(f"repos/{release.SOURCE}/git/ref/heads/main")["object"]["sha"] == sha,
-            "Source superseded while waiting for Argo CD",
-        )
-        app = kube("argocd", "application", NAME)
-        deployments = {name: kube(ns, "deployment", name) for ns, name, _ in deploy.TARGETS}
-        if synced(app, record, deployments, settings):
-            release.check(sha)
+        with diagnostic_stage("wait.source"):
+            release.require(
+                release.gate.api(f"repos/{release.SOURCE}/git/ref/heads/main")["object"]["sha"] == sha,
+                "Source superseded while waiting for Argo CD",
+            )
+        with diagnostic_stage("wait.application", NAME):
+            app = kube("argocd", "application", NAME)
+        deployments = {}
+        for ns, name, _ in deploy.TARGETS:
+            with diagnostic_stage("wait.deployment", name):
+                deployments[name] = kube(ns, "deployment", name)
+        with diagnostic_stage("wait.verify"):
+            ready = synced(app, record, deployments, settings)
+        if ready:
+            print(
+                json.dumps({"event": "eks_gitops_checkpoint", "stage": "wait.argo_verified"}),
+                flush=True,
+            )
+            with diagnostic_stage("wait.final_ci"):
+                release.check(sha)
             print("Argo CD synced the exact release; both hooks and all six Deployments succeeded.")
             return
         time.sleep(15)
-    raise ValueError("Argo sync timed out; Vercel promotion is blocked")
+    with diagnostic_stage("wait.timeout"):
+        raise ValueError("Argo sync timed out; Vercel promotion is blocked")
 
 
 def main():
@@ -750,32 +870,41 @@ def main():
     parser.add_argument("--application", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if args.command == "application":
-        resources = application(json.loads(args.runtime.read_text()))
-        fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as out:
-            yaml.safe_dump_all(resources, out, sort_keys=False)
-        print("Prepared private Argo adoption configuration; cluster unchanged.")
-    elif args.command == "enable-document-jobs":
-        if not args.application or not args.output:
-            parser.error("enable-document-jobs requires --application and --output")
-        patch = document_jobs_patch(json.loads(args.application.read_text(encoding="utf-8")))
-        fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            json.dump(patch, out)
-        print("Prepared private document-jobs patch; cluster unchanged.")
-    elif args.command == "preflight":
-        preflight()
-    elif args.command == "publish":
-        connect()
-        publish(args.sha, args.receipt)
-    else:
-        wait(args.sha, args.receipt)
+    with diagnostic_stage(args.command):
+        if args.command == "application":
+            resources = application(json.loads(args.runtime.read_text()))
+            fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as out:
+                yaml.safe_dump_all(resources, out, sort_keys=False)
+            print("Prepared private Argo adoption configuration; cluster unchanged.")
+        elif args.command == "enable-document-jobs":
+            if not args.application or not args.output:
+                parser.error("enable-document-jobs requires --application and --output")
+            patch = document_jobs_patch(json.loads(args.application.read_text(encoding="utf-8")))
+            fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                json.dump(patch, out)
+            print("Prepared private document-jobs patch; cluster unchanged.")
+        elif args.command == "preflight":
+            preflight()
+        elif args.command == "publish":
+            connect()
+            publish(args.sha, args.receipt)
+        else:
+            wait(args.sha, args.receipt)
+
+
+def cli():
+    try:
+        main()
+    except GitOpsDiagnosticError as error:
+        print(str(error), file=sys.stderr, flush=True)
+        return 1
+    except Exception as error:
+        print(json.dumps(failure_diagnostic("cli", error), sort_keys=True), file=sys.stderr, flush=True)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (ValueError, KeyError, OSError, subprocess.SubprocessError):
-        # Captured command output/configuration may contain private environment values.
-        sys.exit("EKS GitOps operation failed; inspect the phase and protected configuration.")
+    sys.exit(cli())
