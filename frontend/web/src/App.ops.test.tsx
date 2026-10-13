@@ -37,7 +37,7 @@ const reviewDefaults = {
 }
 let authenticated = true
 let fetchMock: Mock<(path: string, options?: RequestInit) => Promise<Response>>
-const session = () => ({ live_enabled: true, user: authenticated ? { id: 'core:99', username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
+const session = () => ({ live_enabled: true, user: authenticated ? { id: 'core:99', username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token' })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const usageTotals = { calls: 7, inputTokens: 1200, cachedInputTokens: 200, outputTokens: 400, estimatedUsd: '0.012000', unpricedCalls: 0 }
 const serviceUsage = {
@@ -55,6 +55,7 @@ beforeEach(() => {
   vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
+    if (path === '/api/v1/ops/evaluation-catalog') return json({ datasets: [dataset, comparisonDataset] })
     if (path.includes('/api/v1/admin/ai-costs?')) return json(serviceUsage)
     if (path.endsWith('/api/v1/admin/ai-costs/prices')) return json([])
     if (path === '/api/v1/ops/dashboard') return json({ as_of: '2026-10-07T00:00:00Z', configured_model: 'gpt-6-luna', window: { limit: 200, loaded: 0, total: 0, truncated: false }, states: { completed: 0, failed: 0, active: 0, cancelled: 0 }, excluded: { replay: 0, incomplete: 0, unverifiable: 0, duplicate: 0 }, series: [] })
@@ -85,13 +86,81 @@ function open(path = '/ops/evaluations/new') {
   return render(<Provider store={createAppStore()}><MemoryRouter initialEntries={[path]}><App /></MemoryRouter></Provider>)
 }
 
+describe('운영 세션과 평가 자료 조회 분리', () => {
+  it.each([
+    ['/ops/dashboard', '성능 대시보드'], ['/ops/usage', '실사용 모니터링'],
+    ['/ops/budget', '예산 관리'], ['/ops/evaluations', '평가 이력'],
+    [`/ops/evaluations/${id}`, '평가 실행 상세'],
+  ])('%s 화면은 평가 자료 조회 없이 가벼운 세션으로 연다', async (path, title) => {
+    open(path)
+    expect(await screen.findByRole('heading', { level: 1, name: title })).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/v1/ops/evaluation-catalog')).toBe(false)
+  })
+
+  it('평가 자료 조회 중에도 메뉴를 이동하고 늦게 도착한 응답을 버린다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let resolveCatalog: (value: Response) => void = () => {}
+    let catalogSignal: AbortSignal | null | undefined
+    fetchMock.mockImplementation((path, options) => {
+      if (path === '/api/v1/ops/evaluation-catalog') {
+        catalogSignal = options?.signal
+        return new Promise<Response>((resolve) => { resolveCatalog = resolve })
+      }
+      return original(path, options)
+    })
+    open()
+    expect(await screen.findByText(/평가 자료와 실행 조건을 불러오고 있습니다/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('link', { name: '성능 대시보드' }))
+    expect(await screen.findByRole('heading', { level: 1, name: '성능 대시보드' })).toBeTruthy()
+    expect(catalogSignal?.aborted).toBe(true)
+    await act(async () => resolveCatalog(json({ datasets: [dataset] })))
+    expect(screen.queryByLabelText('평가 자료')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('평가 자료 장애는 해당 화면에서 재시도하고 메뉴 재진입 시 새로 조회한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let catalogs = 0
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
+      ? Promise.resolve(++catalogs < 3 ? json({ code: 'VECTOR_CACHE_UNAVAILABLE' }, 503) : json({ datasets: [dataset] }))
+      : original(path, options))
+    open()
+    expect(await screen.findByText(/평가 자료를 불러오지 못했습니다/)).toBeTruthy()
+    expect(screen.queryByText('운영자 세션을 확인하고 있습니다.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '평가 자료 다시 불러오기' }))
+    await waitFor(() => expect(catalogs).toBe(2))
+    expect(await screen.findByText(/평가 자료를 불러오지 못했습니다/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('link', { name: '평가 이력' }))
+    expect(await screen.findByRole('heading', { level: 1, name: '평가 이력' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
+    expect(await screen.findByLabelText('평가 자료')).toHaveProperty('value', dataset.id)
+    expect(catalogs).toBe(3)
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/ops/session')).toHaveLength(1)
+  })
+
+  it('정기 실행도 자료가 필요할 때만 조회하며 실패 후 직접 재시도한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let catalogs = 0
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
+      ? Promise.resolve(++catalogs === 1 ? json({}, 503) : json({ datasets: [dataset] }))
+      : original(path, options))
+    open('/ops/schedules')
+    expect(await screen.findByText(/평가 자료를 불러오지 못했습니다/)).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([path]) => path.startsWith('/api/v1/ops/schedules?'))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '평가 자료 다시 불러오기' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path.startsWith('/api/v1/ops/schedules?'))).toBe(true))
+    expect(catalogs).toBe(2)
+    expect(screen.queryByRole('button', { name: '평가 자료 다시 불러오기' })).toBeNull()
+  })
+})
+
 describe('React LLMOps 운영 화면', () => {
   it('자료를 용도별로 묶고 선택한 자료의 설명과 기존 비교 대상을 함께 바꾼다', async () => {
     const development = { ...dataset, selection_guide: { category: 'development', title: '지원 조건 가상 사례', purpose: '가상 공고로 지원 조건 누락을 확인합니다.', material: '가상 질문 6개와 저장 응답', limitations: '실제 공고 전체의 품질을 대표하지 않습니다.' } }
     const historical = { ...comparisonDataset, selection_guide: { category: 'historical', title: '이전 프롬프트 비교', purpose: '이전 지시문의 응답 차이를 비교합니다.', material: 'E01 과거 응답 두 개', limitations: '한 질문의 과거 비교입니다.' } }
     const quality = { ...comparisonDataset, id: 'official-answer-20260907-v3', selection_guide: { category: 'quality', title: '실제 공고 답변 · 참조 보완 v3', purpose: '주어진 실제 공고 근거로 답변 품질을 평가합니다.', material: '저장 원문과 참조 조건', limitations: '검색은 평가하지 않습니다.' } }
     const original = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
       ? Promise.resolve(json({ ...session(), datasets: [development, historical, quality] })) : original(path, options))
     open()
     const select = await screen.findByLabelText('평가 자료')
@@ -127,7 +196,7 @@ describe('React LLMOps 운영 화면', () => {
     const quality = { ...dataset, selection_guide: { category: 'quality', title: '공식 공고 답변', purpose: '답변 확인', material: '등록된 공고 원문', limitations: '검색 미평가' } }
     const historical = { ...comparisonDataset, live_config: null, live_options: [], execution_profiles: { ...executionProfiles, live: null }, selection_guide: { category: 'historical', title: 'Core 저장 기록', purpose: '저장 기록 재평가', material: '기존 Core 응답', limitations: '저장 응답 재평가만 가능' } }
     const original = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
       ? Promise.resolve(json({ ...session(), datasets: [quality, historical] })) : original(path, options))
     open()
     fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
@@ -142,6 +211,29 @@ describe('React LLMOps 운영 화면', () => {
     expect(screen.getByRole('checkbox', { name: /위 자료의 OpenAI 전송/ })).toHaveProperty('checked', false)
     expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
     expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
+  it('운영 표본 품질 메뉴는 관리자 세션으로 별도 표본 API를 조회한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/production-quality?page=1'
+      ? Promise.resolve(json({ scope: 'support-program-evidence-answer', enabled: false, retention_days: 14, daily_limit: 100,
+        summary: { stored: 0, checked: 0, pending: 0, reviewed: 0, issues: 0, unassessable: 0 }, days: [], results: [], count: 0, next: false, page: 1 }))
+      : original(path, options))
+    open('/ops/dashboard')
+    fireEvent.click(await screen.findByRole('link', { name: '운영 표본 품질' }))
+    expect(await screen.findByRole('heading', { level: 1, name: '운영 표본 품질' })).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([path]) => path === '/api/v1/ops/evaluation-catalog')).toBe(false)
+    expect(await screen.findByText('아직 저장된 운영 표본이 없습니다.')).toBeTruthy()
+    expect(document.title).toBe('GovBiz · 운영 표본 품질')
+    expect(screen.getByRole('link', { name: '운영 표본 품질' }).getAttribute('aria-current')).toBe('page')
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
+  it('운영 표본 주소에 비로그인으로 접근하면 표본을 조회하지 않고 기존 로그인으로 이동한다', async () => {
+    authenticated = false
+    open('/ops/production-quality')
+    expect(await screen.findByRole('heading', { name: '로그인' })).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([path]) => path.includes('/production-quality'))).toBe(false)
   })
 
   it('실사용 메뉴에서 Core 사용량을 읽고 기간 조회·회원 상세·실행 추적을 연결한다', async () => {
@@ -322,7 +414,7 @@ describe('React LLMOps 운영 화면', () => {
     fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
     if (delayed) await act(async () => { resolve(json(readiness)); await pending })
     expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
-    expect(screen.getByRole('button', { name: '실행 설정·예산 점검' })).toHaveProperty('disabled', false)
+    expect(await screen.findByRole('button', { name: '실행 설정·예산 점검' })).toHaveProperty('disabled', false)
     expect(fetchMock.mock.calls.filter(([path]) => path.includes('/live-readiness?'))).toHaveLength(1)
     expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
     expect(screen.queryByRole('region', { name: '누적 평가 예산' })).toBeNull()
@@ -359,7 +451,7 @@ describe('React LLMOps 운영 화면', () => {
 
   it('평가 범위가 없는 세션에서는 새 평가를 접수하지 않는다', async () => {
     const original = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
       ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, evaluation_scope: null }] }))
       : original(path, options))
     open()
@@ -812,7 +904,7 @@ it.each([1, 2])('허용 모델 %i를 선택하면 해당 모델 설정과 실행
   const original = fetchMock.getMockImplementation()!
   const option = modelOptions[index]
   fetchMock.mockImplementation(async (path, options) => {
-    if (path === '/api/v1/ops/session') return json({ ...session(), datasets: [{ ...dataset, live_options: modelOptions }] })
+    if (path === '/api/v1/ops/evaluation-catalog') return json({ datasets: [{ ...dataset, live_options: modelOptions }] })
     if (path.includes('/live-readiness?')) return json({
       as_of: '2026-10-03T01:00:00Z', dataset_id: dataset.id, execution_profile: option.execution_profile,
       evaluation_scope: dataset.evaluation_scope, model: option.live_config.model, state: 'checked',
@@ -843,7 +935,7 @@ it.each([1, 2])('허용 모델 %i를 선택하면 해당 모델 설정과 실행
 
 it('모델 선택은 메뉴 이동 후 유지하고 다른 자료에서 사라진 모델은 자동 대체하지 않는다', async () => {
   const original = fetchMock.getMockImplementation()!
-  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
     ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, live_options: modelOptions }, comparisonDataset] })) : original(path, options))
   open()
   fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
@@ -867,7 +959,7 @@ it('모델 선택은 메뉴 이동 후 유지하고 다른 자료에서 사라�
 
 it('서버가 빈 허용 목록을 내려주면 이전 기본 모델로 실행하지 않는다', async () => {
   const original = fetchMock.getMockImplementation()!
-  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
     ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, live_options: [] }] })) : original(path, options))
   open()
   expect(await screen.findByRole('option', { name: '새 응답 생성 · 유료 모델 호출' })).toHaveProperty('disabled', true)
@@ -1174,7 +1266,7 @@ it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기�
 
 it('검토 기준을 다음 평가의 기준 선택에 표시하고 후보 목록과 구별한다', async () => {
   const original = fetchMock.getMockImplementation()!
-  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluation-catalog'
     ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, baseline: { version: 1, id: `run:${id}`, label: '검토 기준 · 10000000' } }] }))
     : original(path, options))
   open()
@@ -1357,11 +1449,15 @@ it('접수 전 관리자 계정이 바뀌면 보관 요청을 다른 계정으�
   let sessions = 0
   fetchMock.mockImplementation(async (path, options) => {
     if (path === '/api/v1/ops/session' && ++sessions > 1) return json({ ...session(), user: { id: 'core:other', username: 'other@example.com' } })
+    if (path === '/api/v1/ops/evaluation-catalog' && sessions > 1) return json({ datasets: [comparisonDataset] })
     return original(path, options)
   })
   open()
   fireEvent.click(await screen.findByRole('button', { name: '평가 실행' }))
   await screen.findByText('other@example.com')
+  expect(await screen.findByLabelText('평가 자료')).toHaveProperty('value', comparisonDataset.id)
+  expect(screen.queryByRole('option', { name: dataset.label })).toBeNull()
+  expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/ops/evaluation-catalog')).toHaveLength(2)
   expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
   expect(readPendingEvaluation('core:99')?.request_id).toBe(id)
 })
@@ -1484,9 +1580,11 @@ it('접수 직전 서버 버전이 바뀌어도 사용자가 확인한 명세를
   fetchMock.mockImplementation(async (path, options) => {
     if (path === '/api/v1/ops/session') {
       sessions += 1
-      const value = session()
-      if (sessions > 1) value.datasets = value.datasets.map((item) => ({ ...item, execution_profiles: { replay: 'f'.repeat(64), live: 'f'.repeat(64) } }))
-      return json(value)
+      return json(session())
+    }
+    if (path === '/api/v1/ops/evaluation-catalog') {
+      return json({ datasets: [dataset, comparisonDataset].map((item) => sessions > 1
+        ? { ...item, execution_profiles: { replay: 'f'.repeat(64), live: 'f'.repeat(64) } } : item) })
     }
     return original(path, options)
   })
@@ -1553,7 +1651,7 @@ describe('전체 RAG 저장 캡처 재평가', () => {
   it('자료 변경 시 무료 재평가로 전환하고 live 명세 없이 접수한다', async () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (path, options) => {
-      if (path === '/api/v1/ops/session') return json({ ...session(), datasets: [dataset, ragDataset] })
+      if (path === '/api/v1/ops/evaluation-catalog') return json({ datasets: [dataset, ragDataset] })
       if (path === '/api/v1/ops/evaluations' && options?.method === 'POST') return json(ragRun, 202)
       if (path === `/api/v1/ops/evaluations/${id}`) return json(ragRun)
       return original(path, options)
@@ -1599,9 +1697,11 @@ it('벡터 재사용·생성·공유 계획을 표시하고 승인한 해시를 
     R03: { key: 'c'.repeat(64), sha256: null, source_case_id: 'R02' },
   } }
   const original = fetchMock.getMockImplementation()!
-  fetchMock.mockImplementation(async (path, options) => path === '/api/v1/ops/session'
-    ? json({ ...session(), rag_live_enabled: true, datasets: [{ ...ragLiveDataset, live_config: config }] })
-    : original(path, options))
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/ops/session') return json({ ...session(), rag_live_enabled: true })
+    if (path === '/api/v1/ops/evaluation-catalog') return json({ datasets: [{ ...ragLiveDataset, live_config: config }] })
+    return original(path, options)
+  })
   open()
   fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
   expect(screen.getByText('저장 벡터 재사용 1사례 · 새 임베딩 1묶음 · 실행 내 공유 1사례')).toBeTruthy()
@@ -1618,7 +1718,8 @@ it('벡터 재사용·생성·공유 계획을 표시하고 승인한 해시를 
 it.each([false, true])('RAG 별도 활성화(%s)와 전송·예산 확인이 있어야 새 실행을 접수한다', async (enabled) => {
   const original = fetchMock.getMockImplementation()!
   fetchMock.mockImplementation(async (path, options) => {
-    if (path === '/api/v1/ops/session') return json({ ...session(), rag_live_enabled: enabled, datasets: [ragLiveDataset] })
+    if (path === '/api/v1/ops/session') return json({ ...session(), rag_live_enabled: enabled })
+    if (path === '/api/v1/ops/evaluation-catalog') return json({ datasets: [ragLiveDataset] })
     return original(path, options)
   })
   open()

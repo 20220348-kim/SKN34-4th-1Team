@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
-import { getOpsSession, listEvaluations } from '../../../frontend/web/src/data/ops/opsApi.ts'
+import { getEvaluationCatalog, getOpsSession, listEvaluations } from '../../../frontend/web/src/data/ops/opsApi.ts'
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 
-const session = { user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted', live_enabled: false, datasets: [] }
+const session = { user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted', live_enabled: false }
 const responses = () => ({ '/api/v1/ops/session': structuredClone(session) })
 const caches = async () => (await readdir(tmpdir())).filter((name) => name.startsWith(`govbiz-restore-proxy-${process.pid}-`)).sort()
 
@@ -48,11 +48,12 @@ test('actual Vite proxies queries, cookies, Origin and denials, then closes ever
   }
   const savedFetch = globalThis.fetch
   try {
-    const data = { ...responses(), '/api/v1/ops/evaluations?page=2': { count: 0, next: null, previous: null, results: [] } }
+    const data = { ...responses(), '/api/v1/ops/evaluation-catalog': { datasets: [] }, '/api/v1/ops/evaluations?page=2': { count: 0, next: null, previous: null, results: [] } }
     const proof = await withRestoreProxy(data, async () => {
       urls.add('http://127.0.0.1:' + process.env.K8S_CORE_PORT)
       urls.add('http://127.0.0.1:' + process.env.K8S_OPS_PORT)
       assert.deepEqual((await getOpsSession()).user, session.user)
+      assert.deepEqual((await getEvaluationCatalog()).datasets, [])
       assert.equal((await listEvaluations(2)).count, 0)
       return { parsed: true }
     })

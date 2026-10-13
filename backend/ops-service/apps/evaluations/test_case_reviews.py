@@ -130,7 +130,7 @@ class CaseReviewTests(ReviewFixture, TestCase):
         self.assertTrue(state["baseline_requires_review"])
         self.assertFalse(state["approval_current"])
         self.assertEqual(state["case_reviews"], [])
-        choices = self.client.get("/api/v1/ops/session").json()["datasets"]
+        choices = self.client.get("/api/v1/ops/evaluation-catalog").json()["datasets"]
         self.assertIsNone(next(item for item in choices if item["id"] == self.dataset)["baseline"])
         self.assertEqual(
             self.client.post(

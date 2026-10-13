@@ -213,7 +213,7 @@ class ReviewTests(ReviewFixture, TestCase):
         self.assertFalse(EvaluationBaseline.objects.filter(review__isnull=False).exists())
         self.assertEqual(self.review().json()["reviews"][0]["id"], first["id"])
         self.promote()
-        session = self.client.get("/api/v1/ops/session").json()
+        session = self.client.get("/api/v1/ops/evaluation-catalog").json()
         selected = next(item for item in session["datasets"] if item["id"] == self.dataset)
         self.assertEqual(selected["baseline"]["id"], f"run:{self.run.id}")
         response = self.review("CHANGES_REQUESTED")
@@ -233,7 +233,7 @@ class ReviewTests(ReviewFixture, TestCase):
     def test_reference_is_pinned_and_retry_survives_baseline_revocation(self, create):
         create.return_value = uuid4()
         self.promote()
-        datasets = self.client.get("/api/v1/ops/session").json()["datasets"]
+        datasets = self.client.get("/api/v1/ops/evaluation-catalog").json()["datasets"]
         profile = next(item for item in datasets if item["id"] == self.dataset)[
             "execution_profiles"
         ]["replay"]

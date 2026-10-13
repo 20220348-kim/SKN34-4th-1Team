@@ -1228,6 +1228,8 @@ def test_readiness_waits_for_valid_langfuse_json(monkeypatch):
         "live_enabled": True,
         "user": {"id": 1},
         "csrf_token": "csrf",
+    }
+    catalog = {
         "datasets": [
             {"id": "target-coverage-20260907-v1"},
             {
@@ -1242,12 +1244,13 @@ def test_readiness_waits_for_valid_langfuse_json(monkeypatch):
             ValueError("Invalid JSON response: HTTP 500"),
             (200, {"status": "OK"}),
             (200, session),
+            (200, catalog),
             (200, {}),
         ]
     )
     monkeypatch.setattr(smoke.time, "sleep", Mock())
     client.ready()
-    assert client.request.call_count == 4 and client.csrf == "csrf"
+    assert client.request.call_count == 5 and client.csrf == "csrf"
 
 
 def test_wrong_python_version_fails_before_docker(monkeypatch, tmp_path):
@@ -1277,6 +1280,11 @@ def test_readiness_retries_non_json_startup_response_but_still_times_out(monkeyp
             "live_enabled": True,
             "user": {"id": 1},
             "csrf_token": "test-csrf",
+        },
+    )
+    catalog = (
+        200,
+        {
             "datasets": [
                 {"id": "target-coverage-20260907-v1"},
                 {
@@ -1287,11 +1295,11 @@ def test_readiness_retries_non_json_startup_response_but_still_times_out(monkeyp
             ],
         },
     )
-    api = Mock(side_effect=[unavailable, ready] if recovers else unavailable)
+    api = Mock(side_effect=[unavailable, ready, catalog] if recovers else unavailable)
     monkeypatch.setattr(instance, "api", api)
     if recovers:
         instance.ready()
-        assert instance.csrf == "test-csrf" and api.call_count == 2
+        assert instance.csrf == "test-csrf" and api.call_count == 3
     else:
         with pytest.raises(TimeoutError, match="Ops readiness"):
             instance.ready()

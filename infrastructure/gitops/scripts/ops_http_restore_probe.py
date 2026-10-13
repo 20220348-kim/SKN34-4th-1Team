@@ -282,7 +282,7 @@ def check_management(expected, principal, token, member_token, total_runs):
     if (
         status != 200
         or anonymous.get("user") is not None
-        or anonymous.get("datasets") != []
+        or "datasets" in anonymous
     ):
         raise ValueError("Restored management disclosed an anonymous session")
     session = get("/api/v1/ops/session")
@@ -291,11 +291,14 @@ def check_management(expected, principal, token, member_token, total_runs):
         != {"id": "core:" + str(principal["accountId"]), "username": principal["email"]}
         or not isinstance(session.get("csrf_token"), str)
         or not session["csrf_token"]
-        or not session.get("datasets")
+        or "datasets" in session
         or session.get("live_enabled") is not False
         or session.get("rag_live_enabled") is not False
     ):
         raise ValueError("Restored management session differs")
+    catalog = get("/api/v1/ops/evaluation-catalog")
+    if not isinstance(catalog.get("datasets"), list) or not catalog["datasets"]:
+        raise ValueError("Restored management evaluation catalog differs")
     # The consumer only needs the field's shape; never export a live CSRF token.
     session["csrf_token"] = "redacted-restore-csrf"
     rows = {}

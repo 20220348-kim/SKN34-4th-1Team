@@ -81,10 +81,10 @@ def loopback_client(base, cookies):
     )
 
 
-def replay_selection(session, dataset_id):
+def replay_selection(session, catalog, dataset_id):
     """공개 live 메타데이터와 실행 허용 여부를 구분하고 무료 요청을 고정한다."""
     assert session["live_enabled"] is False and session["rag_live_enabled"] is False
-    dataset = next(item for item in session["datasets"] if item["id"] == dataset_id)
+    dataset = next(item for item in catalog["datasets"] if item["id"] == dataset_id)
     profile = dataset["execution_profiles"]["replay"]
     assert isinstance(profile, str) and re.fullmatch(r"[a-f0-9]{64}", profile)
     return {
@@ -468,12 +468,14 @@ def main():
             raise RuntimeError("Ops readiness timed out")
         time.sleep(2)
     assert request("/api/v1/ops/evaluations")[0] == 401
+    assert request("/api/v1/ops/evaluation-catalog")[0] == 401
     assert request("/api/v1/ops/runtime")[0] == 401
     if args.seed_dev_accounts:
         # 이 플래그는 CI의 별도 Core/빈 DB fixture에만 사용한다. 기존 회원의 권한은 변경하지 않는다.
         assert request("/api/v1/auth/dev-login", {"role": "USER"}, csrf=False)[0] == 200
         assert request("/api/v1/ops/session")[0] == 403
         assert request("/api/v1/ops/evaluations")[0] == 403
+        assert request("/api/v1/ops/evaluation-catalog")[0] == 403
         assert request("/api/v1/ops/runtime")[0] == 403
         assert request("/api/v1/auth/dev-login", {"role": "ADMIN"}, csrf=False)[0] == 200
         assert request("/api/v1/auth/logout", {}, csrf=False)[0] == 204
@@ -486,7 +488,11 @@ def main():
     status, body, _ = request("/api/v1/ops/session")
     assert status == 200 and json.loads(body)["user"]["username"] == os.environ["CORE_ADMIN_EMAIL"]
     session = json.loads(body)
-    datasets = {item["id"]: item for item in session["datasets"]}
+    assert "datasets" not in session
+    status, body, _ = request("/api/v1/ops/evaluation-catalog")
+    assert status == 200
+    catalog = json.loads(body)
+    datasets = {item["id"]: item for item in catalog["datasets"]}
     submit_path = "/api/v1/ops/evaluations"
     payload = {"request_id": str(uuid4()), "dataset_id": "target-coverage-20260907-v1"}
     if args.recover_source:
@@ -515,7 +521,7 @@ def main():
                        candidate_capture_id=registration["capture_id"],
                        reference_capture_id=registration["capture_id"])
     if not args.recover_source:
-        payload.update(replay_selection(session, payload["dataset_id"]))
+        payload.update(replay_selection(session, catalog, payload["dataset_id"]))
     if is_rag:
         verify_rag_live_disabled(request, session, datasets[payload["dataset_id"]], payload)
     assert request(submit_path, payload, csrf=False)[0] == 403

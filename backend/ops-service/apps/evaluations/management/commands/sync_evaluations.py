@@ -6,12 +6,13 @@ from threading import Event
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, close_old_connections
 
+from apps.evaluations.production_quality import process_pending_samples, prune_expired_samples
 from apps.evaluations.schedules import dispatch_due_schedules
 from apps.evaluations.services import sync_pending_runs
 
 
 class Command(BaseCommand):
-    help = "평가 상태 동기화. SCHEDULES_ENABLED인 경우 승인된 일별 계획도 접수합니다."
+    help = "평가 상태·정기 계획 동기화와 운영 표본의 무료 검사·보존 기간 정리를 수행합니다."
 
     def add_arguments(self, parser):
         parser.add_argument("--watch", action="store_true")
@@ -31,6 +32,8 @@ class Command(BaseCommand):
             while not stopped.is_set():
                 close_old_connections()
                 try:
+                    prune_expired_samples()
+                    checked = process_pending_samples(batch_size=batch_size)
                     count = sync_pending_runs(batch_size=batch_size, interval_seconds=interval)
                     scheduled = dispatch_due_schedules()
                 except DatabaseError:
@@ -41,6 +44,8 @@ class Command(BaseCommand):
                     self.stdout.write(f"평가 상태 {count}건 확인")
                 if scheduled:
                     self.stdout.write(f"정기 평가 {scheduled}건 접수 또는 차단")
+                if checked:
+                    self.stdout.write(f"운영 표본 {checked}건 무료 구조 검사")
                 if not options["watch"]:
                     break
                 stopped.wait(interval)

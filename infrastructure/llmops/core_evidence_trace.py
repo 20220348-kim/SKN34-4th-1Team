@@ -196,6 +196,7 @@ def post_question(core_url, question, *, session_token):
         headers={
             "Content-Type": "application/json",
             "Authorization": "Bearer " + session_token,
+            "X-GovBiz-Evaluation": "true",
             "traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01",
         },
     )

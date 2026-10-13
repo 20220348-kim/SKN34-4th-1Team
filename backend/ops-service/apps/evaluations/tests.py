@@ -520,7 +520,7 @@ class EvaluationTests(TestCase):
             "reference_capture_id": reference,
             "candidate_capture_id": candidate,
         }
-        data = self.client.get("/api/v1/ops/session").json()
+        data = self.client.get("/api/v1/ops/evaluation-catalog").json()
         self.assertNotIn('"path"', json.dumps(data))
         self.assertEqual(data["datasets"][1]["case_ids"], ["E01"])
         self.assertEqual(
@@ -753,7 +753,7 @@ class EvaluationTests(TestCase):
 
 class CoreAuthClientTests(SimpleTestCase):
     @patch("apps.evaluations.authentication.build_opener")
-    @override_settings(CORE_API_URL="http://core-service:8080")
+    @override_settings(CORE_API_URL="http://core-service:8080", CORE_AUTH_TIMEOUT_SECONDS=3)
     def test_only_core_cookie_is_sent_and_response_is_validated(self, opener):
         response = opener.return_value.open.return_value.__enter__.return_value
         response.status = 200

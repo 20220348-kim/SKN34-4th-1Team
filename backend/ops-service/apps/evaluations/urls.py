@@ -5,6 +5,7 @@ from . import (
     budget_views,
     dashboard,
     dashboard_reviews,
+    production_views,
     runtime_views,
     schedule_views,
     trace_views,
@@ -14,6 +15,17 @@ from . import (
 urlpatterns = [
     path("api/v1/ops/traces", trace_views.api_traces),
     path("api/v1/ops/traces/<str:trace_id>", trace_views.api_trace_detail),
+    path("internal/llmops/production-samples", production_views.api_ingest),
+    path("api/v1/ops/production-quality", production_views.api_samples),
+    path("api/v1/ops/production-quality/<uuid:sample_id>", production_views.api_sample_detail),
+    path(
+        "api/v1/ops/production-quality/<uuid:sample_id>/review",
+        production_views.api_sample_review,
+    ),
+    path(
+        "api/v1/ops/production-quality/<uuid:sample_id>/regression-candidate",
+        production_views.api_regression_candidate,
+    ),
     path("api/v1/ops/dashboard", dashboard.api_dashboard),
     path(
         "api/v1/ops/dashboard/runs/<uuid:run_id>/review-status", dashboard_reviews.api_review_status
@@ -53,6 +65,7 @@ urlpatterns = [
     path("ops/evaluations", views.web_redirect),
     path("ops/evaluations/<uuid:run_id>", views.web_redirect),
     path("api/v1/ops/session", views.api_session),
+    path("api/v1/ops/evaluation-catalog", views.api_evaluation_catalog),
     path("api/v1/ops/evaluations", views.api_runs, name="api-evaluations"),
     path(
         "api/v1/ops/evaluations/<uuid:run_id>", views.api_run_detail, name="api-evaluation-detail"

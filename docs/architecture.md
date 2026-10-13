@@ -1271,6 +1271,23 @@ Hook 로컬 상태로 두는 것이 규칙입니다.
 계정 행이 사라져도 남습니다. 권한 변경은 처리자·대상 행을 ID 순서로 잠가 마지막 활성 관리자가 사라지지 않게 합니다.
 웹의 `/app/admin/audit-logs`는 같은 API를 최신순 커서로 쪽 단위 이동하며, 이 조회도 기록됩니다.
 
+## 운영 답변 표본의 품질 검토
+
+관리자 세션은 `React → Ops /session → Core /admin/session → Ops 사용자 연결`로 확인합니다.
+평가 자료·비교 기준 조회는 별도 `/evaluation-catalog`를 새 평가·정기 실행 화면에서 호출하며,
+표본 화면의 인증·조회·쓰기 전 확인에 평가 파일이나 벡터 저장소가 끼어들지 않습니다.
+
+`상세 질문 Controller → Evidence Service → AI Facade 최종 검증 → Ops 전용 비동기 Client
+→ Django 표본 DB → 기존 ops-sync 무료 구조 검사 → React 관리자 사람 검토`를 연결합니다.
+Core 기본 수집 비율은 0이며 Ops도 별도 토큰·수집 활성화가 필요합니다. 실제 활성화는 배포 설정으로 관리합니다.
+표본 전송은 동시 8건·응답 대기 기본 15초로 제한하며 사용자 답변을 기다리게 하지 않습니다.
+Ops의 DB 저장 후 성공 응답과, 응답 시간 초과로 저장 여부를 모르는 상태를 구분해 표본 ID로 대조합니다.
+Langfuse의 본문 없는 추적은 유지하고 검토용 표본에 보존 기간·일별 상한을 적용합니다.
+사람의 근거 일치·관련성·완전성 검토와 무료 구조 검사를 구분합니다. 회귀 후보는 기대 답변·인용과
+검토 버전을 고정하지만 기존 평가 자료·합격 기준으로 자동 등록하지 않습니다.
+성공한 상세 답변의 수신 표본이므로 전체 검색 재현율·장애율·정확도로 해석하지 않습니다.
+설정·보존·평가 요청 제외·API는 [Ops 운영 표본 품질](../backend/ops-service/README.md#운영-표본-품질)을 참고하세요.
+
 ## 오류 경계
 
 AI 검색은 Core의 `search.total → database_fetch/eligibility_prepare/retrieval/ranking`과
@@ -1279,7 +1296,8 @@ Python의 `search.semantic → embedding/vector`, `search.ranking → ranking.mo
 Langfuse 클라이언트로 같은 프로젝트에 전송합니다. 전송 장애가 검색 재시도나 정상 응답 변경을 유발하지 않습니다.
 추적 metadata에는 공고 ID·건수·캐시 상태·모델·제공된 사용량·프롬프트 해시를 남기며 본문·기업 정보·예외 원문은
 제외합니다. 로그의 후보 ID 제외 정책과 별개로, Langfuse에서는 공식 공고 식별자만 허용합니다.
-React Ops의 관리자 세션은 Django에서 받은 프로젝트 trace 목록 링크를 표시합니다. Langfuse 로그인은 별도입니다.
+React Ops의 관리자 세션은 같은 웹의 `/ops/traces`를 연결합니다. Django가 Core 관리자 권한을 확인한 뒤
+서버의 프로젝트 키로 Langfuse를 조회하므로, 이 화면에는 별도 Langfuse 로그인이 필요하지 않습니다.
 [단계별 구조·설정·검증 범위](../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참고하세요.
 
 도우미도 `AssistantMessageService → AiAssistantClient → AI AssistantAgentService → LangGraph`를

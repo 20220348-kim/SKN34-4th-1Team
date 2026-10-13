@@ -30,8 +30,9 @@ const responses = {
   '/api/v1/ops/schedules?page=1': { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] },
   '/api/v1/ops/session': {
     user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted',
-    live_enabled: false, rag_live_enabled: false, datasets: [dataset],
+    live_enabled: false, rag_live_enabled: false,
   },
+  '/api/v1/ops/evaluation-catalog': { datasets: [dataset] },
   '/api/v1/ops/evaluations?page=1': { count: 26, next: 'http://127.0.0.1:8000/api/v1/ops/evaluations?page=2', previous: null, results: runs.slice(0, 25) },
   '/api/v1/ops/evaluations?page=2': { count: 26, next: null, previous: 'http://127.0.0.1:8000/api/v1/ops/evaluations?page=1', results: runs.slice(25) },
   '/api/v1/ops/budget/reservations?page=1': {

@@ -82,8 +82,9 @@ async function fixture(defect, verify, count = 1, rag = null) {
     )
     if (request.url === '/api/v1/ops/session') {
       send(reply, 200, { user: authorized(request) ? { id: defect === 'wrong_principal' ? 'core:99' : 'core:1', username: email } : null,
-        csrf_token: 'test-csrf', live_enabled: false, rag_live_enabled: false, datasets: authorized(request) ? [dataset] : [] })
+        csrf_token: 'test-csrf', live_enabled: false, rag_live_enabled: false })
     } else if (!authorized(request) && !invalidSessionAccepted && !(defect === 'logout_bypass' && report)) send(reply, 401, {})
+    else if (request.url === '/api/v1/ops/evaluation-catalog') send(reply, 200, { datasets: [dataset] })
     else if (url.pathname === '/api/v1/ops/evaluations') {
       const page = Number(url.searchParams.get('page'))
       const values = rows.slice((page - 1) * 25, page * 25)
@@ -123,7 +124,7 @@ async function fixture(defect, verify, count = 1, rag = null) {
     assert.ok(requests.every(([method, path]) => method === 'GET' || ['/api/v1/auth/login', '/api/v1/auth/logout'].includes(path)))
     if (!defect) {
       assert.deepEqual(new Set(revokedReads), new Set([
-        '/api/v1/admin/session',
+        '/api/v1/admin/session', '/api/v1/ops/evaluation-catalog',
         ...Array.from({ length: Math.ceil(count / 25) }, (_, index) => `/api/v1/ops/evaluations?page=${index + 1}`),
         ...Object.keys(required).flatMap((key) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${key}${suffix}`)),
         ...(rag ? Object.keys(required).map((key) => `/api/v1/ops/evaluations/${key}/rag-reviews`) : []),
@@ -340,7 +341,7 @@ test('restored browser uses the Python request validator over attached stdio', {
     const port = reservation.address().port
     await new Promise((done) => reservation.close(done))
     const source = await readFile(new URL('./ops_http_restore_probe.py', import.meta.url), 'utf8')
-    const routes = ['/api/v1/ops/session', '/api/v1/ops/evaluations?page=1', '/api/v1/ops/budget/reservations?page=1', '/api/v1/ops/schedules?page=1',
+    const routes = ['/api/v1/ops/session', '/api/v1/ops/evaluation-catalog', '/api/v1/ops/evaluations?page=1', '/api/v1/ops/budget/reservations?page=1', '/api/v1/ops/schedules?page=1',
       ...Object.keys(input.expected).flatMap((key) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${key}${suffix}`))]
     const program = source + '\n' + [
       `BROWSER_ORIGIN = ${JSON.stringify('http://127.0.0.1:' + port)}`,
@@ -381,7 +382,8 @@ test('isolated Docker attach carries real Python HTTP and browser sessions', {
   const source = await readFile(new URL('./ops_http_restore_probe.py', import.meta.url), 'utf8')
   const path = `/api/v1/ops/evaluations/${id}`
   const settings = { origin: 'http://127.0.0.1:' + port, email, password, report: body, routes: {
-    '/api/v1/ops/session': { user: { id: 'core:1', username: email }, csrf_token: 'fixture-csrf', live_enabled: false, rag_live_enabled: false, datasets: [dataset] },
+    '/api/v1/ops/session': { user: { id: 'core:1', username: email }, csrf_token: 'fixture-csrf', live_enabled: false, rag_live_enabled: false },
+    '/api/v1/ops/evaluation-catalog': { datasets: [dataset] },
     '/api/v1/ops/evaluations?page=1': { count: 1, next: null, previous: null, results: [run] },
     '/api/v1/ops/schedules?page=1': { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] },
     '/api/v1/ops/budget/reservations?page=1': { as_of: at, count: 0, next: null, previous: null, results: [],
@@ -407,7 +409,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         authorized = active and ('govbiz_session=' + token) in self.headers.get('Cookie', '')
         if self.path == '/api/v1/ops/session' and not authorized:
-            self.send(200, {**settings['routes'][self.path], 'user':None, 'datasets':[]}); return
+            self.send(200, {**settings['routes'][self.path], 'user':None}); return
         if not authorized: self.send(401, {}); return
         if self.path == '/api/v1/admin/session':
             self.send(200, {'accountId':1, 'email':settings['email'], 'role':'ADMIN'})

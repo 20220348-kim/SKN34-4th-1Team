@@ -693,3 +693,94 @@ class EvaluationUsageCorrection(models.Model):
                 name="usage_correction_response_identity",
             ),
         ]
+
+
+class ProductionSampleDay(models.Model):
+    """서울 날짜별 접수 상한의 잠금 행. 삭제된 표본도 당일 접수량에서 차감하지 않는다."""
+
+    day = models.DateField(primary_key=True)
+    accepted = models.PositiveIntegerField(default=0)
+
+
+class ProductionQualitySample(models.Model):
+    """운영 응답에서 선택해 보관한 자료. 전체 요청의 분모나 품질 합격을 뜻하지 않는다."""
+
+    id = models.UUIDField(primary_key=True, editable=False)
+    captured_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    scope = models.CharField(max_length=64)
+    source_document_id = models.CharField(max_length=320)
+    sample_rate_bps = models.PositiveSmallIntegerField()
+    trace_id = models.CharField(max_length=32, null=True)
+    release = models.CharField(max_length=40, null=True)
+    payload_sha256 = models.CharField(max_length=64)
+    material = models.JSONField()
+    material_sha256 = models.CharField(max_length=64)
+    redacted = models.BooleanField(default=False)
+    checks_status = models.CharField(max_length=10, default="pending", db_index=True)
+    check_codes = models.JSONField(default=list)
+    checked_at = models.DateTimeField(null=True)
+    review_version = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-received_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(sample_rate_bps__gte=1, sample_rate_bps__lte=10000),
+                name="production_sample_rate_range",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(checks_status__in=["pending", "checked", "error"]),
+                name="production_sample_check_status",
+            ),
+        ]
+
+
+class ProductionSampleReview(models.Model):
+    """자료 해시에 묶인 관리자 검토 이력. 갱신 대신 새 버전을 저장한다."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    sample = models.ForeignKey(
+        ProductionQualitySample, on_delete=models.CASCADE, related_name="reviews"
+    )
+    request_id = models.UUIDField(unique=True)
+    request_sha256 = models.CharField(max_length=64)
+    version = models.PositiveIntegerField()
+    material_sha256 = models.CharField(max_length=64)
+    verdict = models.CharField(max_length=12)
+    grounded = models.CharField(max_length=7)
+    relevant = models.CharField(max_length=7)
+    complete = models.CharField(max_length=7)
+    note = models.CharField(max_length=1000)
+    reference_answer = models.TextField(blank=True)
+    expected_status = models.CharField(max_length=24, null=True)
+    expected_citation_ids = models.JSONField(default=list)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["sample", "version"], name="production_sample_review_version"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(verdict__in=["acceptable", "issue", "unassessable"]),
+                name="production_review_verdict",
+            ),
+        ]
+
+
+class ProductionRegressionCandidate(models.Model):
+    """사람이 작성한 기대 응답과 출처를 고정한다. 평가 fixture 자동 등록은 아니다."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    sample = models.OneToOneField(
+        ProductionQualitySample, on_delete=models.CASCADE, related_name="regression_candidate"
+    )
+    review = models.ForeignKey(ProductionSampleReview, on_delete=models.CASCADE)
+    request_id = models.UUIDField(unique=True)
+    request_sha256 = models.CharField(max_length=64)
+    snapshot = models.JSONField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)

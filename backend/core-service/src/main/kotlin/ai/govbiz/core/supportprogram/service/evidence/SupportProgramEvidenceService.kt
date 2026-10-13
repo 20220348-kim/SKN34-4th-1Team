@@ -35,6 +35,7 @@ class SupportProgramEvidenceService(
         sourceCode: String,
         sourceProgramId: String,
         question: String,
+        sampleProduction: Boolean = false,
     ): SupportProgramEvidenceAnswerResult = tracing.observe("total") {
         val program = tracing.observe("core.detail") { detailService.get(sourceCode, sourceProgramId) }
         val sourceLabel = EVIDENCE_SOURCE_LABELS[program.sourceCode] ?: throw SupportProgramEvidenceNotSupportedException()
@@ -45,6 +46,7 @@ class SupportProgramEvidenceService(
             chunks = chunks,
             sourceUrl = document.sourceUrl,
             sourceLabel = sourceLabel,
+            sampleProduction = sampleProduction,
         )
     }
 

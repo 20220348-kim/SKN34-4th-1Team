@@ -173,6 +173,12 @@ def replay_session():
     return {
         "live_enabled": False,
         "rag_live_enabled": False,
+    }
+
+
+@pytest.fixture
+def replay_catalog():
+    return {
         "datasets": [{
             "id": "rag-synthetic-multichunk-v1",
             "live_config": {"answer_model": "metadata-only"},
@@ -182,31 +188,31 @@ def replay_session():
 
 
 @pytest.mark.parametrize("has_live_metadata", [False, True])
-def test_free_request_does_not_select_advertised_live_profile(replay_session, has_live_metadata):
-    dataset = replay_session["datasets"][0]
+def test_free_request_does_not_select_advertised_live_profile(replay_session, replay_catalog, has_live_metadata):
+    dataset = replay_catalog["datasets"][0]
     if not has_live_metadata:
         dataset["live_config"] = dataset["execution_profiles"]["live"] = None
-    before = copy.deepcopy(replay_session)
-    assert smoke.replay_selection(replay_session, dataset["id"]) == {
+    before = copy.deepcopy(replay_catalog)
+    assert smoke.replay_selection(replay_session, replay_catalog, dataset["id"]) == {
         "execution_mode": "replay", "execution_profile": "a" * 64,
         "live_config": {}, "confirm_paid_run": False,
     }
-    assert replay_session == before
+    assert replay_catalog == before
 
 
 @pytest.mark.parametrize("flag", ["live_enabled", "rag_live_enabled"])
 @pytest.mark.parametrize("value", [True, None, 0, "false"])
-def test_free_smoke_rejects_enabled_or_unconfirmed_live_execution(replay_session, flag, value):
+def test_free_smoke_rejects_enabled_or_unconfirmed_live_execution(replay_session, replay_catalog, flag, value):
     replay_session[flag] = value
     with pytest.raises(AssertionError):
-        smoke.replay_selection(replay_session, "rag-synthetic-multichunk-v1")
+        smoke.replay_selection(replay_session, replay_catalog, "rag-synthetic-multichunk-v1")
 
 
 @pytest.mark.parametrize("profile", [None, "", "a" * 63, "z" * 64, 123])
-def test_missing_replay_profile_never_falls_back_to_live(replay_session, profile):
-    replay_session["datasets"][0]["execution_profiles"]["replay"] = profile
+def test_missing_replay_profile_never_falls_back_to_live(replay_session, replay_catalog, profile):
+    replay_catalog["datasets"][0]["execution_profiles"]["replay"] = profile
     with pytest.raises(AssertionError):
-        smoke.replay_selection(replay_session, "rag-synthetic-multichunk-v1")
+        smoke.replay_selection(replay_session, replay_catalog, "rag-synthetic-multichunk-v1")
 
 
 @pytest.fixture
@@ -243,13 +249,14 @@ def main_replay(monkeypatch, tmp_path):
             value = {
                 "user": {"username": "fixture-admin"},
                 "live_enabled": False, "rag_live_enabled": False,
-                "datasets": [{"id": "target-coverage-20260907-v1",
-                              "execution_profiles": {"replay": "b" * 64}}],
             }
         elif path == "/api/v1/health":
             pass
         elif not logged_in:
             status = 401
+        elif path == "/api/v1/ops/evaluation-catalog":
+            value = {"datasets": [{"id": "target-coverage-20260907-v1",
+                                   "execution_profiles": {"replay": "b" * 64}}]}
         elif request.data:
             payload = json.loads(request.data)
             if not request.has_header("X-csrftoken"):

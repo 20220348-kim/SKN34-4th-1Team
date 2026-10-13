@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import type { OpsSession } from '../../../data/ops/opsApi'
+import type { EvaluationCatalog } from '../../../data/ops/opsApi'
 import { workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 
 const categories = [
@@ -9,7 +9,7 @@ const categories = [
 ] as const
 
 export function EvaluationDatasetPicker({ datasets, value, disabled, onChange }: {
-  datasets: OpsSession['datasets']; value: string; disabled: boolean; onChange: (value: string) => void;
+  datasets: EvaluationCatalog['datasets']; value: string; disabled: boolean; onChange: (value: string) => void;
 }) {
   const id = useId()
   const selected = datasets.find((dataset) => dataset.id === value)
@@ -17,7 +17,7 @@ export function EvaluationDatasetPicker({ datasets, value, disabled, onChange }:
   const category = categories.find((item) => item.id === guide?.category)
   const groups = categories.map((item) => ({ ...item, datasets: datasets.filter((dataset) => dataset.selection_guide?.category === item.id) }))
   const unclassified = datasets.filter((dataset) => !dataset.selection_guide)
-  const option = (dataset: OpsSession['datasets'][number]) => <option key={dataset.id} value={dataset.id}>
+  const option = (dataset: EvaluationCatalog['datasets'][number]) => <option key={dataset.id} value={dataset.id}>
     {dataset.selection_guide ? `${dataset.selection_guide.title} · ${dataset.case_ids.length}문제` : dataset.label}
   </option>
 

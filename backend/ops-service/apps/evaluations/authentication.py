@@ -1,7 +1,9 @@
 """Core의 현재 관리자 세션을 검증하고 Ops 실행 이력의 요청자에 연결한다."""
 
 import json
+import logging
 import re
+from time import perf_counter
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -9,6 +11,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework.authentication import BaseAuthentication, SessionAuthentication
 from rest_framework.exceptions import APIException, AuthenticationFailed, PermissionDenied
+
+logger = logging.getLogger(__name__)
 
 
 class CoreUnavailable(APIException):
@@ -31,7 +35,9 @@ def read_core_admin(token):
         headers={"Cookie": f"govbiz_session={token}", "Accept": "application/json"},
     )
     try:
-        with build_opener(NoAuthRedirect()).open(request, timeout=3) as response:
+        with build_opener(NoAuthRedirect()).open(
+            request, timeout=settings.CORE_AUTH_TIMEOUT_SECONDS
+        ) as response:
             if response.status != 200:
                 raise CoreUnavailable
             data = json.loads(response.read(8193))
@@ -64,15 +70,34 @@ class CoreSessionAuthentication(BaseAuthentication):
         if not token:
             return None
         # 모든 요청에서 확인한다. Django 세션이나 로컬 is_staff 값을 인증 근거로 삼지 않는다.
-        principal = read_core_admin(token)
-        SessionAuthentication().enforce_csrf(request)
-        namespace = settings.CORE_ACCOUNT_NAMESPACE
-        prefix = f"core-local:{namespace}:" if namespace else "core:"
-        user, _ = get_user_model().objects.get_or_create(
-            username=f"{prefix}{principal['accountId']}",
-            defaults={"email": principal["email"], "password": "!", "is_staff": True},
-        )
-        if user.email != principal["email"]:
-            user.email = principal["email"]
-            user.save(update_fields=["email"])
-        return user, None
+        started = perf_counter()
+        core_finished = None
+        outcome = "error"
+        try:
+            principal = read_core_admin(token)
+            core_finished = perf_counter()
+            SessionAuthentication().enforce_csrf(request)
+            namespace = settings.CORE_ACCOUNT_NAMESPACE
+            prefix = f"core-local:{namespace}:" if namespace else "core:"
+            user, _ = get_user_model().objects.get_or_create(
+                username=f"{prefix}{principal['accountId']}",
+                defaults={"email": principal["email"], "password": "!", "is_staff": True},
+            )
+            if user.email != principal["email"]:
+                user.email = principal["email"]
+                user.save(update_fields=["email"])
+            outcome = "authenticated"
+            return user, None
+        except APIException as error:
+            outcome = f"http_{error.status_code}"
+            raise
+        finally:
+            finished = perf_counter()
+            # 요청·계정·쿠키·예외 내용 없이 Core 왕복과 로컬 CSRF·DB 조회 시간을 분리한다.
+            logger.info(
+                "ops_admin_auth outcome=%s core_ms=%d local_ms=%d total_ms=%d",
+                outcome,
+                round(((core_finished or finished) - started) * 1000),
+                round((finished - core_finished) * 1000) if core_finished is not None else 0,
+                round((finished - started) * 1000),
+            )

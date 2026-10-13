@@ -38,6 +38,21 @@ PROGRAM = {
 }
 
 
+def test_core_evaluation_http_request_excludes_production_quality_sampling(monkeypatch):
+    recorded = []
+
+    def open_response(request, timeout):
+        recorded.append(request)
+        response = io.BytesIO(b'{"answerStatus":"ANSWERED"}')
+        response.code = 200
+        return response
+
+    monkeypatch.setattr(trace.LOCAL_HTTP, "open", open_response)
+    code, _ = trace.post_question("http://core.test", "평가 질문", session_token="test-session")
+    assert code == 200
+    assert recorded[0].get_header("X-govbiz-evaluation") == "true"
+
+
 def documents(scenario="ok", trace_id=TRACE_ID, query_cache=None):
     # Fixed wire representation independent of the checker's span_tree builder.
     nodes = [

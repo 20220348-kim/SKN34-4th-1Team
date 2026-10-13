@@ -382,9 +382,11 @@ class Smoke:
         _, body = wait_for(session, lambda r: r[0] == 200, label="Ops readiness")
         assert body["live_enabled"] and body["user"]
         self.csrf = body["csrf_token"]
-        self.dataset = next(d for d in body["datasets"] if d["id"] == "target-coverage-20260907-v1")
+        status, catalog = self.api("/api/v1/ops/evaluation-catalog")
+        assert status == 200
+        self.dataset = next(d for d in catalog["datasets"] if d["id"] == "target-coverage-20260907-v1")
         self.rag_dataset = next(
-            d for d in body["datasets"] if d["id"] == "rag-synthetic-multichunk-v1"
+            d for d in catalog["datasets"] if d["id"] == "rag-synthetic-multichunk-v1"
         )
         assert self.rag_dataset["live_config"] and self.rag_dataset["execution_profiles"]["live"]
 
@@ -454,8 +456,11 @@ class Smoke:
         dataset = self.dataset if dataset is None else dataset
         if dataset["id"] == self.rag_dataset["id"]:
             status, session = self.api("/api/v1/ops/session")
+            assert status == 200 and session["user"] and session["live_enabled"]
+            self.csrf = session["csrf_token"]
+            status, catalog = self.api("/api/v1/ops/evaluation-catalog")
             assert status == 200
-            dataset = next(item for item in session["datasets"] if item["id"] == dataset["id"])
+            dataset = next(item for item in catalog["datasets"] if item["id"] == dataset["id"])
         self.active = {
             "scenario": name,
             "request_id": str(uuid4()),

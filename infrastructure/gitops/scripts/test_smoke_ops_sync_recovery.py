@@ -38,6 +38,33 @@ def run(**values):
     }
 
 
+class SessionCatalogTests(unittest.TestCase):
+    def test_reads_identity_and_csrf_separately_from_replay_profile(self):
+        client = object()
+        session = {"live_enabled": False, "csrf_token": "fixture-csrf"}
+        catalog = {"datasets": [{"id": smoke.DATASET, "execution_profiles": {"replay": "a" * 64}}]}
+        with (
+            patch.object(smoke.artifacts, "authenticated_client", return_value=client),
+            patch.object(smoke.artifacts, "response", side_effect=[
+                (200, {}, json.dumps(session).encode()),
+                (200, {}, json.dumps(catalog).encode()),
+            ]) as response,
+        ):
+            self.assertEqual(smoke.session("fixture-password"), (client, "fixture-csrf", "a" * 64))
+        self.assertEqual([call.args[1] for call in response.call_args_list], [
+            smoke.BASE + "/api/v1/ops/session", smoke.BASE + "/api/v1/ops/evaluation-catalog",
+        ])
+
+    def test_disabled_paid_execution_is_required_before_catalog_lookup(self):
+        with (
+            patch.object(smoke.artifacts, "authenticated_client"),
+            patch.object(smoke.artifacts, "response", return_value=(200, {}, b'{"live_enabled":true}')) as response,
+            self.assertRaises(AssertionError),
+        ):
+            smoke.session("fixture-password")
+        self.assertEqual(response.call_count, 1)
+
+
 class FaultRestorationTests(unittest.TestCase):
     def info(self):
         return {

@@ -2,6 +2,9 @@ package ai.govbiz.core.supportprogram.service.evidence
 
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramEvidenceClient
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityChunkRequest
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityMaterialRequest
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
 import ai.govbiz.core.supportprogram.facade.SupportProgramSourceDocumentFacade
@@ -42,7 +45,8 @@ class SupportProgramEvidenceTracingTest {
     private val builder = RestClient.builder().baseUrl("http://ai.test")
     private val server = MockRestServiceServer.bindTo(builder).build()
     private val client = builder.build()
-    private val facade = AiSupportProgramEvidenceFacade(AiSupportProgramEvidenceClient(client, client), tracing)
+    private val quality = Mockito.mock(ProductionQualityClient::class.java)
+    private val facade = AiSupportProgramEvidenceFacade(AiSupportProgramEvidenceClient(client, client), tracing, quality)
     private val detail = Mockito.mock(SupportProgramDetailService::class.java)
     private val repository = Mockito.mock(SupportProgramRepository::class.java)
     private val source = Mockito.mock(SupportProgramSourceDocumentFacade::class.java)
@@ -118,6 +122,22 @@ class SupportProgramEvidenceTracingTest {
         assertEquals(List(2) { listOf("evidence.core.index", "evidence.core.search", "evidence.core.answer") }.flatten(),
             parents.map { header -> spans.single { "00-${it.traceId}-${it.spanId}-01" == header }.name })
         Mockito.verifyNoInteractions(source)
+        Mockito.verifyNoInteractions(quality)
+    }
+
+    @Test
+    fun explicitProductionRequestSamplesOnlyAfterCoreValidationAndPreservesBodylessTraces() {
+        prepare()
+        expectPipeline()
+        assertEquals("PRIVATE answer", service.answer("BIZINFO", program.id, "PRIVATE question", sampleProduction = true).answer)
+        val root = exporter.finishedSpanItems.single { it.name == "evidence.total" }
+        Mockito.verify(quality).record(
+            ProductionQualityMaterialRequest(
+                "PRIVATE question", listOf(ProductionQualityChunkRequest(chunk.id, chunk.documentId, chunk.order, chunk.text)),
+                "PRIVATE answer", "ANSWERED", listOf(chunk.id),
+            ),
+            root.traceId,
+        )
     }
 
     @ParameterizedTest
@@ -125,12 +145,13 @@ class SupportProgramEvidenceTracingTest {
     fun identifiesFailureStageAndDoesNotRetry(fault: String) {
         prepare()
         expectPipeline(fault)
-        assertThrows(AiServiceCallException::class.java) { service.answer("BIZINFO", program.id, "PRIVATE question") }
+        assertThrows(AiServiceCallException::class.java) { service.answer("BIZINFO", program.id, "PRIVATE question", sampleProduction = true) }
         val failed = exporter.finishedSpanItems.filter { it.status.statusCode == StatusCode.ERROR }
         assertEquals(setOf("evidence.total", "evidence.core.$fault"), failed.map { it.name }.toSet())
         assertTrue(failed.all { it.attributes.get(AttributeKey.stringKey("langfuse.observation.status_message")) ==
             if (fault == "answer") "timeout" else "failed" })
         assertEquals(if (fault == "search") 2 else 3, parents.size)
+        Mockito.verifyNoInteractions(quality)
     }
 
     @Test

@@ -29,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.ArgumentMatchers.anyList
 import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mockito.mockingDetails
 import org.mockito.Mockito.times
 import org.mockito.Mockito.doReturn
@@ -349,7 +350,7 @@ class SupportProgramEvidenceServiceTest {
         val refreshed = first.copy(fetchedAt = LocalDateTime.of(2026, 9, 5, 12, 0))
         doReturn(program).`when`(detailService).get("BIZINFO", program.id)
         doReturn(first, refreshed).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString(), eq(false))
 
         service.answer("BIZINFO", program.id, QUESTION)
         service.answer("BIZINFO", program.id, "문의처는 어디인가요?")
@@ -372,7 +373,7 @@ class SupportProgramEvidenceServiceTest {
         val changed = document(program, first.fetchedAt, "신청 방법이 방문 접수로 변경되었습니다.")
         doReturn(program).`when`(detailService).get("BIZINFO", program.id)
         doReturn(first, changed).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString(), eq(false))
 
         repeat(2) { service.answer("BIZINFO", program.id, QUESTION) }
 
@@ -386,7 +387,7 @@ class SupportProgramEvidenceServiceTest {
     fun boundsTheChunkCacheAndKeepsIdenticalTextFromDifferentProgramsSeparate() {
         val programs = (0..32).map { SupportProgramTestHelper.catalogProgram("PBLN_CACHE_$it").program }
         val fetchedAt = LocalDateTime.of(2026, 9, 5, 11, 0)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString(), eq(false))
         for (program in programs) {
             doReturn(program).`when`(detailService).get("BIZINFO", program.id)
             doReturn(document(program, fetchedAt)).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
@@ -408,7 +409,7 @@ class SupportProgramEvidenceServiceTest {
         val stale = fresh.copy(fetchedAt = LocalDateTime.of(2026, 9, 5, 4, 59))
         doReturn(program).`when`(detailService).get("BIZINFO", program.id)
         doReturn(fresh, stale).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString(), eq(false))
         doThrow(sourceFailure()).`when`(sourceDocumentFacade).load(program)
 
         service.answer("BIZINFO", program.id, QUESTION)

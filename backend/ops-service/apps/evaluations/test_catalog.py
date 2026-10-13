@@ -16,7 +16,7 @@ from .catalog import (
     validate_execution,
 )
 from .execution_spec import digest, profile, read_release
-from .views import api_session
+from .views import api_evaluation_catalog
 
 RAG = "rag-synthetic-multichunk-v1"
 
@@ -121,15 +121,15 @@ class LiveModelCatalogTests(SimpleTestCase):
 
 
 class DatasetSelectionGuideTests(SimpleTestCase):
-    def session(self, *, authenticated=True):
-        request = APIRequestFactory().get("/api/v1/ops/session")
+    def catalog(self, *, authenticated=True):
+        request = APIRequestFactory().get("/api/v1/ops/evaluation-catalog")
         if authenticated:
             force_authenticate(request, user=get_user_model()(username="offline-operator"))
-        return api_session(request)
+        return api_evaluation_catalog(request)
 
     @patch("apps.evaluations.vector_cache.discover", return_value=None)
     @patch("apps.evaluations.views.baseline_choices", return_value={})
-    def test_session_groups_every_registered_dataset_and_preserves_execution_contract(
+    def test_catalog_groups_every_registered_dataset_and_preserves_execution_contract(
         self, baselines, cache
     ):
         expected = {
@@ -145,7 +145,7 @@ class DatasetSelectionGuideTests(SimpleTestCase):
             "core-official-640f14b8cf87bd9e5d3f2319": "historical",
         }
         original = {row["id"]: row for row in public_datasets()}
-        response = self.session()
+        response = self.catalog()
         self.assertEqual(response.status_code, 200)
         rows = response.data["datasets"]
         self.assertEqual({row["id"] for row in rows}, set(expected))
@@ -177,7 +177,7 @@ class DatasetSelectionGuideTests(SimpleTestCase):
             patch("apps.evaluations.views.public_datasets", return_value=[original, unknown]),
             patch("apps.evaluations.views.DATASETS", {LEGACY_DATASET_ID: original}),
         ):
-            response = self.session()
+            response = self.catalog()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.data["datasets"],
@@ -189,10 +189,10 @@ class DatasetSelectionGuideTests(SimpleTestCase):
 
     @patch("apps.evaluations.views.public_datasets")
     @patch("apps.evaluations.views.baseline_choices")
-    def test_anonymous_session_does_not_expose_dataset_guidance(self, baselines, datasets):
-        response = self.session(authenticated=False)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["datasets"], [])
+    def test_anonymous_catalog_does_not_expose_dataset_guidance(self, baselines, datasets):
+        response = self.catalog(authenticated=False)
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("datasets", response.data)
         datasets.assert_not_called()
         baselines.assert_not_called()
 
