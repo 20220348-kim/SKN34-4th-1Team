@@ -1,15 +1,19 @@
 """Reject broken distributed assistant traces and exercise the offline HTTP model."""
 
 import importlib.util
+import io
 import json
 import threading
 from dataclasses import replace
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from langfuse.api.commons.types.observation_v2 import ObservationV2
+from langfuse.api.core.pydantic_utilities import parse_obj_as
 
 import core_assistant_trace as trace
 from app.main import create_app
@@ -48,7 +52,7 @@ def documents(scenario, trace_id=TRACE_ID):
         for number, (name, parent) in enumerate(nodes, 1)
     ]
     rows[2]["metadata"].update(model_calls=1, usage_unknown_calls=1, usage_complete=False)
-    rows[-1].update(providedModelName="test-model", usageDetails={})
+    rows[-1].update(model="test-model", usageDetails={})
     rows[-1]["metadata"].update(record_kind="model_call", usage_reported=False)
     return rows
 
@@ -57,6 +61,31 @@ def documents(scenario, trace_id=TRACE_ID):
 def test_complete_wire_trace(scenario):
     rows = documents(scenario)
     assert len(trace.verify_observations(rows, TRACE_ID, scenario, ["PRIVATE"])) == len(rows)
+
+
+@pytest.mark.parametrize("scenario", ["ok", "fail", "timeout"])
+def test_langfuse_v2_readback_uses_public_model_field(monkeypatch, scenario):
+    rows = documents(scenario)
+    # The installed SDK's generated response schema is independent of our verifier.
+    generation = parse_obj_as(
+        ObservationV2,
+        rows[-1] | {"startTime": "2026-09-30T00:00:00Z", "projectId": "trace-fixture"}
+    )
+    assert generation.model == "test-model"
+    assert "providedModelName" not in rows[-1]
+
+    def read(request, *, timeout):
+        url = urlsplit(request.full_url)
+        query = parse_qs(url.query)
+        assert url.path == "/api/public/v2/observations"
+        assert query["traceId"] == [TRACE_ID]
+        assert "model" in query["fields"][0].split(",")
+        assert timeout == 10
+        return io.BytesIO(json.dumps({"data": rows}).encode())
+
+    monkeypatch.setattr("core_search_trace.LOCAL_HTTP.open", read)
+    observations = trace.read_observations(ENV, TRACE_ID)
+    assert len(trace.verify_observations(observations, TRACE_ID, scenario, ["PRIVATE"])) == len(rows)
 
 
 @pytest.mark.parametrize(
@@ -77,7 +106,11 @@ def test_complete_wire_trace(scenario):
         lambda rows: rows[0].update(input="PRIVATE"),
         lambda rows: rows[2]["metadata"].update(error="PRIVATE"),
         lambda rows: rows[-1].update(type="SPAN"),
-        lambda rows: rows[-1].update(providedModelName=None),
+        lambda rows: rows[-1].update(model=None),
+        lambda rows: rows[-1].update(model=""),
+        lambda rows: rows[-1].update(model="  "),
+        lambda rows: rows[-1].update(model=123),
+        lambda rows: rows[-1].update(providedModelName=rows[-1].pop("model")),
         lambda rows: rows[-1].update(parentObservationId=rows[2]["id"]),
         lambda rows: rows[-1]["metadata"].update(record_kind="processing"),
         lambda rows: rows[-1]["metadata"].update(usage_reported=True),
@@ -208,7 +241,7 @@ def test_real_ai_router_sdk_and_offline_http_fixture(trace_environment, monkeypa
                     "traceId": f"{span.context.trace_id:032x}",
                     "name": span.name,
                     "type": span.attributes.get("langfuse.observation.type", "span").upper(),
-                    "providedModelName": span.attributes.get("langfuse.observation.model.name"),
+                    "model": span.attributes.get("langfuse.observation.model.name"),
                     "usageDetails": json.loads(span.attributes.get("langfuse.observation.usage_details", "{}")),
                     "parentObservationId": f"{span.parent.span_id:016x}",
                     "endTime": span.end_time,
