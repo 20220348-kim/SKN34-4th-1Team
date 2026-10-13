@@ -30,3 +30,9 @@ spec:
               service:
                 name: api-gateway
                 port: {name: http}
+          - path: /_langfuse
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port: {name: http}

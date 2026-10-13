@@ -11,4 +11,5 @@ configMapGenerator:
     files:
       - nginx.conf.template
       - argocd.conf.template
+      - langfuse.conf.template
       - start.sh

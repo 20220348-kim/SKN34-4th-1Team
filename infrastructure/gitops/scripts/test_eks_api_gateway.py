@@ -1,4 +1,4 @@
-"""Offline checks for the API-only, authenticated EKS entrypoint."""
+"""Offline checks for the authenticated API and dashboard EKS entrypoints."""
 
 import json
 import os
@@ -46,7 +46,8 @@ class EksApiGatewayTests(unittest.TestCase):
         self.assertNotIn(prefix + "inbound-cidrs", annotations)
         paths = ingress["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual(
-            [(p["path"], p["pathType"]) for p in paths], [("/api", "Prefix"), ("/argocd", "Prefix")]
+            [(p["path"], p["pathType"]) for p in paths],
+            [("/api", "Prefix"), ("/argocd", "Prefix"), ("/_langfuse", "Prefix")],
         )
 
     def test_nonroot_gateway_uses_generated_config_and_required_secret(self):
@@ -130,7 +131,13 @@ class EksApiGatewayTests(unittest.TestCase):
             if "app.kubernetes.io/name"
             in peer.get("podSelector", {}).get("matchLabels", {})
         }
-        self.assertEqual(services, {"core-service", "ops-service", "argocd-server"})
+        self.assertEqual(services, {"core-service", "ops-service", "argocd-server", "langfuse-web"})
+        langfuse_rule = policy["egress"][-2]
+        self.assertEqual(langfuse_rule["to"], [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "govbiz-observability"}},
+            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "langfuse-web"}},
+        }])
+        self.assertEqual(langfuse_rule["ports"], [{"protocol": "TCP", "port": 3000}])
         argo_rule = policy["egress"][-1]
         self.assertEqual(argo_rule["to"][0]["namespaceSelector"], {
             "matchLabels": {"kubernetes.io/metadata.name": "argocd"},
@@ -211,6 +218,81 @@ class EksApiGatewayTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("GOVBIZ_ARGO_PROXY_SECRET must be 64 lowercase hexadecimal", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_langfuse_routes_require_independent_origin_secret_marker_and_safe_host(self):
+        data = self.resource("ConfigMap")["data"]
+        config = data["langfuse.conf.template"]
+        self.assertIn("include /tmp/langfuse.conf;", data["nginx.conf.template"])
+        for path in ("= /_langfuse", "^~ /_langfuse/"):
+            block = config.split("location " + path + " {", 1)[1].split("\n}", 1)[0]
+            action = "return 308" if path.startswith("=") else "proxy_pass http://"
+            for guard in (
+                'if ($http_x_govbiz_langfuse_origin != "${GOVBIZ_LANGFUSE_PROXY_SECRET}") { return 403; }',
+                'if ($http_x_govbiz_langfuse_access != "allowed") { return 403; }',
+                r'if ($http_x_govbiz_langfuse_host !~ "^d[a-z0-9]+\.cloudfront\.net$") { return 403; }',
+            ):
+                self.assertLess(block.index(guard), block.index(action))
+        self.assertIn("set $govbiz_langfuse langfuse-web.govbiz-observability.svc.cluster.local:3000;", config)
+        self.assertIn("proxy_pass http://$govbiz_langfuse$govbiz_langfuse_uri;", config)
+        self.assertIn("proxy_pass_request_headers off;", config)
+        for name, value in (
+            ("Host", "$http_x_govbiz_langfuse_host"),
+            ("X-Forwarded-Host", "$http_x_govbiz_langfuse_host"),
+            ("X-Forwarded-Proto", "https"),
+            ("Cookie", "$http_cookie"), ("Origin", "$http_origin"),
+            ("Authorization", "$http_authorization"),
+            ("Next-Action", "$http_next_action"),
+        ):
+            self.assertIn(f"proxy_set_header {name} {value};", config)
+        for credential in ("X-Govbiz-Langfuse-Origin", "X-Govbiz-Langfuse-Access", "X-Govbiz-Proxy-Secret"):
+            self.assertNotIn("proxy_set_header " + credential.lower(), config.lower())
+        self.assertIn("proxy_cache off;", config)
+        self.assertIn("proxy_redirect off;", config)
+
+    def test_langfuse_origin_prefix_preserves_raw_url_without_entering_core_or_ops(self):
+        config = self.resource("ConfigMap")["data"]["nginx.conf.template"]
+        expression = re.search(r"~(\^/_langfuse\(\?<govbiz_langfuse_path>.*) \$govbiz_langfuse_path;", config)[1]
+        expression = expression.replace("(?<govbiz_langfuse_path>", "(?P<govbiz_langfuse_path>")
+        pattern = re.compile(expression)
+        for suffix in (
+            "/", "/auth/sign-in", "/project/govbiz-evidence-development/traces",
+            "/api/auth/callback/credentials?callbackUrl=https%3A%2F%2Fd123.cloudfront.net%2F",
+            "/_next/static/chunks/a%2Fb.js?v=1&v=2",
+            "/api/trpc/traces.all?input=%7B%22text%22%3A%22a%2Bb%22%7D",
+        ):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(pattern.fullmatch("/_langfuse" + suffix)["govbiz_langfuse_path"], suffix)
+        for uri in ("/_langfuse", "/api/v1/ops/session", "/_langfuse-other/api/auth/session"):
+            self.assertIsNone(pattern.fullmatch(uri))
+        # Nginx selects normalized locations. Even a prefix traversal that lands
+        # in either API location cannot use the dashboard's trusted marker there.
+        self.assertEqual(
+            config.count('if ($http_x_govbiz_langfuse_access != "") { return 403; }'), 2,
+        )
+        self.assertIn('if ($govbiz_langfuse_uri = "") { return 400; }',
+                      self.resource("ConfigMap")["data"]["langfuse.conf.template"])
+
+    def test_optional_langfuse_configuration_defaults_closed_and_rejects_invalid_secret(self):
+        container = self.resource("Deployment")["spec"]["template"]["spec"]["containers"][0]
+        value = next(env for env in container["env"] if env["name"] == "GOVBIZ_LANGFUSE_PROXY_SECRET")
+        self.assertEqual(value["valueFrom"]["secretKeyRef"], {
+            "name": "langfuse-dashboard-proxy", "key": "origin-secret", "optional": True,
+        })
+        script = self.resource("ConfigMap")["data"]["start.sh"]
+        self.assertIn('${GOVBIZ_LANGFUSE_PROXY_SECRET:-}', script)
+        self.assertIn("location = /_langfuse { return 403; }", script)
+        self.assertIn("location ^~ /_langfuse/ { return 403; }", script)
+        for secret in ("a" * 63, "A" * 64, '\";malicious' + "a" * 53):
+            with self.subTest(length=len(secret)):
+                result = subprocess.run(
+                    ["sh", str(GATEWAY / "start.sh")],
+                    env={**os.environ, "GOVBIZ_PROXY_SECRET": "a" * 64,
+                         "GOVBIZ_ARGO_PROXY_SECRET": "", "GOVBIZ_LANGFUSE_PROXY_SECRET": secret},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("GOVBIZ_LANGFUSE_PROXY_SECRET must be 64 lowercase hexadecimal", result.stderr)
                 self.assertEqual(result.stdout, "")
 
     def test_cloudfront_keeps_auth_requests_uncached_without_origin_retries(self):
@@ -337,6 +419,121 @@ class CloudFrontArgoAccessTests(unittest.TestCase):
             expected = event["request"]
             expected["headers"]["x-govbiz-argo-access"] = {"value": "allowed"}
             expected["headers"]["x-govbiz-argo-host"] = {"value": "example.cloudfront.net"}
+            self.assertEqual(request, expected)
+
+
+class CloudFrontLangfuseAccessTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.template = yaml.load(
+            (ROOT / "infrastructure/eks/langfuse-cloudfront.yaml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+
+    def test_dedicated_distribution_reuses_private_origin_and_requires_its_own_secret(self):
+        parameters = self.template["Parameters"]
+        ip = parameters["LangfuseAllowedIpv4"]
+        secret = parameters["LangfuseOriginSecret"]
+        self.assertEqual(ip["Default"], "")
+        self.assertNotIn("Default", secret)
+        self.assertEqual(secret["NoEcho"], "true")
+        for value in ("", "203.0.113.9", "255.255.255.255"):
+            self.assertIsNotNone(re.fullmatch(ip["AllowedPattern"], value))
+        for value in ("203.0.113.9/32", "256.0.0.1", "::1", "'malicious"):
+            self.assertIsNone(re.fullmatch(ip["AllowedPattern"], value))
+        self.assertIsNotNone(re.fullmatch(secret["AllowedPattern"], "a" * 64))
+        for value in ("", "a" * 63, "A" * 64, "'" + "a" * 63):
+            self.assertIsNone(re.fullmatch(secret["AllowedPattern"], value))
+        resources = self.template["Resources"]
+        self.assertEqual(
+            {row["Type"] for row in resources.values()},
+            {"AWS::CloudFront::Distribution", "AWS::CloudFront::Function"},
+        )
+        config = resources["LangfuseDistribution"]["Properties"]["DistributionConfig"]
+        self.assertEqual(config["ViewerCertificate"], {"CloudFrontDefaultCertificate": "true"})
+        self.assertEqual(config["IPV6Enabled"], "false")
+        self.assertNotIn("Logging", config)
+        self.assertEqual(len(config["Origins"]), 1)
+        origin = config["Origins"][0]
+        self.assertEqual(origin["DomainName"], "AlbDnsName")
+        self.assertEqual(origin["OriginPath"], "/_langfuse")
+        self.assertEqual(origin["VpcOriginConfig"]["VpcOriginId"], "VpcOriginId")
+        self.assertEqual(origin["ConnectionAttempts"], "1")
+        self.assertNotIn("CustomOriginConfig", origin)
+        self.assertEqual(origin["OriginCustomHeaders"], [{
+            "HeaderName": "x-govbiz-langfuse-origin", "HeaderValue": "LangfuseOriginSecret",
+        }])
+        function = resources["LangfuseViewerAccess"]["Properties"]["FunctionCode"]
+        self.assertNotIn("LangfuseOriginSecret", function)
+        self.assertNotIn("LangfuseOriginSecret", str(self.template["Outputs"]))
+
+    def test_all_paths_require_https_and_uncached_authenticated_requests(self):
+        config = self.template["Resources"]["LangfuseDistribution"]["Properties"]["DistributionConfig"]
+        self.assertNotIn("CacheBehaviors", config)
+        behavior = config["DefaultCacheBehavior"]
+        self.assertEqual(behavior["TargetOriginId"], "langfuse")
+        self.assertEqual(behavior["ViewerProtocolPolicy"], "https-only")
+        self.assertEqual(behavior["CachePolicyId"], "4135ea2d-6df8-44a3-9df3-4b5a84be39ad")
+        self.assertEqual(behavior["OriginRequestPolicyId"], "b689b0a8-53d0-40ab-baf2-68738e2966ac")
+        self.assertEqual(set(behavior["AllowedMethods"]), {"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"})
+        self.assertEqual(behavior["FunctionAssociations"], [{
+            "EventType": "viewer-request", "FunctionARN": "LangfuseViewerAccess.FunctionARN",
+        }])
+        self.assertEqual(
+            {error["ErrorCode"] for error in config["CustomErrorResponses"]},
+            {"400", "403", "404", "405", "414", "416", "500", "501", "502", "503", "504"},
+        )
+        for error in config["CustomErrorResponses"]:
+            self.assertEqual(error["ErrorCachingMinTTL"], "0")
+            self.assertNotIn("ResponseCode", error)
+
+    def run_access_function(self, configured_ip, viewer_ip):
+        properties = self.template["Resources"]["LangfuseViewerAccess"]["Properties"]
+        self.assertEqual(properties["FunctionConfig"]["Runtime"], "cloudfront-js-2.0")
+        self.assertEqual(properties["AutoPublish"], "true")
+        function = properties["FunctionCode"].replace("${LangfuseAllowedIpv4}", configured_ip)
+        events = [{
+            "viewer": {"ip": viewer_ip},
+            "request": {
+                "method": "POST", "uri": uri,
+                "querystring": {"callbackUrl": {"value": "/project/production/traces"}},
+                "cookies": {"session": {"value": "existing-session"}},
+                "headers": {
+                    "host": {"value": "example.cloudfront.net"},
+                    "x-govbiz-langfuse-access": {"value": "allowed", "multiValue": [{"value": "allowed"}]},
+                    "x-govbiz-langfuse-host": {"value": "attacker.invalid"},
+                    "x-govbiz-langfuse-origin": {"value": "viewer-controlled"},
+                    "x-forwarded-for": {"value": "203.0.113.9"},
+                    "x-forwarded-host": {"value": "attacker.invalid"},
+                    "authorization": {"value": "existing-session"},
+                    "origin": {"value": "https://example.cloudfront.net"},
+                },
+            },
+        } for uri in ("/", "/auth/sign-in", "/api/auth/callback/credentials", "/_next/static/app.js", "/project/production/traces", "/api/../auth/sign-in", "/%61pi/auth/session")]
+        result = subprocess.run(
+            ["node", "-e", function + "\nconst events = " + json.dumps(events)
+             + "; process.stdout.write(JSON.stringify(events.map(handler)));"],
+            check=True, text=True, capture_output=True,
+        )
+        return events, json.loads(result.stdout)
+
+    def test_disallowed_or_disabled_ip_is_denied_before_any_origin_request(self):
+        for allowed_ip, actual_ip in (("203.0.113.9", "198.51.100.4"), ("", "203.0.113.9"), ("203.0.113.9", "::ffff:203.0.113.9")):
+            with self.subTest(configured=allowed_ip, viewer=actual_ip):
+                _, responses = self.run_access_function(allowed_ip, actual_ip)
+                for response in responses:
+                    self.assertEqual(response, {
+                        "statusCode": 403, "statusDescription": "Forbidden",
+                        "headers": {"cache-control": {"value": "no-store"}},
+                    })
+
+    def test_allowed_ip_replaces_spoofed_headers_without_changing_login_or_trace_requests(self):
+        events, requests = self.run_access_function("203.0.113.9", "203.0.113.9")
+        for event, request in zip(events, requests, strict=True):
+            expected = event["request"]
+            expected["headers"]["x-govbiz-langfuse-access"] = {"value": "allowed"}
+            expected["headers"]["x-govbiz-langfuse-host"] = {"value": "example.cloudfront.net"}
+            expected["headers"].pop("x-govbiz-langfuse-origin")
             self.assertEqual(request, expected)
 
 

@@ -22,6 +22,12 @@ http {
         default core-service.govbiz-msa.svc.cluster.local:8080;
         ~^/api/v1/ops(?:/|$) ops-service.govbiz-msa.svc.cluster.local:8000;
     }
+    # Keep escapes and query parameters intact; only the private origin prefix
+    # is removed before forwarding to Langfuse's root application.
+    map $request_uri $govbiz_langfuse_uri {
+        default "";
+        ~^/_langfuse(?<govbiz_langfuse_path>/.*)$ $govbiz_langfuse_path;
+    }
     # Nginx's async resolver does not apply resolv.conf search domains. Use full
     # Service DNS names and re-resolve after recreation; no fixed Pod IPs.
     resolver ${GOVBIZ_DNS_RESOLVER} valid=10s ipv6=off;
@@ -39,7 +45,9 @@ http {
         location = /healthz { access_log off; return 200 '{"status":"ok"}'; }
         location = /api { return 404; }
         include /tmp/argocd.conf;
+        include /tmp/langfuse.conf;
         location /api/ {
+            if ($http_x_govbiz_langfuse_access != "") { return 403; }
             if ($govbiz_proxy_allowed = 0) { return 403; }
             if ($http_x_govbiz_client_ip = "") { return 400; }
             proxy_pass http://$govbiz_upstream$request_uri;
@@ -69,13 +77,14 @@ http {
             proxy_hide_header Vercel-CDN-Cache-Control;
             proxy_hide_header Expires;
             location ~ ^/api/v1/application-preparations/[0-9]+/documents$ {
+                if ($http_x_govbiz_langfuse_access != "") { return 403; }
                 if ($govbiz_proxy_allowed = 0) { return 403; }
                 if ($http_x_govbiz_client_ip = "") { return 400; }
                 proxy_pass http://$govbiz_upstream$request_uri;
                 proxy_read_timeout 600s;
             }
         }
-        # No SPA fallback, internal APIs, DB, Langfuse or Prefect exposure.
+        # No SPA fallback, internal APIs, DB or Prefect exposure.
         location / { return 404; }
     }
 }
