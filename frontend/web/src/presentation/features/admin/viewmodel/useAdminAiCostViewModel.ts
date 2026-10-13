@@ -108,7 +108,7 @@ export function useAdminAiCostViewModel(useCases: Partial<UseCases> = {}, now: (
   const [period, setPeriod] = useState(initial)
   const [formError, setFormError] = useState<string | null>(null)
   const [version, setVersion] = useState(0)
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'failed' | 'forbidden'>('loading')
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'failed' | 'forbidden' | 'signed-out'>('loading')
   const [summary, setSummary] = useState<AdminAiCostSummary | null>(null)
   const [prices, setPrices] = useState<AdminAiModelPrice[]>([])
   const [notice, setNotice] = useState<string | null>(null)
@@ -137,6 +137,7 @@ export function useAdminAiCostViewModel(useCases: Partial<UseCases> = {}, now: (
       if (controller.signal.aborted) return
       const access = adminAccessFailure(error)
       if (access === 'signed-out') {
+        setPhase('signed-out')
         dispatch(signedOut())
         return
       }
@@ -173,6 +174,7 @@ export function useAdminAiCostViewModel(useCases: Partial<UseCases> = {}, now: (
     } catch (error) {
       if (!isMounted.current) return
       if (adminAccessFailure(error) === 'signed-out') {
+        setPhase('signed-out')
         dispatch(signedOut())
         return
       }
@@ -213,6 +215,7 @@ export function useAdminAiCostViewModel(useCases: Partial<UseCases> = {}, now: (
     } catch (error) {
       if (!isMounted.current) return
       if (adminAccessFailure(error) === 'signed-out') {
+        setPhase('signed-out')
         dispatch(signedOut())
         return
       }
