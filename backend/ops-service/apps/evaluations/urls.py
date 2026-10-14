@@ -31,6 +31,7 @@ urlpatterns = [
         "api/v1/ops/dashboard/runs/<uuid:run_id>/review-status", dashboard_reviews.api_review_status
     ),
     path("api/v1/ops/schedules", schedule_views.api_schedules),
+    path("api/v1/ops/schedules/settings", schedule_views.api_schedule_settings),
     path("api/v1/ops/schedules/<uuid:schedule_id>/pause", schedule_views.api_pause_schedule),
     path("api/v1/ops/budget", budget_admin_views.api_summary),
     path("api/v1/ops/budget/limits", budget_admin_views.api_change_limits),

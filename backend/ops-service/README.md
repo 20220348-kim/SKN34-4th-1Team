@@ -1169,8 +1169,9 @@ Migration `0007_baseline_versions`는 해제해도 남는 데이터셋 기준 �
 ## 실행 상태의 백그라운드 확인
 
 `python manage.py sync_evaluations --watch`는 화면 방문과 독립적으로 미완료 실행을 확인합니다.
-`LLMOPS_SCHEDULES_ENABLED=true`일 때만 아래의 승인된 정기 계획도 같은 루프에서 접수합니다.
-기본값 `false`에서는 기존 상태 동기화만 수행합니다.
+정기 접수 설정이 활성일 때 아래의 승인된 정기 계획도 같은 루프에서 처리합니다.
+관리자 설정을 처음 저장하기 전에는 `LLMOPS_SCHEDULES_ENABLED`(기본 `false`)를 사용하며,
+저장 후에는 DB 정책을 API와 `ops-sync`가 함께 읽습니다. 비활성에서는 기존 상태 동기화만 수행합니다.
 기본 대기 간격은 10초, 배치 크기는 25건이며 `--interval`(2~300초), `--batch-size`(1~100)로 조절합니다.
 옵션 없이 실행하면 한 배치만 처리합니다. LLMOps Compose의 `ops-sync`가 같은 Django 이미지 구성으로 실행합니다.
 단독 Ops/루트 Compose에는 Prefect가 없으므로 자동 실행하지 않습니다. 별도 실행 시 DB·Prefect·결과 경로를 동일하게 지정합니다.
@@ -1180,9 +1181,35 @@ Kubernetes는 연결 설정을 갖춘 뒤 `opsSync.enabled=true`를 선택하면
 
 ### 종료일이 있는 일별 정기 평가
 
-React `/ops/evaluations`의 **정기 평가 계획**에서 기존 Core 관리자 세션으로 등록·조회·중지합니다.
+React `/ops/schedules`의 **정기 평가 계획**에서 기존 Core 관리자 세션으로 등록·조회·중지합니다.
 흐름은 `React 승인 → Django 계획 저장 → ops-sync 시각 확인 → 기존 submit_run의 검토·명세·예산 검사
 → Prefect → 평가 실행기 → 결과/점수 → Ops 상태 동기화`입니다. 추가 실행 서비스는 없습니다.
+
+정기 접수가 비활성화되어 있어도 자료·모델·비교 기준·서울 실행 시각·시작일·종료일·사유를 화면에서
+확인하고 입력할 수 있습니다. 입력만으로 계획을 저장하거나 유료 실행을 활성화하지 않습니다.
+선택 자료의 `GET /api/v1/ops/evaluations/live-readiness`로 한 번 실행에 필요한 최대 예약량과
+누적 잔여량·일별 한도·당일 잔여량을 비교하고 부족한 호출·입력·출력 토큰을 표시합니다.
+비교 기준 누락, 정기 접수 비활성, 일별 한도 미설정 또는 점검 중·실패 상태에서는 신규 승인을 차단합니다.
+자료·실행 설정·비교 기준이 바뀌면 이전 점검 결과를 사용하지 않습니다. 이미 전송한 요청의 응답이
+유실된 경우에는 같은 UUID와 승인 내용을 유지해 접수 여부를 재확인합니다.
+
+**정기 실행 활성화 설정**에서는 상태 선택 → 사유 입력 → 최종 확인으로 신규 정기 접수를
+허용하거나 중지합니다. 자료 목록 조회가 실패해도 이 설정은 별도로 사용할 수 있습니다.
+흐름은 `React → Core 관리자 인증·CSRF → Django 설정·변경 이력 저장 → ops-sync의 DB 설정 확인`입니다.
+`0030_schedule_settings` migration을 API·sync 갱신 전에 적용해야 합니다. 정책·이력 테이블만
+추가하며 기존 계획·사용량·서버 실행 허용 설정을 변경하지 않습니다.
+
+- `GET /api/v1/ops/schedules/settings`: 유효 상태·revision·출처·서버의 live/RAG 허용 여부·최근 변경 20건을 반환하며 DB 행을 만들지 않습니다.
+- `POST /api/v1/ops/schedules/settings`: `request_id`, `expected_revision`, `enabled`, 1~500자 `reason`을 받습니다.
+  기존 Core 관리자 세션·CSRF가 필요하며 변경자·이전/새 상태·사유·시각을 함께 저장합니다.
+  오래된 버전 또는 동일 UUID의 다른 내용·변경자는 `409`로 거절합니다. 같은 요청 재전송은
+  원래 변경 이력과 현재 상태를 반환하며 이후 설정을 되돌리지 않습니다.
+- 비활성 저장과 신규 정기 접수는 같은 정책 행 잠금으로 직렬화합니다. 저장 전에 접수된 실행은
+  계속 진행하며 취소하려면 실행 상세에서 별도로 요청합니다. 개별 계획의 중지 상태는 바꾸지 않습니다.
+- 다시 활성화하면 아직 유효한 기존 승인 계획은 다음 확인부터 도래한 일정의 접수를 재개할 수 있습니다.
+  지난 날짜를 몰아서 실행하지 않으며 그날 이미 차단된 기록은 자동 재시도하지 않습니다.
+- 이 설정은 `LLMOPS_LIVE_ENABLED`, `LLMOPS_RAG_LIVE_ENABLED`, 모델 키·예산·계획을 변경하지 않습니다.
+  서버에서 유료 실행을 차단한 상태에서는 정기 접수를 활성화해도 실제 모델 호출은 차단됩니다.
 
 - `GET /api/v1/ops/schedules?page=1`: 25개씩 조회하며 각 계획의 최대 31개 날짜 기록과 실행 링크를 반환합니다.
 - `POST /api/v1/ops/schedules`: 요청 UUID, 자료, 검토 기준 ID·버전, live 설정·profile 해시,
@@ -1196,7 +1223,7 @@ React `/ops/evaluations`의 **정기 평가 계획**에서 기존 Core 관리자
   이미 접수된 실행은 별도로 취소합니다. 중지한 계획은 재개하지 않으며 변경 조건은 새 계획으로 승인합니다.
   자료별 미중지 계획은 DB에서 한 개로 제한하므로 기간이 끝난 계획도 중지 후 교체합니다.
 
-전제는 `LLMOPS_SCHEDULES_ENABLED`, `LLMOPS_LIVE_ENABLED`와 RAG인 경우 `LLMOPS_RAG_LIVE_ENABLED`,
+전제는 활성인 정기 접수 DB 정책(미저장 시 `LLMOPS_SCHEDULES_ENABLED`), `LLMOPS_LIVE_ENABLED`와 RAG인 경우 `LLMOPS_RAG_LIVE_ENABLED`,
 사람 검토·품질 판정을 통과한 현재 기준, 유효한 누적 입력 한도와 일별 한도입니다. 등록 시 현재 한도로
 한 번의 최대 호출량을 수용할 수 있는지 확인하고, 각 날짜 접수에서도 다시 검사·예약합니다.
 계획 전체 금액이나 기간 전체 토큰을 선결제·예약하는 기능이 아닙니다. 화면은 기간 전체 최대 호출·토큰도 표시합니다.
@@ -1331,6 +1358,11 @@ uv run --locked python manage.py runserver 127.0.0.1:8001
 실패 시 503을 반환하며, 미인증·비관리자·Core 장애의 접근 제한은 기존 Ops API와 같습니다.
 Kubernetes liveness/readiness와 분리되어 있으며, 결과에는 검사 범위와 미검증 항목을 명시합니다.
 
+React `/ops/schedules`의 **연결 설정 점검** 버튼은 이 GET API를 호출해 평가 자료·결과 저장소·
+Prefect 등록 상태를 표시합니다. 정상 진단 응답의 `503 / FAIL`도 항목별로 보여주며, 인증 오류나
+잘못된 응답을 진단 성공으로 처리하지 않습니다. 이 버튼은 모델 호출·예산 예약·계획 등록을 하지 않습니다.
+실행기와 `ops-sync`의 실제 가동, 모델 API 키 유효성, 새 평가 완료는 별도 검증 대상입니다.
+
 `python manage.py check_evaluation_runtime [--run-id <UUID>]`로 같은 진단을 실행할 수 있습니다.
 진단은 평가를 시작하거나 디렉터리를 생성하지 않습니다. `status: PASS`를 실행기 생존·공유 volume·
 새 평가 성공으로 해석하지 않습니다. [Compose 연결 계약과 진단 응답](../../infrastructure/gitops/docs/ops-runtime.md)을 참고하세요.
@@ -1342,6 +1374,7 @@ Kubernetes liveness/readiness와 분리되어 있으며, 결과에는 검사 범
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
 | `GET /api/v1/health/ready` | `200`, `database: UP, schema: UP` | DB 실패는 `database: DOWN`, 미적용 migration·이력 불일치·실제 테이블/컬럼 누락은 `schema: DOWN`으로 `503`; 내부 정보 비노출 |
 | `GET /api/v1/ops/runtime` | `200`, 설정 검사 PASS와 검증 범위 | 구성·자료·Prefect·선택한 결과 검증 실패 `503`; 잘못된 run_id `400`; 관리자 인증 필수 |
+| `GET/POST /api/v1/ops/schedules/settings` | `200`, 정기 접수 정책·변경 이력 (POST는 해당 요청의 변경 이력 포함) | 입력 오류 `400`, 미인증·비관리자·CSRF `401/403`, 버전·UUID 충돌 `409`; 유료 실행 허용은 변경하지 않음 |
 | `GET /api/v1/ops/evaluations/live-readiness` | `200`, 선택 자료의 최대 예약량·잔여 한도·차단/주의 사유 | `dataset_id`, `execution_profile` 필수; 입력 오류 `400`, 미인증 `401`, 비관리자 `403`, 설정 변경 `409`, 계획 확인 실패 `503`; 조회만 수행 |
 | `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 실행 허용 여부, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
 | `GET /api/v1/ops/evaluation-catalog` | 평가 자료·실행 명세·비교 기준 목록 | 인증·권한 오류 `401/403`, 자료·벡터 저장소 장애 `503` |

@@ -60,6 +60,7 @@ beforeEach(() => {
     if (path.endsWith('/api/v1/admin/ai-costs/prices')) return json([])
     if (path === '/api/v1/ops/dashboard') return json({ as_of: '2026-10-07T00:00:00Z', configured_model: 'gpt-6-luna', window: { limit: 200, loaded: 0, total: 0, truncated: false }, states: { completed: 0, failed: 0, active: 0, cancelled: 0 }, excluded: { replay: 0, incomplete: 0, unverifiable: 0, duplicate: 0 }, series: [] })
     if (path.startsWith('/api/v1/ops/schedules?')) return json({ enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
+    if (path === '/api/v1/ops/schedules/settings') return json({ enabled: false, revision: 0, source: 'environment', live_enabled: false, rag_live_enabled: false, changes: [] })
     if (path.startsWith('/api/v1/ops/budget/reservations')) return json({
       as_of: '2026-09-29T00:00:00Z', count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null,
@@ -146,11 +147,44 @@ describe('운영 세션과 평가 자료 조회 분리', () => {
       : original(path, options))
     open('/ops/schedules')
     expect(await screen.findByText(/평가 자료를 불러오지 못했습니다/)).toBeTruthy()
+    expect(await screen.findByRole('combobox', { name: '변경할 정기 접수 상태' })).toBeTruthy()
     expect(fetchMock.mock.calls.some(([path]) => path.startsWith('/api/v1/ops/schedules?'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: '평가 자료 다시 불러오기' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path.startsWith('/api/v1/ops/schedules?'))).toBe(true))
     expect(catalogs).toBe(2)
     expect(screen.queryByRole('button', { name: '평가 자료 다시 불러오기' })).toBeNull()
+  })
+
+  it('관리자 정기 접수 설정 저장 후 계획 상태를 갱신하며 유료 평가를 켜지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let enabled = false
+    const changes: Array<{ request_id: string; revision: number; enabled: boolean; previous_enabled: boolean; actor: string; reason: string; created_at: string }> = []
+    const settings = () => ({ enabled, revision: changes.length, source: changes.length ? 'admin' : 'environment', live_enabled: false, rag_live_enabled: false, changes })
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === '/api/v1/ops/schedules/settings') {
+        if (options?.method !== 'POST') return json(settings())
+        const input = JSON.parse(options.body as string)
+        const change = { request_id: input.request_id, revision: 1, enabled: input.enabled, previous_enabled: enabled, actor: 'core:99', reason: input.reason, created_at: '2026-10-14T00:00:00Z' }
+        enabled = input.enabled; changes.push(change)
+        return json({ ...settings(), change })
+      }
+      if (path.startsWith('/api/v1/ops/schedules?')) return json({ enabled, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
+      return original(path, options)
+    })
+    open('/ops/schedules')
+    await screen.findByText(/정기 접수: 비활성화/)
+    fireEvent.change(await screen.findByRole('combobox', { name: '변경할 정기 접수 상태' }), { target: { value: 'enabled' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '정기 접수 변경 사유' }), { target: { value: '실제 유료 평가 허용과 분리한 정기 접수 설정' } })
+    fireEvent.click(screen.getByRole('button', { name: '정기 접수 변경 내용 확인' }))
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '확인한 정기 접수 설정 저장' }))
+    expect(await screen.findByText('정기 접수: 활성화')).toBeTruthy()
+    expect(screen.getAllByText('서버에서 차단됨')).toHaveLength(2)
+    const posts = fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')
+    expect(posts).toHaveLength(1)
+    expect(posts[0][0]).toBe('/api/v1/ops/schedules/settings')
+    expect(JSON.parse(posts[0][1]!.body as string)).toEqual({ request_id: id, expected_revision: 0, enabled: true, reason: '실제 유료 평가 허용과 분리한 정기 접수 설정' })
+    expect(fetchMock.mock.calls.filter(([path]) => path.startsWith('/api/v1/ops/schedules?')).length).toBeGreaterThan(1)
   })
 })
 

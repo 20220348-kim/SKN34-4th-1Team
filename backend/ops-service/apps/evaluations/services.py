@@ -199,6 +199,13 @@ def submit_run(
                 raise ValueError("실행 명세가 변경되었습니다. 새로고침 후 다시 확인하세요.")
             # Acquire only after reference/artifact checks. Pause must not wait
             # for their HTTP reads; committing a new row still holds this lock.
+            if occurrence is not None:
+                from .schedule_settings import lock_settings
+                from .schedules import require_enabled
+
+                # 관리자 비활성화와 새 정기 접수를 같은 잠금으로 직렬화한다.
+                # 이미 커밋된 실행의 재전송·종료는 이 정책으로 취소하지 않는다.
+                require_enabled(dataset_id, locked_policy=lock_settings())
             require_open(lock_admission())
             if occurrence is not None:
                 from .schedules import (

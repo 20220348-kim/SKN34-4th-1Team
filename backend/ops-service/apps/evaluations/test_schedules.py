@@ -497,11 +497,12 @@ class ScheduleTests(ScheduleFixture, TestCase):
 
 @override_settings(LLMOPS_SCHEDULES_ENABLED=False)
 class ScheduleWorkerTests(SimpleTestCase):
-    def test_worker_default_off_does_not_touch_schedule_tables(self):
+    def test_worker_disabled_policy_skips_schedule_processing(self):
         # Worker는 연결을 정리하므로 TestCase의 열린 transaction 안에서 실행하지 않는다.
-        # 다른 작업만 격리하고 실제 schedule 분기의 모든 DB 접근은 SimpleTestCase가 막는다.
+        # 정책 조회와 다른 작업을 격리한다. 비활성일 때 일정·발생 행 접근은 허용하지 않는다.
         prefix = "apps.evaluations.management.commands.sync_evaluations."
         with (
+            patch("apps.evaluations.schedules.enabled", return_value=False) as policy,
             patch(prefix + "prune_expired_samples", return_value=0) as prune,
             patch(prefix + "process_pending_samples", return_value=0) as process,
             patch(prefix + "sync_pending_runs", return_value=0) as sync,
@@ -510,6 +511,7 @@ class ScheduleWorkerTests(SimpleTestCase):
         prune.assert_called_once_with()
         process.assert_called_once_with(batch_size=25)
         sync.assert_called_once_with(batch_size=25, interval_seconds=10)
+        policy.assert_called_once_with()
 
 
 @override_settings(

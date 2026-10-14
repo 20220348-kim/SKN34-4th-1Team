@@ -2,7 +2,7 @@
 // Real Vite and an isolated browser consume captured restore responses.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { getEvaluationCatalog, getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules, getRagReviews, getRagMaterial } from '../../../frontend/web/src/data/ops/opsApi.ts'
+import { getEvaluationCatalog, getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules, getScheduleSettings, getLiveReadiness, getRagReviews, getRagMaterial } from '../../../frontend/web/src/data/ops/opsApi.ts'
 
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
@@ -22,6 +22,16 @@ try {
     assert.ok(catalog.datasets.length > 0)
     stage = 'SCHEDULES'
     assert.equal((await getEvaluationSchedules()).enabled, false)
+    const scheduleSettings = await getScheduleSettings()
+    assert.equal(scheduleSettings.enabled, false)
+    assert.equal(scheduleSettings.live_enabled, false)
+    assert.equal(scheduleSettings.rag_live_enabled, false)
+    const selected = catalog.datasets.find((item) => item.live_config && item.execution_profiles.live)
+    if (selected) {
+      const readiness = await getLiveReadiness(selected.id, selected.execution_profiles.live, undefined, selected.live_config.model)
+      assert.equal(readiness.state, 'blocked')
+      assert.ok(readiness.blockers.some((item) => item.code === 'LIVE_DISABLED'))
+    }
     const runs = new Map()
     stage = 'LIST'
     for (let page = 1; page <= Math.ceil(totalRuns / 25); page++) {

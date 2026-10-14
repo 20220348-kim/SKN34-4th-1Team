@@ -666,7 +666,7 @@ class BrowserTransportTests(unittest.TestCase):
     principal: ClassVar = {"email": "admin@example.invalid"}
     route = "/api/v1/ops/evaluations?page=1"
 
-    def run_transport(self, requests, reply=None):
+    def run_transport(self, requests, reply=None, routes=None):
         if reply is None:
             reply = (200, Message(), b"{}")
         output = io.StringIO()
@@ -679,7 +679,9 @@ class BrowserTransportTests(unittest.TestCase):
             patch.object(sys, "stdout", output),
             patch.object(probe, "response", return_value=reply) as request,
         ):
-            probe.browser_requests(self.principal, {self.route})
+            probe.browser_requests(
+                self.principal, {self.route} if routes is None else routes
+            )
         return request, [json.loads(line) for line in output.getvalue().splitlines()]
 
     def test_forwards_actual_status_bytes_cookie_and_origin(self):
@@ -737,6 +739,28 @@ class BrowserTransportTests(unittest.TestCase):
             request.call_args.kwargs["headers"],
             {"Host": "127.0.0.1:5173", "Cookie": "govbiz_session=revoked"},
         )
+
+    def test_schedule_settings_whitelist_allows_only_reading(self):
+        route = "/api/v1/ops/schedules/settings"
+        read = {
+            "port": 8000,
+            "method": "GET",
+            "path": route,
+            "cookie": "govbiz_session=fixture",
+            "origin": None,
+            "payload": None,
+        }
+        request, _ = self.run_transport(
+            [read, {"phase": "browser_done"}], routes={route}
+        )
+        self.assertEqual(request.call_args.args, (route,))
+        self.assertEqual(request.call_args.kwargs["method"], "GET")
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            with (
+                self.subTest(method=method),
+                self.assertRaisesRegex(ValueError, "forbidden"),
+            ):
+                self.run_transport([{**read, "method": method}], routes={route})
 
     def test_external_routes_writes_headers_and_incomplete_transport_are_rejected(self):
         valid = {
