@@ -9,7 +9,7 @@
 
 ## 운영 배포 프로세스 — 2026-10-13
 
-메인 README 5.2.5의 두 가로 흐름도입니다. 기존 아키텍처 그림의 색상·카드 스타일을 유지하고
+메인 README 5.2.6의 두 가로 흐름도입니다. 기존 아키텍처 그림의 색상·카드 스타일을 유지하고
 단계별 도구에 공식 아이콘을 배치했습니다. 화살표는 HTTP 통신이 아닌 배포 진행 순서입니다.
 
 | 그림 | 파일 | 읽는 순서 |
@@ -36,9 +36,26 @@ node docs/assets/architecture/build-deployment.mjs --render
 `--render`는 아래 Kubernetes 그림과 같은 Playwright·Chromium 및 `GOVBIZ_DIAGRAM_*` 설정을 사용합니다.
 변경 후 PNG·SVG를 함께 생성하고 메인 README의 `?v=`를 각 파일 SHA-256 앞 12자리로 갱신합니다.
 
+## Kubernetes 적용 아키텍처
+
+메인 README 5.2.4의 [이미지](govbiz-kubernetes-application.png)는 발표자료 15페이지의 그림 영역을 추출한 것입니다.
+application·observability EC2의 실제 Pod 배치와 Service를 통한 요청 경로를 함께 표시합니다.
+초록은 업무 요청 전달, 파랑은 Core의 내부 호출, 보라는 Ops의 평가·결과 조회, 주황은 Nginx의 관리 화면 접속입니다.
+Ops Pod에는 API와 상태 동기화 컨테이너가 함께 있으며, Service 표시 위치는 실행 서버를 뜻하지 않습니다.
+
+발표자료를 갱신하면 저장소 루트에서 Poppler로 그림 영역을 다시 추출합니다. PDF 파일 자체는 변경하지 않습니다.
+
+```sh
+pdftoppm -f 15 -l 15 -r 192 -x 88 -y 438 -W 2384 -H 926 -singlefile -png \
+  output/pdf/GovBiz_4차프로젝트_발표자료_24장_main_c09b97ac.pdf \
+  docs/assets/architecture/govbiz-kubernetes-application
+```
+
+PNG는 2,384×926px이며, 메인 README의 `?v=`에는 파일 SHA-256 앞 12자리를 사용합니다.
+
 ## Kubernetes 내부 리소스 구조 — 2026-10-13
 
-메인 README 5.2.4의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과
+메인 README 5.2.5의 세 그림입니다. 긴 Mermaid 연결도를 공식 Kubernetes 아이콘과
 고정된 행 배치로 바꾸고, 관리·요청·저장소 관계를 분리했습니다.
 현재 EKS 설정의 HPA·Cluster Autoscaler·노드 배치와 Argo CD Core·상시 대시보드 구성을 반영하며 로컬 web은 별도로 표시합니다.
 
