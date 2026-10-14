@@ -7,9 +7,9 @@
 현재 저장소의 운영 설정을 표시하고 실제 배포·자동 축소 관찰 결과는 아래 기록과 구분합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=27631e4266f5)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=5f371df5397a)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=27631e4266f5) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=bc65fcd202fd) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=5f371df5397a) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=ef7f947d2d6e) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
@@ -104,15 +104,19 @@ Kubernetes API는 AWS 관리형 제어면이며 observability EC2의 Pod가 아�
 외부 API 제공자는 AWS·VPC·EKS 경계 밖에 표시합니다. 요청은 아래와 같이 Pod에서 시작합니다.
 이 경로는 Vercel을 API origin으로 사용하는 웹·모바일의 CloudFront·ALB 진입 경로와 별개입니다.
 
-보라색 화살표는 외부 API 요청입니다. 영역 왼쪽의 Catalog·AI와 가운데의 NAT·Internet Gateway는
+보라색 화살표는 **Private Subnet의 Catalog·AI Pod → Public Subnet의 NAT Gateway → VPC 경계의
+Internet Gateway → VPC 밖 API** 요청 경로입니다. 영역 왼쪽의 Catalog·AI와 가운데의 NAT·Internet Gateway는
 위 VPC에 있는 구성의 요청 경로를 다시 표시한 것입니다. 두 호출은 같은 NAT Gateway를 사용합니다.
+여기서 Private Subnet의 Pod는 해당 서브넷의 워커 노드에서 실행하는 Pod이며, 별도의 Pod 종류를 뜻하지 않습니다.
 
 | 호출 주체 → 외부 대상 | 하는 일과 실행 조건 |
 |---|---|
 | **Catalog → 공고 제공처 API** | 기업마당·K-Startup·과학기술정보통신부(MSIT)·충남 수출지원(CNTRADE_NOTICE)의 공고를 수집합니다. 기본 주소는 `https://apis.data.go.kr`입니다. 제공처별 키와 수집 실행 설정이 필요하며, 그림의 선이 정기 수집 활성화를 뜻하지는 않습니다. |
 | **AI Service → OpenAI** | 답변 생성·추천·RAG·임베딩을 요청합니다. `OPENAI_API_KEY`와 모델 설정이 필요합니다. Catalog는 AI 내부 API로 색인을 요청하고, 실제 OpenAI 임베딩 호출은 AI Service가 담당합니다. |
 
-NAT Gateway는 public subnet에 있고, private 노드의 외부 요청을 Internet Gateway로 내보냅니다.
+NAT Gateway는 Public Subnet에 있으며, Internet Gateway는 특정 서브넷 내부가 아닌 VPC 경계에 연결됩니다.
+Public Subnet의 라우팅 테이블에는 Internet Gateway로 직접 나가는 경로가 있으므로, 인터넷 통신용 NAT Gateway를 이곳에 둡니다.
+허용된 외부 요청의 응답은 돌아오지만, 외부에서 이 NAT 경로로 Pod에 새 연결을 시작할 수는 없습니다.
 현재 클러스터 설정은 NAT Gateway 1개를 사용합니다. 외부 호출 대상과 키·정기 수집 활성화 상태는 배포 환경의 설정으로 정해집니다.
 
 평가 코드에는 live OpenAI 호출도 있지만 **현재 평가 Chart는 이를 비활성화**합니다.
@@ -141,7 +145,7 @@ Core의 Google·Kakao OAuth, Bizno 사업자 조회, SMTP 메일, 기업마당 �
 | EBS | 데이터 PVC 13개는 업무 7개·평가 2개·관측 4개입니다. 암호화 gp3와 `Retain`을 사용합니다. MySQL 3개는 EKS StatefulSet으로 유지하며 RDS로 전환한 구성이 아닙니다. |
 | ECR | 수동 이전 당시 실행 이미지 17개를 private ECR에 보존했습니다. 자동 배포 경로는 애플리케이션용 이미지 5개를 빌드하고 digest로 배포합니다. 두 범위를 구분합니다. |
 | S3 | 암호화한 이전 백업·메타데이터 84개를 비공개·버전 관리 버킷에 보관한 기록입니다. 상시 DB 백업이나 로컬↔AWS 자동 데이터 동기화 기능을 뜻하지 않습니다. |
-| 외부 호출 | private workload가 public subnet의 NAT Gateway와 Internet Gateway를 거쳐 OpenAI·공고 제공처 등 VPC 외부 API에 연결합니다. |
+| 외부 호출 | Private Subnet의 Pod가 Public Subnet의 NAT Gateway → VPC 경계의 Internet Gateway를 거쳐 OpenAI·공고 제공처 등 VPC 밖 API에 연결합니다. 요청에 대한 응답은 돌아오며, 외부에서 NAT를 통한 신규 연결은 시작할 수 없습니다. |
 
 ### 로드밸런싱과 자동확장의 역할
 

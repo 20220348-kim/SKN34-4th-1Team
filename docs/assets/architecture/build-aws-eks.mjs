@@ -358,9 +358,9 @@ parts.push('<g transform="translate(0 1100)">');
 // Egress is a route annotation; the named external APIs are not hosted in this VPC.
 card(115,2466,2770,78,'#FFFFFF','#CFDCE7',16);
 icon('nat',137,2483,38); icon('igw',976,2483,38);
-text(193,2516,'외부 요청: private workload → NAT Gateway 1개',{size:24,max:740});
-text(1030,2516,'→ Internet Gateway → 외부 API · 호출 주체·목적지는 아래 02 참고',{size:24,max:1490});
-text(2855,2516,'NAT는 public subnet',{size:20,fill:muted,anchor:'end',max:330});
+text(193,2516,'Private Subnet의 Pod → Public Subnet의 NAT',{size:24,max:740});
+text(1030,2516,'→ VPC 경계 Internet Gateway → 외부 API · 아래 02에서 확대',{size:24,max:1490});
+text(2855,2516,'응답은 기존 연결로 반환',{size:20,fill:muted,anchor:'end',max:330});
 
 // These managed AWS services support the cluster; no RDS replacement is assumed.
 const storage = [
@@ -400,29 +400,46 @@ text(173,2960,'Controller가 Ingress 설정을 읽어 내부 ALB 구성',{size:2
 text(1230,2929,'인프라: eksctl · CloudFormation · IAM / Pod Identity · EBS CSI',{size:23,max:1670});
 text(1230,2966,'워커 기본 2대·최대 3대는 동일 AZ · 평가 실행은 승인·예산 정책으로 제어',{size:22,fill:muted,max:1670});
 
-// Route detail outside the AWS boundary; callers and NAT/IGW remain in the VPC above.
-card(60,3040,2880,350,'#F8F6FC','#CEC4E2',26);
+// Enlarged egress route: private callers, one public NAT, VPC-attached IGW, then external APIs.
+card(60,3040,2880,392,'#F8F6FC','#CEC4E2',26);
 text(90,3084,'02   외부 API 연결 · 위 EKS 서비스의 호출 경로',{size:28,weight:700,fill:colors.external,max:1800});
-text(2905,3084,'호출 대상은 이 AWS VPC 밖',{size:24,fill:colors.external,anchor:'end',max:850});
+text(2905,3084,'두 서비스가 같은 NAT Gateway 1개 사용',{size:24,fill:colors.external,anchor:'end',max:850});
+card(90,3105,1960,229,'#F4F8FC','#B9D1E4',18);
+text(110,3131,'AWS VPC',{size:23,weight:700,max:600});
+card(112,3143,714,172,'#EDF6FF','#B9D1E4',14);
+text(130,3169,'Private Subnet · EKS 내부 Pod',{size:25,weight:700,max:678});
+card(917,3143,558,172,'#FFF5E6','#E8C68E',14);
+text(937,3169,'Public Subnet',{size:25,weight:700,fill:'#98631F',max:518});
+card(936,3184,520,118,'#FFFFFF','#E8C68E',14);
+icon('nat',954,3204,35);
+text(1010,3224,'NAT Gateway · 1개',{size:28,weight:700,max:424});
+text(954,3260,'Pod의 외부 요청·응답 중계',{size:23,fill:muted,max:482});
+text(1575,3169,'VPC 경계 · 서브넷 밖',{size:25,weight:700,max:450});
+card(1575,3184,450,118,'#FFFFFF','#CEC4E2',14);
+icon('igw',1592,3204,35);
+text(1646,3224,'Internet Gateway',{size:27,weight:700,max:361});
+text(1592,3260,'VPC에 연결된 인터넷 출입구',{size:23,fill:muted,max:416});
+card(2155,3105,750,229,'#F1F8FC','#C3DAE8',18);
+text(2175,3131,'외부 인터넷 · AWS VPC 밖',{size:25,weight:700,max:710});
 for (const [y,brand,caller,purpose,target,detail] of [
-  [3110,'springboot','Catalog · :8081','공고 수집·정규화','공식 공고 API','기업마당 · K-Startup · 과기정통부 · 충남 수출지원'],
-  [3235,'fastapi','AI Service · :8000','답변 생성·임베딩','OpenAI','Responses / Embeddings API'],
+  [3184,'springboot','Catalog Pod · :8081','공고 수집·정규화','공식 공고 API','기업마당 · K-Startup · 과기정통부 · 충남 수출지원'],
+  [3248,'fastapi','AI Service Pod · :8000','답변 생성·임베딩','OpenAI','Responses / Embeddings API'],
 ]) {
-  card(90,y,500,105);
-  icon(brand,112,y+19,38);
-  text(170,y+44,caller,{size:28,weight:700,max:398});
-  text(114,y+82,purpose,{size:24,fill:muted,max:452});
-  card(675,y,1000,105,'#FFFFFF','#CEC4E2',18);
-  text(700,y+44,'사설 Pod → NAT Gateway → Internet Gateway',{size:27,weight:600,max:950});
-  text(700,y+82,'NAT는 public subnet · 외부 HTTPS 요청',{size:24,fill:muted,max:950});
-  card(1755,y,1150,105,'#F1F8FC','#C3DAE8',18);
-  if (target==='OpenAI') icon('openai',1779,y+18,40);
-  text(target==='OpenAI'?1835:1779,y+44,`${target} · HTTPS`,{size:30,weight:700,max:1030});
-  text(1779,y+82,detail,{size:25,fill:muted,max:1102});
-  edge(`M590 ${y+52}H675`,'external');
-  edge(`M1675 ${y+52}H1755`,'external');
+  card(128,y,682,54,'#FFFFFF','#B9D1E4',10);
+  icon(brand,144,y+12,29);
+  text(185,y+24,caller,{size:25,weight:700,max:607});
+  text(185,y+46,purpose,{size:20,fill:muted,max:607});
+  card(2175,y,710,54,'#FFFFFF','#C3DAE8',10);
+  if (target==='OpenAI') icon('openai',2190,y+12,29);
+  text(target==='OpenAI'?2232:2190,y+24,`${target} · HTTPS`,{size:25,weight:700,max:638});
+  text(2190,y+46,detail,{size:20,fill:muted,max:680});
+  edge(`M810 ${y+27}H936`,'external');
+  edge(`M2025 3243H2090V${y+27}H2175`,'external');
 }
-text(90,3375,'API 키·제공처 활성화 설정 필요 · 평가 실행기의 외부 모델 호출은 현재 Chart에서 비활성 · 위 경로는 인바운드 ALB와 분리',{size:24,fill:muted,max:2800});
+edge('M1456 3243H1575','external');
+text(90,3365,'NAT를 Public Subnet에 두는 이유: Internet Gateway로 직접 나가는 경로가 있어야 인터넷과 통신할 수 있음',{size:23,weight:600,fill:colors.external,max:2800});
+text(90,3392,'Pod가 시작한 요청의 응답만 돌아옴 · 외부에서 NAT를 통해 Pod로 새 연결을 시작할 수 없음',{size:22,fill:muted,max:2800});
+text(90,3419,'API 키·제공처 활성화 설정 필요 · 평가 실행기의 외부 모델 호출은 현재 Chart에서 비활성 · 인바운드 ALB와 별도 경로',{size:21,fill:muted,max:2800});
 
 parts.push('<g transform="translate(0 400)">');
 card(60,3040,2880,466,'#FDF9F2','#E3D0AC',26);
