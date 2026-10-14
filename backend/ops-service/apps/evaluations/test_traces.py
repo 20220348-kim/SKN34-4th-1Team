@@ -58,6 +58,26 @@ def response_bytes(value):
     LANGFUSE_SECRET_KEY="sk-project-private",
 )
 class TraceClientTests(SimpleTestCase):
+    def setUp(self):
+        # 이 클래스는 기존 목록/상세 전송 계약을 검증한다. 집계와 실제 연결은
+        # test_trace_summaries에서 별도의 하위 응답으로 검증한다.
+        summary = patch(
+            "apps.evaluations.trace_client.read_call_summaries",
+            side_effect=lambda roots: {
+                item["id"]: {
+                    "models": [],
+                    "call_count": 0,
+                    "missing_model_count": 0,
+                    "recorded_cost": None,
+                    "missing_cost_count": 0,
+                    "status": "complete",
+                }
+                for item in roots
+            },
+        )
+        summary.start()
+        self.addCleanup(summary.stop)
+
     @patch("apps.evaluations.trace_client.build_opener")
     def test_list_uses_project_auth_v2_root_filter_and_exact_encoded_query(self, opener):
         opener.return_value.open.return_value = response_bytes(

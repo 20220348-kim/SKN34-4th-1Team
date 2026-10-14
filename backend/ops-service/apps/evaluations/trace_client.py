@@ -5,6 +5,8 @@ import json
 import logging
 import math
 import re
+import time
+from decimal import Decimal
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
@@ -15,6 +17,9 @@ from django.utils.dateparse import parse_datetime
 from django.utils.timezone import is_aware
 
 PAGE_SIZE = 50
+CALL_PAGE_SIZE = 1000
+MAX_CALL_PAGES = 3
+CALL_READ_SECONDS = 8
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 ID_PATTERN = r"[A-Za-z0-9_-]{1,128}"
 CURSOR_PATTERN = r"[A-Za-z0-9+/=_-]{1,2048}"
@@ -38,7 +43,7 @@ class NoTraceRedirect(HTTPRedirectHandler):
         return None
 
 
-def read_page(params):
+def read_page(params, *, timeout=5):
     base = settings.LANGFUSE_BASE_URL
     public, secret = settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY
     category = "configuration"
@@ -70,7 +75,9 @@ def read_page(params):
             method="GET",
         )
         category = "transport"
-        with build_opener(ProxyHandler({}), NoTraceRedirect()).open(request, timeout=5) as response:
+        with build_opener(ProxyHandler({}), NoTraceRedirect()).open(
+            request, timeout=timeout
+        ) as response:
             http_status = response.status
             if response.status != 200:
                 category = "upstream_http"
@@ -87,7 +94,7 @@ def read_page(params):
         rows, cursor = data.get("data"), data["meta"].get("cursor")
         if (
             not isinstance(rows, list)
-            or len(rows) > PAGE_SIZE
+            or len(rows) > min(params.get("limit", PAGE_SIZE), CALL_PAGE_SIZE)
             or (cursor is not None and not valid_id(cursor, CURSOR_PATTERN))
         ):
             raise ValueError("Invalid trace page")
@@ -181,6 +188,121 @@ def observation(row, *, detail=False):
     return result
 
 
+def call_node(row):
+    """요약에는 입출력 없이 호출 정보와 부모 관계만 사용한다."""
+    item = observation(row)
+    parent = row.get("parentObservationId")
+    if (parent is not None and not valid_id(parent)) or type(
+        row.get("isRootObservation")
+    ) is not bool:
+        raise ValueError("Invalid observation relationship")
+    return {
+        key: item[key] for key in ("id", "trace_id", "type", "model", "total_cost", "ended_at")
+    } | {"parent": parent, "root": row["isRootObservation"]}
+
+
+def read_call_summaries(roots):
+    """한 페이지의 trace들을 묶어 읽고 각 호출을 가장 가까운 시작 단계에 귀속한다."""
+    if not roots:
+        return {}
+    try:
+        nodes = {row["id"]: call_node(row) for row in roots}
+        root_ids = set(nodes)
+        trace_ids = sorted({row["trace_id"] for row in nodes.values()})
+        calls = {root_id: [] for root_id in root_ids}
+        pending_roots = set()
+        partial_traces = set()
+        seen = set()
+        cursors = set()
+        params = {
+            # 기간/루트 필터를 이어 쓰지 않는다. 기간 끝에 시작한 요청의 하위 호출도 읽는다.
+            "filter": json.dumps(
+                [
+                    {
+                        "type": "stringOptions",
+                        "column": "traceId",
+                        "operator": "any of",
+                        "value": trace_ids,
+                    }
+                ],
+                separators=(",", ":"),
+            ),
+            "fields": "basic,model,usage",
+            "limit": CALL_PAGE_SIZE,
+        }
+        deadline = time.monotonic() + CALL_READ_SECONDS
+        complete = False
+        for _ in range(MAX_CALL_PAGES):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            rows, cursor = read_page(params, timeout=min(5, remaining))
+            for row in rows:
+                node = call_node(row)
+                node_id = node["id"]
+                if node["trace_id"] not in trace_ids:
+                    raise ValueError("Unexpected trace in call summary")
+                if node_id in seen and nodes[node_id] != node:
+                    raise ValueError("Conflicting observation")
+                if node_id in root_ids and (
+                    node["trace_id"] != nodes[node_id]["trace_id"] or not node["root"]
+                ):
+                    raise ValueError("Unexpected root in call summary")
+                nodes[node_id] = node
+                seen.add(node_id)
+            if not cursor:
+                complete = True
+                break
+            if cursor in cursors:
+                raise ValueError("Repeated observation cursor")
+            cursors.add(cursor)
+            params = {**params, "cursor": cursor}
+        # 루트 목록과 하위 조회 사이의 반영 지연도 완전한 0건으로 표현하지 않는다.
+        partial_traces.update(nodes[key]["trace_id"] for key in root_ids - seen)
+        for node in nodes.values():
+            current = node
+            visited = set()
+            while not current["root"]:
+                parent = current["parent"]
+                if current["id"] in visited or parent not in nodes:
+                    partial_traces.add(node["trace_id"])
+                    current = None
+                    break
+                visited.add(current["id"])
+                current = nodes[parent]
+                if current["trace_id"] != node["trace_id"]:
+                    raise ValueError("Cross-trace parent")
+            if current is not None and current["id"] in calls:
+                # 다른 logical root를 지나 상위 카드까지 중복 합산하지 않는다.
+                if node["ended_at"] is None:
+                    pending_roots.add(current["id"])
+                if node["type"].upper() in {"GENERATION", "EMBEDDING"}:
+                    calls[current["id"]].append(node)
+        summaries = {}
+        for root_id, items in calls.items():
+            models = sorted(
+                {item["model"].strip() for item in items if item["model"] and item["model"].strip()}
+            )
+            costs = [
+                Decimal(str(item["total_cost"])) for item in items if item["total_cost"] is not None
+            ]
+            cost = number(float(sum(costs))) if costs else None
+            root = nodes[root_id]
+            partial = not complete or root["trace_id"] in partial_traces or root_id in pending_roots
+            summaries[root_id] = {
+                "models": models,
+                "call_count": len(items),
+                "missing_model_count": sum(not (item["model"] or "").strip() for item in items),
+                "recorded_cost": cost,
+                "missing_cost_count": len(items) - len(costs),
+                "status": "partial" if partial else "complete",
+            }
+        return summaries
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        logger.warning("langfuse_trace_read_failed category=response_validation operation=summary")
+        raise LangfuseUnavailable from None
+
+
 def read_roots(*, from_time, to_time, name="", cursor=""):
     params = {
         "isRootObservation": "true",
@@ -227,6 +349,9 @@ def read_roots(*, from_time, to_time, name="", cursor=""):
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
         logger.warning("langfuse_trace_read_failed category=response_validation operation=list")
         raise LangfuseUnavailable from None
+    summaries = read_call_summaries(rows)
+    for item in results:
+        item["call_summary"] = summaries[item["id"]]
     return {"results": results, "next_cursor": next_cursor}
 
 
