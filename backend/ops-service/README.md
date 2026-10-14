@@ -781,7 +781,8 @@ POST는 `request_id`, `evidence_sha256`, `reason`만 받으며 검토한 자료�
 `unbounded_input_calls`/`unbounded_input_reservations`가 있으면 전체 입력 사용량이 아닙니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-최신 Ops API 배포 전 migration **`0028_daily_evaluation_schedules`까지** 적용해야 합니다.
+최신 Ops API 배포 전 migration **`0029_production_quality`까지** 적용해야 합니다.
+`0029`는 운영 답변 표본·일별 접수 한도·사람 검토·회귀 후보 테이블을 추가하며 기존 평가·예산 행은 수정하지 않습니다.
 `0028`은 종료일이 있는 정기 계획과 날짜별 접수 이력 테이블을 추가합니다. 기존 평가·예산 행은 수정하지 않습니다.
 `0027`은 일별 정책 변경의 인증된 변경자 FK·조회 버전·출처 제약을 추가하며 기존 CLI 기록을 보존합니다.
 `0025`는 인증된 변경자 FK·한도 조회 버전·출처 제약을 추가하며 기존 CLI 기록을 그대로 보존합니다.
