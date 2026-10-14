@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
@@ -17,11 +17,27 @@ export type MenuDestination = 'account' | 'company' | 'settings' | 'filter' | 'a
 type MenuItem = { destination: MenuDestination /* | ServiceInformationSection */; label: string; description: string; icon: AppIconName }
 
 export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): void }) {
-  const { status, session, restoreError } = useAuth()
+  const { status, session, restoreError, signOut } = useAuth()
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const signingOut = useRef(false)
+  const owner = useRef(session?.accessToken)
+  owner.current = session?.accessToken
+  useEffect(() => { if (status === 'signedIn') setAuthError(null) }, [status, session?.accessToken])
   const [introOpen, setIntroOpen] = useState(false)
   useAssistantBlock(introOpen)
   // const [information, setInformation] = useState<ServiceInformationSection | null>(null)
   const closeIntroduction = () => setIntroOpen(false)
+  async function logOut() {
+    if (status !== 'signedIn' || owner.current !== session?.accessToken || signingOut.current) return
+    const token = session?.accessToken
+    signingOut.current = true
+    setAuthBusy(true); setAuthError(null)
+    try { await signOut() }
+    catch (cause) {
+      if (!owner.current || owner.current === token) setAuthError(cause instanceof Error ? cause.message : '로그아웃을 완료하지 못했어요. 다시 시도해 주세요.')
+    } finally { signingOut.current = false; setAuthBusy(false) }
+  }
   if (status === 'loading') return <Page headerless backgroundColor={colors.surface}><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page headerless><Notice error>{restoreError ?? '로그인 상태를 확인하지 못했습니다.'}</Notice>
     <Button label="로그인 상태 확인" onPress={() => onOpen('account')} />
@@ -67,7 +83,13 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
         <Text style={local.name}>{account?.company?.companyName ?? (account ? screenTitles.profile : '로그인해 주세요')}</Text>
         {!account?.company && <Text style={local.email}>{account?.email ?? '계정과 관심 공고를 이어서 사용하세요'}</Text>}
       </View>
+      <Button label={account ? '로그아웃' : '로그인'} variant="ghost" busy={authBusy} size="small"
+        onPress={() => {
+          if (account) void logOut()
+          else { setAuthError(null); onOpen('account') }
+        }} />
     </View>
+    {authError && <Notice error>{authError}</Notice>}
     {restoreError && <Notice error>{restoreError}</Notice>}
     {groups.map((group) => <View key={group.title} style={local.group}>
       <Text accessibilityRole="header" style={local.heading}>{group.title}</Text>

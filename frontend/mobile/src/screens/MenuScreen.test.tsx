@@ -8,9 +8,9 @@ import { serviceContact } from '../content/serviceInformation'
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../auth/introductionStorage', () => ({ clearIntroductionCompleted: jest.fn(), completeIntroduction: jest.fn() }))
 jest.mock('react-native/Libraries/Utilities/DevSettings', () => ({ __esModule: true, default: { reload: jest.fn() } }))
-const auth = (account: { email: string; company: { companyName: string } | null } | null) => {
+const auth = (account: { email: string; company: { companyName: string } | null } | null, signOut = jest.fn().mockResolvedValue(undefined)) => {
   jest.mocked(useAuth).mockReturnValue({ status: account ? 'signedIn' : 'signedOut',
-    session: account ? { accessToken: 'token', account } : null, restoreError: null } as unknown as ReturnType<typeof useAuth>)
+    session: account ? { accessToken: 'token', account } : null, restoreError: null, signOut } as unknown as ReturnType<typeof useAuth>)
 }
 beforeEach(() => { auth(null); jest.mocked(clearIntroductionCompleted).mockReset().mockResolvedValue(undefined) })
 
@@ -62,6 +62,75 @@ test('profile uses the session company or real email and removes them on logout'
   view.rerender(<MenuScreen onOpen={jest.fn()} />)
   expect(screen.getByText('로그인해 주세요')).toBeTruthy()
   expect(screen.queryByText('실제 기업')).toBeNull()
+})
+
+test('the guest top-right login action opens the existing account login destination', () => {
+  const open = jest.fn()
+  render(<MenuScreen onOpen={open} />)
+  expect(screen.queryByLabelText('로그아웃')).toBeNull()
+  fireEvent.press(screen.getByRole('button', { name: '로그인' }))
+  expect(open).toHaveBeenCalledTimes(1)
+  expect(open).toHaveBeenCalledWith('account')
+})
+
+test('the signed-in top-right logout runs once and retains the menu after signing out', async () => {
+  const open = jest.fn()
+  let finish!: () => void
+  const signOut = jest.fn(() => new Promise<void>(resolve => { finish = resolve }))
+  auth({ email: 'member@example.test', company: null }, signOut)
+  const view = render(<MenuScreen onOpen={open} />)
+  expect(screen.queryByRole('button', { name: '로그인' })).toBeNull()
+  act(() => {
+    fireEvent.press(screen.getByRole('button', { name: '로그아웃' }))
+    fireEvent.press(screen.getByRole('button', { name: '로그아웃' }))
+  })
+  expect(signOut).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('button', { name: '로그아웃' })).toBeDisabled()
+  auth(null); view.rerender(<MenuScreen onOpen={open} />)
+  expect(screen.getByRole('button', { name: '로그인' })).toBeDisabled()
+  await act(async () => finish())
+  expect(screen.getByRole('button', { name: '로그인' })).toBeEnabled()
+  expect(screen.getByLabelText('파트너 관리')).toBeTruthy()
+  expect(open).not.toHaveBeenCalled()
+})
+
+test('a logout failure remains visible even when local logout already removed the session', async () => {
+  let fail!: (cause: Error) => void
+  const signOut = jest.fn(() => new Promise<void>((_resolve, reject) => { fail = reject }))
+  auth({ email: 'member@example.test', company: null }, signOut)
+  const view = render(<MenuScreen onOpen={jest.fn()} />)
+  fireEvent.press(screen.getByLabelText('로그아웃'))
+  auth(null); view.rerender(<MenuScreen onOpen={jest.fn()} />)
+  await act(async () => fail(new Error('서버 세션과 앱 알림 연결을 종료하지 못했어요.')))
+  expect(screen.getByText('서버 세션과 앱 알림 연결을 종료하지 못했어요.')).toBeTruthy()
+  expect(screen.getByRole('button', { name: '로그인' })).toBeEnabled()
+})
+
+test('a late logout failure cannot overwrite a different account menu', async () => {
+  let fail!: (cause: Error) => void
+  const signOut = jest.fn(() => new Promise<void>((_resolve, reject) => { fail = reject }))
+  auth({ email: 'member@example.test', company: null }, signOut)
+  const view = render(<MenuScreen onOpen={jest.fn()} />)
+  fireEvent.press(screen.getByLabelText('로그아웃'))
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'second', account: { email: 'second@example.test', company: null } },
+    restoreError: null, signOut: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  view.rerender(<MenuScreen onOpen={jest.fn()} />)
+  await act(async () => fail(new Error('old logout failure')))
+  expect(screen.queryByText('old logout failure')).toBeNull()
+  expect(screen.getByText('second@example.test')).toBeTruthy()
+})
+
+test('an existing logout error is cleared when another login path establishes a new account', async () => {
+  const signOut = jest.fn().mockRejectedValue(new Error('previous logout failure'))
+  auth({ email: 'member@example.test', company: null }, signOut)
+  const view = render(<MenuScreen onOpen={jest.fn()} />)
+  await act(async () => fireEvent.press(screen.getByLabelText('로그아웃')))
+  expect(screen.getByText('previous logout failure')).toBeTruthy()
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'second', account: { email: 'second@example.test', company: null } },
+    restoreError: null, signOut: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  view.rerender(<MenuScreen onOpen={jest.fn()} />)
+  expect(screen.queryByText('previous logout failure')).toBeNull()
+  expect(screen.getByText('second@example.test')).toBeTruthy()
 })
 
 test('an unavailable session is an explicit error with a recovery destination', () => {
