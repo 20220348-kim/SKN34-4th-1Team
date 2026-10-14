@@ -35,6 +35,22 @@ const save = () => fireEvent.click(screen.getByRole('button', { name: '확인한
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 일별 한도 변경', () => {
+  it('항목별 설명과 0·해제 차이를 제공하며 정책 선택이나 닫기만으로는 저장하지 않는다', () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch)
+    const { props } = mount({ ...daily, state: 'enforced', limits })
+    fireEvent.click(screen.getByRole('button', { name: '일별 한도 설정' }))
+    const policy = screen.getByRole('combobox', { name: '일별 정책 변경', description: /세 한도를 모두 입력.*숫자 0.*최종 저장/ })
+    expect(screen.getByRole('textbox', { name: '일별 호출 한도', description: /API 호출 총횟수/ })).toHaveProperty('value', '12')
+    expect(screen.getByRole('textbox', { name: '일별 입력 토큰 한도', description: /최대 입력량을 합산/ })).toHaveProperty('value', '400000')
+    expect(screen.getByRole('textbox', { name: '일별 출력 토큰 한도', description: /최대 출력량을 합산/ })).toHaveProperty('value', '24000')
+    expect(screen.getByRole('textbox', { name: '일별 한도 변경 사유', description: /한도 산정 근거 또는 해제 이유/ })).toHaveProperty('value', '')
+    fireEvent.change(policy, { target: { value: 'disable' } })
+    expect(screen.queryByLabelText('일별 호출 한도')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '일별 설정 닫기' }))
+    expect(fetch).not.toHaveBeenCalled()
+    expect(props.onSaved).not.toHaveBeenCalled()
+  })
+
   it('최종 확인 전에는 전송하지 않고 로그인 관리자·CSRF·조회 버전으로 저장한다', async () => {
     const fetch = vi.fn(async (url: string, options?: RequestInit) => json(url.endsWith('/session') ? session : success(JSON.parse(options!.body as string))))
     vi.stubGlobal('fetch', fetch)

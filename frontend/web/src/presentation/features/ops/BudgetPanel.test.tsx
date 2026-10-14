@@ -65,6 +65,38 @@ const legacyDetail = {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 예산 장부', () => {
+  it('장부 조회가 실패해도 설정 순서와 무료 점검 이동 안내를 제공한다', async () => {
+    const fetch = vi.fn().mockRejectedValue(new Error('장부 연결 실패'))
+    vi.stubGlobal('fetch', fetch)
+    render(<MemoryRouter><BudgetOverview onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    expect((await screen.findByRole('alert')).textContent).toContain('운영 서버에 연결할 수 없습니다.')
+    const guide = within(screen.getByRole('region', { name: '예산 설정 안내' }))
+    expect(guide.getAllByRole('listitem')).toHaveLength(3)
+    expect(guide.getByRole('link', { name: '새 평가에서 필요량 확인' }).getAttribute('href')).toBe('/ops/evaluations/new')
+    expect(guide.getByText(/최대 예약량을 무료로 조회/)).toBeTruthy()
+    expect(guide.getByText(/설정을 저장해도 유료 평가·정기 실행은 켜지지 않습니다/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: '실사용 모니터링에서 확인' }).getAttribute('href')).toBe('/ops/usage')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/ops/budget/reservations?page=1')
+  })
+
+  it('장부 도움말을 펼쳐도 수치와 예약을 유지하고 별도 요청을 보내지 않는다', async () => {
+    const fetch = vi.fn().mockResolvedValue(json(page))
+    vi.stubGlobal('fetch', fetch)
+    render(<MemoryRouter><BudgetOverview onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    const table = await screen.findByRole('table', { name: '예산 할당량 구성' })
+    const values = table.textContent
+    const toggle = screen.getByText('장부 항목은 무슨 뜻인가요?')
+    expect(toggle.closest('details')).toHaveProperty('open', false)
+    fireEvent.click(toggle)
+    expect(toggle.closest('details')).toHaveProperty('open', true)
+    expect(screen.getByText(/사람의 답변 검토 승인을 기다린다는 뜻이 아닙니다/)).toBeTruthy()
+    expect(screen.getByText(/제공자의 청구 금액 확정과는 구분/)).toBeTruthy()
+    expect(table.textContent).toBe(values)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][1].method ?? 'GET').toBe('GET')
+  })
+
   it('미반영 목록은 버튼으로 연 뒤에만 조회하고 닫을 수 있다', async () => {
     const fetch = vi.fn(async (url: string) => json(url.includes('unaccounted-runs')
       ? { as_of: time, count: 1, next: null, previous: null, results: [

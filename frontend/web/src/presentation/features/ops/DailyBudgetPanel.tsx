@@ -3,6 +3,7 @@ import type { DailyBudget } from '../../../data/ops/opsApi'
 export function DailyBudgetPanel({ value }: { value: DailyBudget | undefined }) {
   return <section aria-label="일별 평가 예산" className="space-y-3 rounded-xl border border-line p-4 text-sm">
     <h3 className="font-semibold">일별 평가 예산 · 서울 시간</h3>
+    <p className="text-ink-muted">서울 시간 00:00~다음 날 00:00의 예약 접수일을 기준으로 적용합니다. 오늘 접수한 평가의 할당량에 이전 날짜의 아직 해제되지 않은 예약도 포함합니다.</p>
     {!value ? <p>서버에서 일별 예산 정보를 제공하지 않습니다.</p> : <>
       <p>{value.period_start.slice(0, 10)} 00:00부터 다음 날 00:00까지 · Asia/Seoul</p>
       {value.state === 'disabled' ? <p>일별 제한 미적용 · 누적 한도는 계속 적용됩니다.</p> : <>
@@ -27,6 +28,15 @@ export function DailyBudgetPanel({ value }: { value: DailyBudget | undefined }) 
         </li>)}</ol>
       </details>}
     </>}
-    <p className="text-xs text-ink-muted">일별 정책 변경은 관리자 설정 화면 또는 운영 명령으로 기록합니다. 월별 한도·금액 한도와 정기 실행 활성화는 별도입니다.</p>
+    <details>
+      <summary className="min-h-11 cursor-pointer py-3 font-semibold focus-visible:outline-2 focus-visible:outline-brand-primary">일별 항목과 이월량 설명</summary>
+      <dl className="grid gap-3 rounded-lg bg-surface-muted p-3 leading-6 sm:grid-cols-2">{[
+        ['일별 한도', '매일 적용할 호출·입력·출력의 상한입니다. 오늘 새로 추가할 양이 아니라 오늘 접수 몫과 이월량을 포함한 총상한입니다.'],
+        ['오늘 접수 몫', '오늘 접수한 평가의 확정 사용량과 아직 해제되지 않은 예약입니다.'],
+        ['전날 이전 이월', '이전 날짜의 미확인 호출·미승인 예약·반환 대기량입니다. 남은 일별 한도가 적립되는 뜻이 아니며, 이전에 확정된 사용량은 이월하지 않습니다.'],
+        ['일별 잔여', '일별 한도 − 오늘 접수 몫 − 전날 이전 이월입니다. 누적 잔여 한도도 함께 충분해야 새 평가를 접수할 수 있습니다.'],
+      ].map(([label, explanation]) => <div key={label}><dt className="font-semibold">{label}</dt><dd className="mt-1 text-ink-muted">{explanation}</dd></div>)}</dl>
+    </details>
+    <p className="text-xs leading-5 text-ink-muted">일별 설정은 누적 한도를 저장한 뒤 변경할 수 있습니다. 예약 접수일 기준으로 관리하므로 제공자의 실제 청구일 기준 지출 상한과는 다릅니다.</p>
   </section>
 }

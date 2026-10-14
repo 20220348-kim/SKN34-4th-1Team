@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getBudgetReservations, getLiveReadiness, type DailyBudget } from '../../../data/ops/opsApi'
 import { DailyBudgetPanel } from './DailyBudgetPanel'
@@ -42,6 +42,13 @@ describe('일별 평가 예산', () => {
     expect(screen.getByText('서버에서 일별 예산 정보를 제공하지 않습니다.')).toBeTruthy()
     view.rerender(<DailyBudgetPanel value={{ ...day, state: 'disabled', limits: null, remaining: null, allocated: null, current_day: null, carried: null }} />)
     expect(screen.getByText('일별 제한 미적용 · 누적 한도는 계속 적용됩니다.')).toBeTruthy()
+    expect(screen.queryByRole('table')).toBeNull()
+    const help = screen.getByText('일별 항목과 이월량 설명')
+    expect(help.closest('details')).toHaveProperty('open', false)
+    fireEvent.click(help)
+    expect(help.closest('details')).toHaveProperty('open', true)
+    expect(screen.getByText(/남은 일별 한도가 적립되는 뜻이 아니며/)).toBeTruthy()
+    expect(screen.getByText(/일별 한도 − 오늘 접수 몫 − 전날 이전 이월/)).toBeTruthy()
     expect(screen.queryByRole('table')).toBeNull()
   })
 
