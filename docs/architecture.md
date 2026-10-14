@@ -376,7 +376,8 @@ AI Service는 호스트에 포트를 게시하지 않습니다. MySQL·Qdrant·C
 웹 관리자의 `/app/chat`은 Gov 에이전트로 표시하며 일반 회원의 기존 AI 대화 검색은 유지합니다.
 모바일도 서버가 확인한 `ADMIN` 계정의 검색 AI 모드를 Gov 에이전트로 표시합니다.
 `ChatScreen → shared GovAgent API → createApiFetch(Bearer, credentials: omit) → Core AdminPrincipal`로 같은 계약을 사용하며
-선택 공고에 원문 질문·신청서 쓰기·중복 검토를 표시합니다. 모바일 `GovAgentMessage`는 기존
+선택 공고에 신청 문서 쓰기·중복 검토·파트너 찾기를 순서대로 표시하고 원문 질문은 공고 카드의 `이 공고에 질문하기`로 연결합니다.
+세 기능 버튼은 AI 경로 선택 없이 기존 대화 업무 카드를 만들며 파트너 조건에는 선택 공고의 복합 식별자를 전달합니다. 모바일 `GovAgentMessage`는 기존
 `ApplicationPreparationNewScreen`·`CombinationReviewEditorScreen`을 인라인 표시로 재사용합니다.
 입력칸 분석과 검토 입력·실행은 대화 카드에서 수행하고, 양식 작성·문서 결과·검토 실행 결과는 기존 네이티브 화면으로 옮깁니다.
 실행·미확인 요청 복구는 기존 모바일 API·유스케이스가 소유하며 카드를 접으면 입력을 보존하고 조회·폴링을 멈춥니다.
