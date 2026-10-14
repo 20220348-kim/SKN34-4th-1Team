@@ -2,8 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AccountScreen } from '../screens/AccountScreen'
-import { Button, colors } from '../ui'
+import { Button, colors, Notice } from '../ui'
 import { useAuth, type MobileSession } from './session'
+import { authErrorMessage } from './errors'
+import { SocialLoginOptions } from './SocialLoginOptions'
+import type { MobileOAuthProvider } from './oauth'
 import { useAssistantBlock } from '../assistant/context'
 
 export type LoginRequest = {
@@ -18,33 +21,49 @@ const LoginContext = createContext<((request?: LoginRequest) => void) | null>(nu
 
 /** Login stays over the originating screen; only its explicitly selected action resumes. */
 export function LoginFlowProvider({ children }: { children: ReactNode }) {
-  const { status, session } = useAuth()
+  const { status, session, signInWithOAuth } = useAuth()
   const [pending, setPending] = useState<LoginRequest | null>(null)
   const [stage, setStage] = useState<'prompt' | 'methods' | 'login' | 'signup'>('prompt')
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const [socialError, setSocialError] = useState<string | null>(null)
   const pendingRef = useRef<LoginRequest | null>(null)
   const insets = useSafeAreaInsets()
   useAssistantBlock(pending !== null)
+  const updateBusy = useCallback((value: boolean) => { busyRef.current = value; setBusy(value) }, [])
   const requestLogin = useCallback((request: LoginRequest = {}) => {
+    if (busyRef.current) return
     if (status === 'signedIn' && session) { request.onAuthenticated?.(session); return }
     if (status !== 'signedOut') return
     pendingRef.current?.onCancel?.()
     pendingRef.current = request
-    setPending(request); setBusy(false)
+    setPending(request); setSocialError(null); updateBusy(false)
     setStage(request.methods ? 'methods' : request.direct ? request.mode ?? 'login' : 'prompt')
-  }, [status, session])
+  }, [status, session, updateBusy])
   function cancel() {
-    if (busy) return
+    if (busyRef.current) return
     const request = pendingRef.current
     pendingRef.current = null; setPending(null)
     request?.onCancel?.()
   }
+  function openForm(nextStage: 'login' | 'signup') {
+    if (busyRef.current || !pendingRef.current) return
+    setStage(nextStage)
+  }
+  async function loginWithOAuth(provider: MobileOAuthProvider) {
+    if (busyRef.current || !pendingRef.current) return
+    const request = pendingRef.current
+    updateBusy(true); setSocialError(null)
+    try { await signInWithOAuth(provider) } catch (failure) {
+      if (pendingRef.current === request) setSocialError(authErrorMessage(failure))
+    } finally { if (pendingRef.current === request) updateBusy(false) }
+  }
   useEffect(() => {
     if (status !== 'signedIn' || !session || !pendingRef.current) return
     const request = pendingRef.current
-    pendingRef.current = null; setPending(null); setBusy(false)
+    pendingRef.current = null; setPending(null); updateBusy(false)
     request.onAuthenticated?.(session)
-  }, [status, session])
+  }, [status, session, updateBusy])
   useEffect(() => () => { pendingRef.current?.onCancel?.(); pendingRef.current = null }, [])
   return <LoginContext.Provider value={requestLogin}>
     <View style={{ flex: 1 }} accessibilityElementsHidden={pending !== null}
@@ -53,26 +72,30 @@ export function LoginFlowProvider({ children }: { children: ReactNode }) {
       {stage === 'methods' ? <View style={local.overlay}><View accessibilityViewIsModal style={[local.methodsSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={local.grab} /><View style={local.methodsHeader}>
           <Text accessibilityRole="header" style={local.methodsTitle}>로그인 방법</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="로그인 방법 닫기" onPress={cancel} style={local.close}>
+          <Pressable accessibilityRole="button" accessibilityLabel="로그인 방법 닫기" disabled={busy}
+            accessibilityState={{ disabled: busy }} onPress={cancel} style={local.close}>
             <Text style={local.closeIcon}>×</Text></Pressable>
         </View>
         <ScrollView bounces={false} overScrollMode="never" style={{ flexShrink: 1 }} contentContainerStyle={local.methodsContent} keyboardShouldPersistTaps="handled">
         <Text style={local.methodsDescription}>로그인하면 보던 화면에서 이어서 이용할 수 있어요.</Text>
-        <Button label="이메일로 로그인" variant="secondary" onPress={() => setStage('login')} />
+        <Button label="이메일로 로그인" variant="secondary" disabled={busy} onPress={() => openForm('login')} />
+        <SocialLoginOptions enabled={pending !== null && status === 'signedOut'} busy={busy} onSelect={provider => void loginWithOAuth(provider)} />
+        {socialError && <Notice error>{socialError}</Notice>}
         <View style={local.signupRow}><Text style={local.methodsDescription}>처음이신가요?</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="회원가입하러가기" onPress={() => setStage('signup')} style={local.signupLink}>
+          <Pressable accessibilityRole="button" accessibilityLabel="회원가입하러가기" disabled={busy}
+            accessibilityState={{ disabled: busy }} onPress={() => openForm('signup')} style={local.signupLink}>
             <Text style={local.signupText}>회원가입하러가기</Text></Pressable></View>
         </ScrollView>
       </View></View> : stage === 'prompt' ? <View style={local.overlay}><View accessibilityViewIsModal style={[local.prompt, { paddingBottom: Math.max(insets.bottom, 24) }]}>
         <Text accessibilityRole="header" style={local.title}>로그인이 필요해요</Text>
         <Text style={local.description}>{pending?.message ?? '로그인하면 보던 화면에서 이어서 이용할 수 있어요.'}</Text>
-        <Button label="로그인" onPress={() => setStage('login')} />
-        <Button label="회원가입" variant="secondary" onPress={() => setStage('signup')} />
+        <Button label="로그인" onPress={() => openForm('login')} />
+        <Button label="회원가입" variant="secondary" onPress={() => openForm('signup')} />
         <Button label="계속 둘러보기" variant="ghost" onPress={cancel} />
       </View></View> : <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top }}>
         <View style={local.header}><Text accessibilityRole="header" style={local.title}>{stage === 'signup' ? '회원가입' : '로그인'}</Text>
           <Button label="취소" accessibilityLabel="로그인 취소" variant="ghost" disabled={busy} onPress={cancel} /></View>
-        <AccountScreen key={stage} initialMode={stage === 'signup' ? 'signup' : 'login'} authOnly onBusyChange={setBusy}
+        <AccountScreen key={stage} initialMode={stage === 'signup' ? 'signup' : 'login'} authOnly onBusyChange={updateBusy}
           showSocialOptions
           onCompany={() => undefined} />
       </View>}

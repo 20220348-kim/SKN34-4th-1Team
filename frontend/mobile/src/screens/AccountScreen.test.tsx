@@ -80,6 +80,68 @@ test('a runtime without native OAuth never fetches or exposes providers', () => 
   }
 })
 
+test('email submit precedes branded social actions and signup/reset links share a horizontal touch row', async () => {
+  const previous = process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+  process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = 'true'
+  try {
+    const emailSignIn = jest.fn().mockResolvedValue(undefined)
+    jest.mocked(useAuth).mockReturnValue({ ...jest.mocked(useAuth)(), signIn: emailSignIn })
+    jest.mocked(apiRequest).mockResolvedValue({ providers: [{ provider: 'google' }, { provider: 'kakao' }] })
+    const view = render(<AccountScreen onCompany={jest.fn()} />)
+    await view.findByLabelText('Google로 계속하기')
+    expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual([
+      '로그인', '카카오로 계속하기', 'Google로 계속하기', '이메일로 회원가입', '비밀번호 찾기',
+    ])
+    expect(view.getByTestId('account-auth-links')).toHaveStyle({ flexDirection: 'row' })
+    for (const label of ['이메일로 회원가입', '비밀번호 찾기']) expect(view.getByLabelText(label)).toHaveStyle({ minHeight: 48, flex: 1 })
+    fireEvent.changeText(view.getByLabelText('이메일'), ' USER@example.com ')
+    fireEvent.changeText(view.getByLabelText('비밀번호'), 'password123')
+    await act(async () => fireEvent.press(view.getByLabelText('로그인')))
+    expect(emailSignIn).toHaveBeenCalledWith('user@example.com', 'password123')
+    fireEvent.press(view.getByLabelText('비밀번호 찾기'))
+    expect(view.getByLabelText('재설정 이메일')).toBeTruthy()
+    fireEvent.press(view.getByLabelText('취소'))
+    expect(view.getByLabelText('이메일').props.value).toBe(' USER@example.com ')
+    fireEvent.press(view.getByLabelText('이메일로 회원가입'))
+    expect(view.getByLabelText('비밀번호 확인')).toBeTruthy()
+    expect(view.queryByLabelText('비밀번호 찾기')).toBeNull()
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+    else process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = previous
+  }
+})
+
+test('social login locks email submit, both providers and alternate authentication until cancellation finishes', async () => {
+  const previous = process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+  process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = 'true'
+  try {
+    let finish!: () => void
+    const social = jest.fn().mockReturnValue(new Promise<void>(resolve => { finish = resolve }))
+    const emailSignIn = jest.fn()
+    const busyChanged = jest.fn()
+    jest.mocked(useAuth).mockReturnValue({ ...jest.mocked(useAuth)(), signIn: emailSignIn, signInWithOAuth: social })
+    jest.mocked(apiRequest).mockResolvedValue({ providers: [{ provider: 'google' }, { provider: 'kakao' }] })
+    const view = render(<AccountScreen onCompany={jest.fn()} onBusyChange={busyChanged} />)
+    fireEvent.press(await view.findByLabelText('Google로 계속하기'))
+    for (const label of ['로그인', '카카오로 계속하기', 'Google로 계속하기', '이메일로 회원가입', '비밀번호 찾기']) {
+      expect(view.getByLabelText(label).props.accessibilityState.disabled).toBe(true)
+      fireEvent.press(view.getByLabelText(label))
+    }
+    expect(social).toHaveBeenCalledTimes(1)
+    expect(social).toHaveBeenCalledWith('google')
+    expect(emailSignIn).not.toHaveBeenCalled()
+    expect(view.getByLabelText('이메일').props.editable).toBe(false)
+    expect(busyChanged).toHaveBeenLastCalledWith(true)
+    await act(async () => finish())
+    expect(view.getByLabelText('로그인').props.accessibilityState.disabled).toBe(false)
+    expect(view.getByLabelText('이메일').props.editable).toBe(true)
+    expect(busyChanged).toHaveBeenLastCalledWith(false)
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+    else process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = previous
+  }
+})
+
 async function verifyEmail() {
   jest.mocked(apiRequest).mockResolvedValueOnce(undefined).mockResolvedValueOnce({ passToken, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
   const view = render(<AccountScreen onCompany={jest.fn()} />)
