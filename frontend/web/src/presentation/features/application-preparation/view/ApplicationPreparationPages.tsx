@@ -778,7 +778,7 @@ function ApplicationPreparationList() {
       </div>}
     </main>
     <WorkspaceModal isOpen={confirming !== null} title="신청 문서를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
-      description={confirming ? `${confirming.programTitle}의 답변${confirming.answeredRequired !== undefined ? ` ${confirming.answeredRequired}개` : ''}와 AI 실행 기록이 모두 지워져요. 되돌릴 수 없어요.` : undefined}>
+      description={confirming ? `${confirming.programTitle}에 저장된 모든 답변과 AI 실행 기록이 지워져요. 되돌릴 수 없어요.` : undefined}>
       <div className="flex flex-wrap justify-end gap-2">
         <button className={s.button} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirming(null)}>취소</button>
         <button className={s.dangerSolid} disabled={vm.deletingId !== null} aria-busy={vm.deletingId !== null} type="button" onClick={() => {
