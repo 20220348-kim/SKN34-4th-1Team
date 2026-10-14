@@ -1,6 +1,8 @@
 import { AppState, Linking, Text, type AppStateStatus } from 'react-native'
 import { act, render, screen, waitFor } from '@testing-library/react-native'
+import type { DevicePushToken } from 'expo-notifications'
 import { useAuth } from '../auth/session'
+import { ApiError } from '../api/client'
 import { disablePush, getPushSettings, registerPush } from '../api/dailyReportPush'
 import { getExpoPushToken, getPushDeviceId, notificationModule, PushPermissionDeniedError } from './device'
 import { DailyReportPushProvider, useDailyReportPush } from './DailyReportPushProvider'
@@ -15,20 +17,27 @@ jest.mock('./device', () => ({ ...jest.requireActual('./device'), getExpoPushTok
 const base = { enabled: false, available: true, schedulerEnabled: true, sendHour: 8 }
 let push: ReturnType<typeof useDailyReportPush>
 let notification: ((response: unknown) => void) | undefined
+let tokenNotification: ((token: DevicePushToken) => void) | undefined
+const deviceToken: DevicePushToken = { type: 'android', data: 'native-token' }
 const native = {
   setNotificationHandler: jest.fn(), addNotificationResponseReceivedListener: jest.fn((callback) => {
     notification = callback; return { remove: jest.fn() }
-  }), addPushTokenListener: jest.fn(() => ({ remove: jest.fn() })),
+  }), addPushTokenListener: jest.fn((callback) => { tokenNotification = callback; return { remove: jest.fn() } }),
   getLastNotificationResponseAsync: jest.fn(), clearLastNotificationResponseAsync: jest.fn(), getPermissionsAsync: jest.fn(),
 }
 function signedIn(token = 'first') {
-  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: token }, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: token }, invalidateSession: jest.fn().mockResolvedValue(undefined) } as unknown as ReturnType<typeof useAuth>)
 }
 function Probe() { push = useDailyReportPush(); return <Text>{push.error ?? (push.settings?.enabled ? 'enabled' : 'disabled')}</Text> }
 const app = () => <DailyReportPushProvider><Probe /></DailyReportPushProvider>
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (error: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
 beforeEach(() => {
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() })
-  signedIn(); notification = undefined; mockNavigate.mockClear(); mockPush.mockClear()
+  signedIn(); notification = undefined; tokenNotification = undefined; mockNavigate.mockClear(); mockPush.mockClear()
   jest.mocked(getPushDeviceId).mockResolvedValue('a4a15267-866c-4df0-bb91-55d7c14d7a72')
   jest.mocked(getPushSettings).mockReset().mockResolvedValue(base)
   jest.mocked(registerPush).mockReset().mockResolvedValue(undefined)
@@ -61,7 +70,7 @@ test('explicit enable registers the current authenticated device then reads serv
 })
 
 test('revoked system permission disables server subscription without asking again', async () => {
-  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  jest.mocked(getPushSettings).mockResolvedValueOnce({ ...base, enabled: true }).mockResolvedValue(base)
   native.getPermissionsAsync.mockResolvedValue({ granted: false, status: 'denied' })
   render(app())
   await waitFor(() => expect(disablePush).toHaveBeenCalled())
@@ -217,4 +226,236 @@ test('late token result after account change is discarded before registration', 
   await act(async () => resolve('ExpoPushToken[old]'))
   await waitFor(() => expect(push.settings).toEqual(base))
   expect(registerPush).not.toHaveBeenCalled()
+})
+
+test('SDK token event during explicit token lookup cannot cancel registration or register twice', async () => {
+  render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(tokenNotification).toBeDefined() })
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  jest.mocked(getExpoPushToken).mockImplementation(async (_permission, suppliedToken) => {
+    if (!suppliedToken) tokenNotification?.(deviceToken)
+    return 'ExpoPushToken[test]'
+  })
+  await act(async () => push.toggle())
+  await waitFor(() => expect(push.busy).toBe(false))
+  expect(registerPush).toHaveBeenCalledTimes(1)
+  expect(jest.mocked(registerPush).mock.calls[0][2]?.aborted).toBe(false)
+  expect(getExpoPushToken).toHaveBeenNthCalledWith(1, true)
+  expect(getExpoPushToken).toHaveBeenNthCalledWith(2, false, deviceToken)
+  expect(getPushSettings).toHaveBeenCalledTimes(2)
+  expect(push.error).toBeNull()
+  expect(push.settings?.enabled).toBe(true)
+})
+
+test('enabled refresh handles its SDK token event without recursive reads or duplicate registration', async () => {
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  // A native token read emits the same SDK event; supplied native tokens do not perform that read.
+  jest.mocked(getExpoPushToken).mockImplementation(async (_permission, suppliedToken) => {
+    if (!suppliedToken) tokenNotification?.(deviceToken)
+    return 'ExpoPushToken[test]'
+  })
+  render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(registerPush).toHaveBeenCalledTimes(1) })
+  expect(getExpoPushToken).toHaveBeenCalledTimes(2)
+  expect(getExpoPushToken).toHaveBeenLastCalledWith(false, deviceToken)
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+  await act(async () => push.refresh())
+  await waitFor(() => { expect(getPushSettings).toHaveBeenCalledTimes(2); expect(push.busy).toBe(false) })
+  expect(getExpoPushToken).toHaveBeenCalledTimes(3)
+  expect(registerPush).toHaveBeenCalledTimes(1)
+})
+
+test('refresh requests while registering are coalesced until registration and confirmation finish', async () => {
+  render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  const token = deferred<string>()
+  jest.mocked(getExpoPushToken).mockReturnValueOnce(token.promise)
+  let pending!: Promise<void>
+  act(() => { pending = push.toggle() })
+  await waitFor(() => expect(getExpoPushToken).toHaveBeenCalledTimes(1))
+  act(() => { push.refresh(); push.refresh() })
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+  expect(push.busy).toBe(true)
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  await act(async () => { token.resolve('ExpoPushToken[test]'); await pending })
+  await waitFor(() => { expect(getPushSettings).toHaveBeenCalledTimes(3); expect(push.busy).toBe(false) })
+  expect(registerPush).toHaveBeenCalledTimes(1)
+  expect(jest.mocked(registerPush).mock.calls[0][2]?.aborted).toBe(false)
+  expect(push.settings?.enabled).toBe(true)
+  expect(push.error).toBeNull()
+})
+
+test('native token events cannot silently enable an off device', async () => {
+  render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(tokenNotification).toBeDefined() })
+  await act(async () => tokenNotification?.(deviceToken))
+  expect(getExpoPushToken).not.toHaveBeenCalled()
+  expect(registerPush).not.toHaveBeenCalled()
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+  expect(push.settings?.enabled).toBe(false)
+})
+
+test('a queued SDK token event after provider disposal cannot start another registration', async () => {
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  const view = render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(tokenNotification).toBeDefined() })
+  const queuedEvent = tokenNotification!
+  view.unmount()
+  jest.mocked(getExpoPushToken).mockResolvedValue('ExpoPushToken[late]')
+  await act(async () => queuedEvent(deviceToken))
+  expect(getExpoPushToken).toHaveBeenCalledTimes(1)
+  expect(registerPush).toHaveBeenCalledTimes(1)
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+})
+
+test('duplicate events share one synchronization and changed events wait for the current registration', async () => {
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(tokenNotification).toBeDefined() })
+  const first = deferred<string>()
+  const secondToken: DevicePushToken = { type: 'android', data: 'rotated-native-token' }
+  jest.mocked(getExpoPushToken).mockReturnValueOnce(first.promise).mockResolvedValueOnce('ExpoPushToken[rotated]')
+  act(() => { tokenNotification?.(deviceToken); tokenNotification?.(deviceToken); tokenNotification?.(secondToken) })
+  await waitFor(() => expect(getExpoPushToken).toHaveBeenCalledTimes(2))
+  expect(registerPush).toHaveBeenCalledTimes(1)
+  await act(async () => first.resolve('ExpoPushToken[new]'))
+  await waitFor(() => { expect(registerPush).toHaveBeenCalledTimes(3); expect(push.busy).toBe(false) })
+  expect(getExpoPushToken).toHaveBeenNthCalledWith(2, false, deviceToken)
+  expect(getExpoPushToken).toHaveBeenNthCalledWith(3, false, secondToken)
+  await act(async () => { tokenNotification?.(secondToken); tokenNotification?.(secondToken) })
+  expect(getExpoPushToken).toHaveBeenCalledTimes(3)
+  expect(registerPush).toHaveBeenCalledTimes(3)
+  expect(jest.mocked(registerPush).mock.calls.map(call => call[1].token)).toEqual([
+    'ExpoPushToken[test]', 'ExpoPushToken[new]', 'ExpoPushToken[rotated]',
+  ])
+})
+
+test.each(['signedOut', 'second'] as const)('explicit registration is discarded after session changes to %s', async (next) => {
+  const view = render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  const token = deferred<string>()
+  jest.mocked(getExpoPushToken).mockReturnValueOnce(token.promise)
+  let pending!: Promise<void>
+  act(() => { pending = push.toggle() })
+  await waitFor(() => expect(getExpoPushToken).toHaveBeenCalledTimes(1))
+  if (next === 'signedOut') jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null } as unknown as ReturnType<typeof useAuth>)
+  else signedIn(next)
+  view.rerender(app())
+  await act(async () => { token.resolve('ExpoPushToken[old]'); await pending })
+  await waitFor(() => expect(push.busy).toBe(false))
+  expect(registerPush).not.toHaveBeenCalled()
+  expect(push.settings).toEqual(next === 'signedOut' ? null : base)
+  expect(push.error).toBeNull()
+})
+
+test('unmount aborts an in-flight registration and ignores its late failure', async () => {
+  const view = render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  const registration = deferred<void>()
+  jest.mocked(registerPush).mockReturnValueOnce(registration.promise)
+  let pending!: Promise<void>
+  act(() => { pending = push.toggle() })
+  await waitFor(() => expect(registerPush).toHaveBeenCalledTimes(1))
+  const signal = jest.mocked(registerPush).mock.calls[0][2]
+  view.unmount()
+  expect(signal?.aborted).toBe(true)
+  await act(async () => { registration.reject(new ApiError(401, 'expired')); await pending })
+  expect(jest.mocked(useAuth)().invalidateSession).not.toHaveBeenCalled()
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+})
+
+test('a late unauthorized response from the previous account cannot invalidate the current account', async () => {
+  const view = render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  const registration = deferred<void>()
+  jest.mocked(registerPush).mockReturnValueOnce(registration.promise)
+  let pending!: Promise<void>
+  act(() => { pending = push.toggle() })
+  await waitFor(() => expect(registerPush).toHaveBeenCalledTimes(1))
+  signedIn('second'); view.rerender(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  await act(async () => { registration.reject(new ApiError(401, 'expired')); await pending })
+  expect(jest.mocked(useAuth)().invalidateSession).not.toHaveBeenCalled()
+  expect(push.settings).toEqual(base)
+  expect(push.error).toBeNull()
+})
+
+test('a failed registration shows the server error and preserves the confirmed off value', async () => {
+  render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  jest.mocked(registerPush).mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+  await act(async () => push.toggle())
+  expect(push.error).toBe('앱 알림 발송이 현재 준비되지 않았어요.')
+  expect(push.settings?.enabled).toBe(false)
+  expect(push.busy).toBe(false)
+})
+
+test('a transport failure during registration reports an unknown result without assuming it is enabled', async () => {
+  render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  jest.mocked(registerPush).mockRejectedValueOnce(new TypeError('network lost'))
+  await act(async () => push.toggle())
+  expect(push.error).toBe('앱 알림 설정 변경 결과를 확인하지 못했어요. 다시 확인해 주세요.')
+  expect(push.settings?.enabled).toBe(false)
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+})
+
+test('confirmation failure after successful registration stays visible until a successful refresh', async () => {
+  render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  jest.mocked(getPushSettings).mockRejectedValueOnce(new TypeError('read lost'))
+  await act(async () => push.toggle())
+  expect(push.error).toBe('앱 알림 설정을 변경했지만 서버 상태를 확인하지 못했어요. 다시 확인해 주세요.')
+  expect(push.settings?.enabled).toBe(false)
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  await act(async () => push.refresh())
+  await waitFor(() => { expect(push.settings?.enabled).toBe(true); expect(push.busy).toBe(false) })
+  expect(push.error).toBeNull()
+  expect(registerPush).toHaveBeenCalledTimes(1)
+})
+
+test('a server response that did not apply the requested setting is explicit instead of silently reverting', async () => {
+  render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  await act(async () => push.toggle())
+  expect(registerPush).toHaveBeenCalledTimes(1)
+  expect(push.settings?.enabled).toBe(false)
+  expect(push.error).toBe('앱 알림 설정이 요청한 상태로 확인되지 않았어요. 다시 확인해 주세요.')
+})
+
+test('an unauthorized confirmation still invalidates the active session and leaves an explicit error', async () => {
+  render(app())
+  await waitFor(() => expect(push.busy).toBe(false))
+  jest.mocked(getPushSettings).mockRejectedValueOnce(new ApiError(401, 'expired'))
+  await act(async () => push.toggle())
+  expect(jest.mocked(useAuth)().invalidateSession).toHaveBeenCalledTimes(1)
+  expect(push.error).toBe('앱 알림 설정을 변경했지만 서버 상태를 확인하지 못했어요. 다시 확인해 주세요.')
+})
+
+test('a token renewal failure remains visible and does not query or change subscription settings', async () => {
+  jest.mocked(getPushSettings).mockResolvedValue({ ...base, enabled: true })
+  render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(tokenNotification).toBeDefined() })
+  jest.mocked(getExpoPushToken).mockRejectedValueOnce(new Error('앱 알림 토큰을 받지 못했어요.'))
+  await act(async () => tokenNotification?.(deviceToken))
+  await waitFor(() => expect(push.error).toBe('앱 알림 토큰을 받지 못했어요.'))
+  expect(push.settings?.enabled).toBe(true)
+  expect(registerPush).toHaveBeenCalledTimes(1)
+  expect(getPushSettings).toHaveBeenCalledTimes(1)
+})
+
+test('foreground permission revocation disables an enabled device using the confirmed server response', async () => {
+  let enabled = true
+  jest.mocked(getPushSettings).mockImplementation(async () => ({ ...base, enabled }))
+  jest.mocked(disablePush).mockImplementation(async () => { enabled = false })
+  let change!: (state: AppStateStatus) => void
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => { change = callback; return { remove: jest.fn() } })
+  render(app())
+  await waitFor(() => { expect(push.busy).toBe(false); expect(registerPush).toHaveBeenCalledTimes(1) })
+  native.getPermissionsAsync.mockResolvedValue({ granted: false, status: 'denied' })
+  await act(async () => change('active'))
+  await waitFor(() => { expect(push.settings?.enabled).toBe(false); expect(push.busy).toBe(false) })
+  expect(disablePush).toHaveBeenCalledTimes(1)
+  expect(push.permissionDenied).toBe(true)
+  expect(getExpoPushToken).toHaveBeenCalledTimes(1)
 })

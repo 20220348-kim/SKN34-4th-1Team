@@ -2,6 +2,7 @@ import Constants from 'expo-constants'
 import * as Crypto from 'expo-crypto'
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
+import type { DevicePushToken } from 'expo-notifications'
 import { z } from 'zod'
 
 let devicePromise: Promise<string> | undefined
@@ -30,7 +31,7 @@ export async function notificationModule() {
   return import('expo-notifications')
 }
 
-export async function getExpoPushToken(requestPermission: boolean): Promise<string> {
+export async function getExpoPushToken(requestPermission: boolean, devicePushToken?: DevicePushToken): Promise<string> {
   const notifications = await notificationModule()
   const projectId = Constants.expoConfig?.extra?.eas?.projectId
   if (typeof projectId !== 'string' || !projectId) throw new Error('앱 알림 연결 설정이 준비되지 않았어요.')
@@ -46,6 +47,7 @@ export async function getExpoPushToken(requestPermission: boolean): Promise<stri
   let permission = await notifications.getPermissionsAsync()
   if (requestPermission && !permission.granted) permission = await notifications.requestPermissionsAsync()
   if (!permission.granted) throw new PushPermissionDeniedError()
-  try { return (await notifications.getExpoPushTokenAsync({ projectId })).data }
+  // SDK 토큰 이벤트에서는 기기 토큰을 다시 조회하지 않아야 같은 이벤트가 반복되지 않습니다.
+  try { return (await notifications.getExpoPushTokenAsync({ projectId, ...(devicePushToken ? { devicePushToken } : {}) })).data }
   catch { throw new Error('앱 알림 토큰을 받지 못했어요. 네트워크와 앱 연결 설정을 확인해 주세요.') }
 }
