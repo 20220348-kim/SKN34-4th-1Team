@@ -20,6 +20,7 @@ SERVICES = ("core-service", "catalog-service", "ai-service", "ops-service")
 PLATFORM = "linux/amd64"
 RUNNER = "evaluation-runner"
 RUNNER_DOCKERFILE = "infrastructure/llmops/Dockerfile.runner"
+RUNNER_IGNORE = RUNNER_DOCKERFILE + ".dockerignore"
 RUNNER_RELEASE = "backend/ops-service/apps/evaluations/execution_release.json"
 WEB = "web"
 WEB_DOCKERFILE = "frontend/web/Dockerfile"
@@ -30,10 +31,11 @@ WEB_PATHS = (
 )
 # Only the portfolio build is currently exercised by the required image CI.
 WEB_MODE = "portfolio"
-# This image has a repository-root context. Archive only its actual COPY inputs;
+# This image has a repository-root context. Archive its COPY inputs and build policy;
 # never send local .env files, work/, caches or an entire checkout to Docker.
 RUNNER_PATHS = (
     RUNNER_DOCKERFILE,
+    RUNNER_IGNORE,
     "backend/ai-service/pyproject.toml",
     "backend/ai-service/uv.lock",
     "backend/ai-service/app",
@@ -41,7 +43,7 @@ RUNNER_PATHS = (
     *("backend/ops-service/apps/evaluations/" + name for name in (
         "catalog.py", "capture_catalog.json", "rag_live_plans.json", "recovery_inputs.py",
         "execution_spec.py", "execution_release.json", "quality_policy.py", "rag_replay.py",
-        "vector_cache.py", "artifact_files.py",
+        "vector_cache.py", "artifact_files.py", "managed_materials.py",
     )),
 )
 
