@@ -506,6 +506,7 @@ describe('AI search plan usage', () => {
     const view = render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
     await screen.findByText('로그인 전 체험 오늘 2회 남음')
     expect(color('로그인 전 체험 오늘 2회 남음')).toBe(colors.muted)
+    expect(screen.queryByText('AI 답변은 참고용입니다. 최종 신청 조건은 공고 원문에서 확인하세요.')).toBeNull()
     expect(planUsageUseCase).toHaveBeenCalledWith(undefined)
     view.unmount()
 
