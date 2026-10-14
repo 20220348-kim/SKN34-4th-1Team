@@ -78,8 +78,12 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     aiSearchUsage,
   } = useChatPageViewModel()
 
-  const hasReadinessNotice = readiness.isInitialLoading || readiness.isError
-    || readiness.data?.searchState !== 'SEARCHABLE'
+  // 처음 상태 확인 중과 최신 동기화 실패 안내는 깜빡여 보여 숨겼으므로 접근성 참조도 걸지 않습니다.
+  // const hasReadinessNotice = readiness.isInitialLoading || readiness.isError
+  //   || readiness.data?.searchState !== 'SEARCHABLE'
+  const hasReadinessNotice = !readiness.isInitialLoading && (readiness.isError
+    || (readiness.data?.searchState !== 'SEARCHABLE'
+      && readiness.data?.searchState !== 'SEARCHABLE_WITH_SYNC_FAILURE'))
   const isLandingIntro = layout === 'landing' && conversationCount === 0
   const isDockedLanding = layout === 'landing' && !isLandingIntro
   const isGuest = layout === 'landing'
@@ -561,16 +565,18 @@ function SupportProgramSearchReadinessNotice({
   onRetry,
 }: SupportProgramSearchReadinessNoticeProps) {
   if (isInitialLoading) {
-    return (
-      <section
-        id="support-program-search-readiness"
-        className={chatPageStyles.readinessNotice}
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        공고 데이터 상태를 확인하고 있습니다.
-      </section>
-    )
+    // 처음 상태를 확인하는 잠깐 동안만 나타났다 사라져 깜빡여 보이므로 안내를 숨깁니다.
+    // return (
+    //   <section
+    //     id="support-program-search-readiness"
+    //     className={chatPageStyles.readinessNotice}
+    //     aria-live="polite"
+    //     aria-atomic="true"
+    //   >
+    //     공고 데이터 상태를 확인하고 있습니다.
+    //   </section>
+    // )
+    return null
   }
 
   if (isError || !readiness) {
@@ -628,7 +634,9 @@ function getReadinessNoticeMessage(readiness: SupportProgramSearchReadiness) {
     case 'SEARCHABLE':
       return null
     case 'SEARCHABLE_WITH_SYNC_FAILURE':
-      return '최신 공고를 불러오지 못해 이전에 저장한 공고에서 검색합니다.'
+      // 저장된 공고로 검색은 그대로 되고 안내만 깜빡여 보여 숨깁니다.
+      // return '최신 공고를 불러오지 못해 이전에 저장한 공고에서 검색합니다.'
+      return null
     case 'SEARCHABLE_WITH_PARTIAL_SOURCES':
       return '일부 제공처의 공고만 검색할 수 있습니다.'
     case 'UNAVAILABLE':
