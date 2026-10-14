@@ -215,9 +215,11 @@ def score_payloads(result: dict, settings: LangfuseSettings) -> list[dict]:
                 "evaluation_run_id": result["run_id"], "capture_sha256": result["capture_sha256"],
                 "fixture_sha256": result["fixture_sha256"], "evaluator_version": EVALUATOR_VERSION,
                 "prompt_sha256": result["capture"]["promptSha256"], "model": result["capture"]["model"],
-                "source_started_at": result["capture"].get("startedAt"), "record_kind": "captured-model-evaluation" if "modelApiCalls" in result["capture"] else "saved-capture-recalculation",
+                "source_started_at": result["capture"].get("startedAt"),
+                "record_kind": "admin-entered-answer" if result["summary"].get("measurementKind") == "admin-entered-answer"
+                else "captured-model-evaluation" if "modelApiCalls" in result["capture"] else "saved-capture-recalculation",
                 "source_completed": result["summary"]["completed"],
-                "reference_source": "ai-authored", "scope": result["summary"]["scope"], "retrieval_evaluated": False}
+                "reference_source": result["summary"]["referenceSource"], "scope": result["summary"]["scope"], "retrieval_evaluated": False}
     payloads = []
     records = {case["caseId"]: case for case in result["capture"]["cases"]}
     for row in result["frame"].to_dict(orient="records"):

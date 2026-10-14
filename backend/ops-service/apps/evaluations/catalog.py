@@ -3,6 +3,8 @@
 import json
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from uuid import UUID
 
@@ -15,6 +17,77 @@ LIVE_CAPTURE_ID = "new-model-response"
 MAX_INPUT_TOKENS = 32768
 RAG_SCOPE = "source-chunks-retrieval-answer"
 DEFAULT_ALLOWED_MODELS = "gpt-6-luna,gpt-6-sol,gpt-5.6-luna"
+_managed_snapshot = ContextVar("managed_evaluation_snapshot", default=None)
+
+
+@contextmanager
+def managed_snapshot_context(snapshot):
+    """실행기는 DB 없이 해당 실행에 고정한 자료만 조회한다. 전역 목록을 변경하지 않는다."""
+    from .managed_materials import validate_snapshot
+
+    token = _managed_snapshot.set(validate_snapshot(snapshot))
+    try:
+        yield
+    finally:
+        _managed_snapshot.reset(token)
+
+
+def get_snapshot(dataset_id):
+    if dataset_id in DATASETS:
+        return None
+    from .managed_materials import MANAGED_ID, validate_snapshot
+
+    if not isinstance(dataset_id, str) or not MANAGED_ID.fullmatch(dataset_id):
+        raise KeyError(dataset_id)
+    snapshot = _managed_snapshot.get()
+    if snapshot is not None:
+        if snapshot["catalog"]["id"] != dataset_id:
+            raise KeyError(dataset_id)
+        return snapshot
+    # Django API·sync는 불변 DB 버전을 읽고, SDK 실행기는 위 context를 사용한다.
+    from .models import EvaluationDatasetRevision
+
+    revision = EvaluationDatasetRevision.objects.filter(pk=dataset_id).first()
+    if revision is None:
+        raise KeyError(dataset_id)
+    return validate_snapshot(revision.snapshot)
+
+
+def get_dataset(dataset_id):
+    return DATASETS[dataset_id] if dataset_id in DATASETS else get_snapshot(dataset_id)["catalog"]
+
+
+def dataset_label(dataset_id):
+    try:
+        return get_dataset(dataset_id)["label"]
+    except KeyError:
+        return dataset_id
+
+
+def managed_datasets():
+    """보관되지 않은 자료의 최신 게시 버전만 새 평가 선택지에 노출한다."""
+    from .managed_materials import validate_snapshot
+    from .models import EvaluationDatasetRevision
+
+    result, seen = [], set()
+    for revision in EvaluationDatasetRevision.objects.filter(dataset__archived=False).order_by(
+        "dataset_id", "-number"
+    ):
+        if revision.dataset_id not in seen:
+            seen.add(revision.dataset_id)
+            result.append(validate_snapshot(revision.snapshot)["catalog"])
+    return result
+
+
+def read_managed_evidence(name):
+    from .managed_materials import encoded
+
+    match = re.fullmatch(
+        r"managed/(managed-[a-f0-9]{32}-v[1-9][0-9]{0,8})/(fixture|capture)\.json", name
+    )
+    if match is None:
+        raise ValueError("Invalid managed evidence")
+    return encoded(get_snapshot(match[1])[match[2]])
 
 
 def allowed_models():
@@ -33,7 +106,7 @@ def allowed_models():
 
 
 def evaluation_scope(dataset_id):
-    return DATASETS[dataset_id].get("evaluation_scope", "fixed-answer-context-only")
+    return get_dataset(dataset_id).get("evaluation_scope", "fixed-answer-context-only")
 
 
 def live_config(dataset_id, *, model=None, document_vectors=None):
@@ -41,7 +114,7 @@ def live_config(dataset_id, *, model=None, document_vectors=None):
     model = models[0] if model is None else model
     if model not in models:
         raise ValueError("서버에서 허용한 평가 모델을 선택하세요.")
-    dataset = DATASETS[dataset_id]
+    dataset = get_dataset(dataset_id)
     if evaluation_scope(dataset_id) == RAG_SCOPE:
         from .execution_spec import read_release
 
@@ -105,7 +178,7 @@ def validate_execution(
 
 def selection(dataset_id, candidate_capture_id, reference_capture_id):
     try:
-        dataset = DATASETS[dataset_id]
+        dataset = get_dataset(dataset_id)
         captures = {item["id"]: item for item in dataset["captures"]}
         candidate = (
             {"id": LIVE_CAPTURE_ID, "label": "새 모델 응답"}
@@ -145,7 +218,7 @@ def validate_reference_config(dataset_id, capture_id, config):
         not isinstance(config, dict)
         or set(config) != keys
         or config["run_id"] != reference_run_id(capture_id)
-        or config["fixture_sha256"] != DATASETS[dataset_id]["fixture_sha256"]
+        or config["fixture_sha256"] != get_dataset(dataset_id)["fixture_sha256"]
         or not isinstance(config["capture_sha256"], str)
         or not re.fullmatch(r"[a-f0-9]{64}", config["capture_sha256"])
     ):
@@ -159,12 +232,12 @@ def validate_reference_config(dataset_id, capture_id, config):
         raise ValueError("RAG 기준의 합격 판정 근거가 필요합니다.")
 
 
-def public_datasets():
+def public_datasets(*, include_managed=False):
     from .execution_spec import digest, profile, read_release
 
-    release = read_release()
     result = []
-    for item in DATASETS.values():
+    for item in [*DATASETS.values(), *(managed_datasets() if include_managed else [])]:
+        release = read_release(item["id"])
         config = live_config(item["id"])
         options = [{**config, "model": model} for model in allowed_models()] if config else []
         result.append(

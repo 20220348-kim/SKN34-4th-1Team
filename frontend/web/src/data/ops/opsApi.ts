@@ -126,6 +126,23 @@ const evaluationCatalogSchema = z.object({
     execution_profiles: z.object({ replay: z.string().regex(/^[a-f0-9]{64}$/), live: z.string().regex(/^[a-f0-9]{64}$/).nullable() }),
   })),
 })
+const datasetAnswerSchema = z.object({ text: z.string(), status: z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE']), citation_orders: z.array(z.number().int().nonnegative()) })
+const managedDatasetContentSchema = z.object({
+  title: z.string(), description: z.string(),
+  documents: z.array(z.object({ id: z.string(), title: z.string(), source_url: z.string(), chunks: z.array(z.string()).max(5) })).max(3),
+  cases: z.array(z.object({ id: z.string(), document_id: z.string(), question: z.string(), expected_status: z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE']),
+    expected_citation_orders: z.array(z.number().int().nonnegative()), reference_facts: z.array(z.string()), forbidden_claims: z.array(z.string()), answer: datasetAnswerSchema.nullable(),
+  })).max(12),
+})
+const managedDatasetSchema = z.object({
+  id: z.uuid(), version: z.number().int().positive(), archived: z.boolean(), content: managedDatasetContentSchema,
+  created_at: z.string(), updated_at: z.string(),
+  revisions: z.array(z.object({ id: z.string(), number: z.number().int().positive(), created_at: z.string(), label: z.string() })),
+})
+export type ManagedDatasetContent = z.infer<typeof managedDatasetContentSchema>
+export type ManagedDataset = z.infer<typeof managedDatasetSchema>
+export type ManagedDatasetWrite = { request_id: string; expected_version: number; content: ManagedDatasetContent }
+export type ManagedDatasetAction = { request_id: string; expected_version: number }
 const externalUrl = z.url().refine((value) => /^https?:\/\//.test(value)).nullable()
 const executionSchema = z.object({
   run_id: z.string(), model: z.string(), prompt_sha256: z.string(), runner_sha256: z.string(),
@@ -523,8 +540,9 @@ const reviewSchema = z.object({
   })),
   material: z.object({
     capture_sha256: z.string(), fixture_sha256: z.string(),
-    data_type: z.enum(['synthetic', 'official-html-snapshot']).optional(),
-    candidate_origin: z.enum(['recorded-answer', 'historical-answer-projection']).optional(),
+    data_type: z.enum(['synthetic', 'official-html-snapshot', 'admin-provided']).optional(),
+    reference_source: z.enum(['ai-authored', 'admin-authored']).optional(),
+    candidate_origin: z.enum(['recorded-answer', 'historical-answer-projection', 'admin-entered-answer']).optional(),
     recorded_model: z.string().optional(), recorded_at: z.string().nullable().optional(),
     reference_revision: z.object({
       previous_dataset_id: z.string(), previous_fixture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -532,6 +550,7 @@ const reviewSchema = z.object({
     }).nullable().optional(),
     cases: z.array(z.object({
       case_id: z.string(), question: z.string(), document_title: z.string(),
+      source_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullish(),
       source: z.object({
         url: z.url().refine((value) => value.startsWith('https://www.bizinfo.go.kr/')),
         collected_at: z.iso.datetime({ offset: true }), html_sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -660,6 +679,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
       : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT', 'SCHEDULE_SETTINGS_CONFLICT', 'SCHEDULE_DISABLED', 'SCHEDULE_BUDGET_UNAVAILABLE', 'EXECUTION_PROFILE_CHANGED', 'REVIEWED_BASELINE_REQUIRED', 'ACTIVE_SCHEDULE_EXISTS'].includes(error?.code) && typeof error?.detail === 'string'
         ? error.detail
+      : path.startsWith('/datasets') && ['DATASET_VALIDATION_ERROR', 'DATASET_CONFLICT'].includes(error?.code) && typeof error?.detail === 'string' ? error.detail
+      : path.startsWith('/datasets') && response.status === 404 ? '평가 자료를 찾을 수 없습니다. 목록을 새로고침하세요.'
       : path === '/evaluation-catalog' && error?.code === 'VECTOR_CACHE_UNAVAILABLE' ? '평가 자료에 연결된 저장 벡터를 확인할 수 없습니다. 잠시 후 다시 조회하세요.'
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
       : error?.code === 'INVALID_RAG_REFERENCE_REVIEW' ? '전체 대상 자료의 확인과 참조 검토 근거를 입력하세요.'
@@ -687,6 +708,13 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
 export const getEvaluationCatalog = (signal?: AbortSignal) => request('/evaluation-catalog', evaluationCatalogSchema, { signal })
+export const getManagedDatasets = (signal?: AbortSignal) => request('/datasets', z.object({ datasets: z.array(managedDatasetSchema), builtin_count: z.number().int().nonnegative() }), { signal })
+export const getManagedDataset = (id: string, signal?: AbortSignal) => request(`/datasets/${encodeURIComponent(id)}`, managedDatasetSchema.refine((value) => value.id === id), { signal })
+export const createManagedDataset = (data: ManagedDatasetWrite, owner: string) => post('/datasets', data, managedDatasetSchema, false, owner)
+export const saveManagedDataset = (id: string, data: ManagedDatasetWrite, owner: string) => post(`/datasets/${encodeURIComponent(id)}`, data, managedDatasetSchema.refine((value) => value.id === id), false, owner, 'PUT')
+export const publishManagedDataset = (id: string, data: ManagedDatasetAction, owner: string) => post(`/datasets/${encodeURIComponent(id)}/publish`, data, managedDatasetSchema.refine((value) => value.id === id), false, owner)
+export const archiveManagedDataset = (id: string, data: ManagedDatasetAction & { archived: boolean }, owner: string) => post(`/datasets/${encodeURIComponent(id)}/archive`, data, managedDatasetSchema.refine((value) => value.id === id), false, owner)
+
 export const getProductionQuality = (page: number, signal?: AbortSignal) => request(`/production-quality?page=${page}`, productionQualitySchema.refine((value) => value.page === page), { signal })
 export const getProductionSample = (id: string, signal?: AbortSignal) => request(`/production-quality/${encodeURIComponent(id)}`, productionDetailSchema.refine((value) => value.id === id), { signal })
 export const saveProductionReview = (id: string, data: ProductionReviewInput, owner: string) => post(`/production-quality/${encodeURIComponent(id)}/review`, data, productionDetailSchema.refine((value) => value.id === id && value.review?.reviewer === owner), false, owner)

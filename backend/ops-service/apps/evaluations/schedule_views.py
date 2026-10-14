@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from .admission import AdmissionUnavailable
 from .artifact_store import ResultsUnavailable
 from .budget import BudgetUnavailable
-from .catalog import DATASETS
+from .catalog import get_dataset
 from .models import EvaluationSchedule
 from .schedule_settings import change_settings, enabled, status
 from .schedules import SEOUL, ScheduleBlocked, create_schedule, pause_schedule
@@ -28,7 +28,15 @@ class ScheduleReasonSerializer(serializers.Serializer):
 
 
 class ScheduleSerializer(ScheduleReasonSerializer):
-    dataset_id = serializers.ChoiceField(choices=tuple(DATASETS))
+    dataset_id = serializers.CharField(max_length=100)
+
+    def validate_dataset_id(self, value):
+        try:
+            get_dataset(value)
+        except KeyError:
+            raise serializers.ValidationError("등록된 평가 자료를 선택하세요.") from None
+        return value
+
     reference_capture_id = serializers.RegexField(r"^run:[0-9a-f-]{36}$")
     baseline_version = serializers.IntegerField(min_value=1)
     execution_profile = serializers.RegexField(r"^[a-f0-9]{64}$")

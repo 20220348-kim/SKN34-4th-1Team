@@ -48,13 +48,14 @@ def load_fixture(path: Path) -> tuple[dict, list[tuple[dict, SupportProgramEvide
     fixture = json.loads(raw)
     require(isinstance(fixture, dict), "fixture must be an object")
     official = fixture.get("schemaVersion") == "support-program-evidence-eval-v2"
-    require(official or fixture.get("schemaVersion") == "support-program-evidence-eval-v1", "unsupported fixture schema")
+    managed = fixture.get("schemaVersion") == "support-program-evidence-eval-v3"
+    require(official or managed or fixture.get("schemaVersion") == "support-program-evidence-eval-v1", "unsupported fixture schema")
     require(fixture.get("scope", "fixed-answer-context-only") == "fixed-answer-context-only", "unsupported fixture scope")
-    require(fixture.get("dataType") == ("official-html-snapshot" if official else "synthetic"), "fixture source type differs")
+    require(fixture.get("dataType") == ("official-html-snapshot" if official else "admin-provided" if managed else "synthetic"), "fixture source type differs")
     if official:
         from official_snapshot import validate_fixture
         validate_fixture(fixture)
-    require(fixture.get("referenceSource") == "ai-authored", "reference source must be disclosed")
+    require(fixture.get("referenceSource") == ("admin-authored" if managed else "ai-authored"), "reference source must be disclosed")
     documents = fixture.get("documents")
     cases = fixture.get("cases")
     require(isinstance(documents, list) and 1 <= len(documents) <= 3, "expected 1 to 3 documents")
@@ -142,7 +143,18 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
         return result
     require(isinstance(capture, dict), "capture must be an object")
     historical = capture.get("schemaVersion") == "support-program-evidence-capture-v2"
-    require(historical or capture.get("schemaVersion") == "support-program-evidence-capture-v1", "unsupported capture schema")
+    manual = capture.get("schemaVersion") == "support-program-evidence-capture-v3"
+    require(historical or manual or capture.get("schemaVersion") == "support-program-evidence-capture-v1", "unsupported capture schema")
+    if manual:
+        require(fixture.get("schemaVersion") == "support-program-evidence-eval-v3"
+                and capture.get("measurementKind") == "admin-entered-answer"
+                and capture.get("model") == "not-recorded"
+                and type(capture.get("modelApiCalls")) is int and capture["modelApiCalls"] == 0
+                and capture.get("completed") is True
+                and not capture.get("apiResponses") and capture.get("startedAt") is None,
+                "manual answers must not claim recorded model execution")
+        result["measurementKind"] = "admin-entered-answer"
+        result["modelMeasured"] = False
     if historical:
         from official_snapshot import validate_projection
         validate_projection(fixture, capture)
@@ -153,11 +165,11 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
     require(capture.get("fixtureSha256") == fixture_hash, "capture fixture hash differs")
     for field in ("promptSha256", "runnerSha256"):
         value = capture.get(field)
-        require(isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value),
+        require(field in capture and value is None if manual else isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value),
                 "capture execution hashes required")
     require(isinstance(capture.get("model"), str) and bool(capture["model"].strip()), "capture model required")
     for field in ("modelTimeoutSeconds", "runTimeoutSeconds"):
-        require(capture.get(field) is None if historical else
+        require(field in capture and capture[field] is None if historical or manual else
                 type(capture.get(field)) in (int, float) and 0 < capture[field] < float("inf"), "invalid timeout")
     result["execution"] = {field: capture[field] for field in (
         "model", "promptSha256", "runnerSha256", "modelTimeoutSeconds", "runTimeoutSeconds",
@@ -171,6 +183,10 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
     failed = False
     for index, record in enumerate(records):
         require(isinstance(record, dict), "invalid capture record")
+        if manual:
+            require(record.get("outcome") == "success" and record.get("elapsedMs") is None and not record.get("apiResponseIndexes")
+                    and record.get("traceId") is None,
+                    "manual answers cannot include model timing, usage, or trace records")
         case, request = prepared[index]
         require(record.get("caseId") == case["id"] and record.get("requestSha256") == request_digest(request),
                 "capture request order or hash differs")

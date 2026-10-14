@@ -17,6 +17,7 @@ EVALUATION_FILES = (
     EVIDENCE + "official_snapshot.py",
     EVIDENCE + "verify_flow.py",
     EVIDENCE + "llmops.py",
+    OPS + "managed_materials.py",
     AI + "app/support_program_evidence/models.py",
     AI + "app/support_program_identity.py",
     *DEPENDENCIES,
@@ -45,6 +46,7 @@ PIPELINE_FILES = (
     OPS + "quality_policy.py",
     OPS + "vector_cache.py",
     OPS + "artifact_files.py",
+    OPS + "managed_materials.py",
 )
 RAG_FILES = (
     EVIDENCE + "rag_evaluate.py",
@@ -243,8 +245,16 @@ def build_release(root):
     }
 
 
-def read_release():
-    return json.loads(RELEASE_PATH.read_text())
+def read_release(dataset_id=None):
+    release = json.loads(RELEASE_PATH.read_text())
+    if dataset_id is not None:
+        from .catalog import get_snapshot
+        from .managed_materials import release_dataset
+
+        snapshot = get_snapshot(dataset_id)
+        if snapshot is not None:
+            release["datasets"][dataset_id] = release_dataset(snapshot)
+    return release
 
 
 def profile(release, dataset_id, mode, config):
@@ -348,6 +358,18 @@ def verify_spec(spec, spec_hash, actual_release, **selection):
     try:
         if not spec or digest(spec) != spec_hash:
             raise ExecutionSpecMismatch("Execution specification is missing or corrupt")
+        snapshot = spec.get("dataset", {}).get("managed_snapshot")
+        if snapshot is not None:
+            from .managed_materials import release_dataset, validate_snapshot
+
+            snapshot = validate_snapshot(snapshot)
+            identifier = snapshot["catalog"]["id"]
+            if identifier != selection["dataset_id"] or identifier in actual_release["datasets"]:
+                raise ExecutionSpecMismatch("Managed material identity differs")
+            actual_release = {
+                **actual_release,
+                "datasets": {**actual_release["datasets"], identifier: release_dataset(snapshot)},
+            }
         actual = make_spec(
             actual_release,
             baseline_version=spec["baseline_version"],

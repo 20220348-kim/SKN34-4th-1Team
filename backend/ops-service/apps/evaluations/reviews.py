@@ -7,7 +7,7 @@ from django.db import transaction
 
 from .artifact_store import read_artifact, read_evidence
 from .baselines import change_baseline, lock_baseline
-from .catalog import DATASETS, selection
+from .catalog import get_dataset, selection
 from .models import EvaluationBaseline, EvaluationCaseReview, EvaluationReview, EvaluationRun
 from .quality import quality_pass, quality_state
 from .review_eligibility import (
@@ -26,7 +26,7 @@ from .services import (
 def review_material(run):
     try:
         capture, capture_hash, comparison = read_candidate(run)
-        dataset = DATASETS[run.dataset_id]
+        dataset = get_dataset(run.dataset_id)
         raw = read_evidence(dataset["fixture"])
         if sha256(raw).hexdigest() != dataset["fixture_sha256"]:
             raise ResultsUnavailable
@@ -45,7 +45,11 @@ def review_material(run):
         if (
             sha256(reference_raw).hexdigest() != comparison["reference_execution"]["capture_sha256"]
             or reference_capture.get("schemaVersion")
-            not in {"support-program-evidence-capture-v1", "support-program-evidence-capture-v2"}
+            not in {
+                "support-program-evidence-capture-v1",
+                "support-program-evidence-capture-v2",
+                "support-program-evidence-capture-v3",
+            }
             or reference_capture.get("scope", "fixed-answer-context-only") != comparison["scope"]
             or reference_capture["fixtureSha256"] != dataset["fixture_sha256"]
             or reference_capture["completed"] is not True
@@ -73,6 +77,7 @@ def review_material(run):
         return {
             "evaluation_scope": comparison["scope"],
             "data_type": fixture.get("dataType", "synthetic"),
+            "reference_source": fixture.get("referenceSource", "ai-authored"),
             "candidate_origin": capture.get("measurementKind", "recorded-answer"),
             "recorded_model": capture["model"],
             "recorded_at": capture.get("startedAt"),
@@ -108,6 +113,10 @@ def review_material(run):
                     }
                     if official
                     else None,
+                    "source_url": documents[cases[case_id]["documentId"]]
+                    .get("source", {})
+                    .get("sourceUrl")
+                    or None,
                     "answer": results[case_id]["answer"],
                     "answer_status": results[case_id]["answerStatus"],
                     "cited_orders": cited_orders[case_id],

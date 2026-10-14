@@ -16,6 +16,7 @@ COPY backend/ops-service/apps/evaluations/catalog.py backend/ops-service/apps/ev
 COPY backend/ops-service/apps/evaluations/recovery_inputs.py /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/execution_spec.py backend/ops-service/apps/evaluations/execution_release.json /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/quality_policy.py /app/backend/ops-service/apps/evaluations/
+COPY backend/ops-service/apps/evaluations/managed_materials.py /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/rag_replay.py /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/vector_cache.py backend/ops-service/apps/evaluations/artifact_files.py /app/backend/ops-service/apps/evaluations/
 RUN .venv/bin/python /app/backend/ops-service/apps/evaluations/execution_spec.py

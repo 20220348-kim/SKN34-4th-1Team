@@ -114,6 +114,8 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
     {!data ? loading && <p role="status">검토 자료를 불러오고 있습니다.</p> : <>
       <EvaluationReviewProgress data={data} hasDrafts={hasDrafts} disabled={locked || !!error} onNavigate={navigateReview} />
       <details className="text-sm"><summary className="cursor-pointer font-semibold">평가 자료의 출처·범위·변경 내용</summary><div className="mt-3 grid gap-3">
+      {data.material?.data_type === 'admin-provided' && <p className="rounded-xl bg-slate-50 p-3 text-sm">관리자가 직접 입력한 원문과 채점 조건입니다. 출처 링크의 본문·첨부파일을 자동 수집한 자료가 아니며, 입력자가 사람이라는 이유로 검토 승인이나 정답이 보장되지는 않습니다.</p>}
+      {data.material?.candidate_origin === 'admin-entered-answer' && <p className="rounded-xl bg-amber-50 p-3 text-sm">관리자 입력 답변 · 실제 모델 호출 기록이 아닙니다. 무료 채점·검토용이며 현재 모델의 성능 측정으로 해석하지 마세요.</p>}
       {data.material?.data_type === 'official-html-snapshot' && <p className="rounded-xl bg-amber-50 p-3 text-sm">실제 공고에서 저장한 HTML 근거입니다. 수집 당시 본문만 포함하며 첨부파일과 현재 공고의 변경 내용은 포함하지 않습니다. 참조 조건은 AI 작성 자료이므로 원문을 대조한 사람 검토가 필요합니다.</p>}
       {data.material?.candidate_origin === 'historical-answer-projection' && <p className="rounded-xl bg-slate-50 p-3 text-sm">과거 저장 응답 · {data.material.recorded_model} · {data.material.recorded_at ? new Date(data.material.recorded_at).toLocaleString('ko-KR') : '시각 미기록'}. 이번에 생성한 응답이나 현재 모델의 성능 측정이 아닙니다. 검색 품질은 이 평가에 포함하지 않습니다.</p>}
       {data.material?.reference_revision && <section aria-label="참조 조건 변경 내용" className="grid gap-2 rounded-xl bg-amber-50 p-4 text-sm">
@@ -153,13 +155,14 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
         return <article id={`case-review-${item.case_id}`} tabIndex={-1} key={item.case_id} style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-4 rounded-xl border border-line p-4">
         <h3 className="font-bold">{item.case_id} · {item.question}</h3>
         <p className="text-xs text-ink-muted">{item.document_title}</p>
+        {item.source_url && <a className="text-xs text-brand-primary underline" href={item.source_url} target="_blank" rel="noreferrer">관리자가 기록한 출처 보기 · 자동 수집 없음</a>}
         {item.source && <div className="grid gap-1 text-xs text-ink-muted"><a className="underline" href={item.source.url} target="_blank" rel="noreferrer">공고 출처 보기</a><p>원문 수집: {new Date(item.source.collected_at).toLocaleString('ko-KR')} · 저장한 HTML 본문 · 첨부 미포함</p><details><summary>저장 원문 검증 정보</summary><p className="break-all">HTML SHA-256: {item.source.html_sha256}</p><p className="break-all">본문 SHA-256: {item.source.content_sha256}</p></details></div>}
         <div className="grid items-start gap-4 lg:grid-cols-2">
           <section className="min-w-0 rounded-xl bg-slate-50 p-4" aria-label={`${item.case_id} 원문과 참조 조건`}>
             <h4 className="mb-3 font-bold">1. 원문 근거 확인</h4>
-            <p className="mb-3 text-xs text-ink-muted">답변에 쓰인 근거와 AI가 작성한 평가 조건을 대조하세요.</p>
+            <p className="mb-3 text-xs text-ink-muted">답변에 쓰인 근거와 작성된 평가 조건을 대조하세요.</p>
             <details open><summary className="cursor-pointer text-sm font-semibold">제공한 근거 청크</summary><div className="mt-3 grid gap-3">{item.evidence.map((chunk) => <div key={chunk.order} className="min-w-0 border-l-2 border-brand-primary pl-3 text-sm leading-7 [overflow-wrap:anywhere]"><strong>청크 {chunk.order}{item.cited_orders.includes(chunk.order) ? ' · 후보가 인용함' : ''}</strong><p className="whitespace-pre-wrap break-words">{chunk.text}</p></div>)}</div></details>
-            <details className="mt-4 border-t border-line pt-3"><summary className="cursor-pointer text-sm font-semibold">AI 작성 참조 조건</summary><div className="mt-3 grid gap-2 text-sm leading-6"><p>예상 상태: {item.expected_status === 'ANSWERED' ? '근거로 답변 가능' : '근거 부족으로 답변을 보류해야 함'} · 예상 인용 청크: {item.expected_citation_orders.join(', ') || '없음'}</p><p className="text-xs text-ink-muted">청크 번호는 0부터 시작하는 근거의 식별자입니다. ‘0’은 첫 번째 근거이며 인용 개수가 아닙니다.</p><p>포함할 사실: {item.reference_facts.join(' / ') || '지정 없음'}</p><p>포함하면 안 되는 주장: {item.forbidden_claims.join(' / ') || '지정 없음'}</p></div></details>
+            <details className="mt-4 border-t border-line pt-3"><summary className="cursor-pointer text-sm font-semibold">{data.material?.reference_source === 'admin-authored' ? '관리자 작성 참조 조건' : 'AI 작성 참조 조건'}</summary><div className="mt-3 grid gap-2 text-sm leading-6"><p>예상 상태: {item.expected_status === 'ANSWERED' ? '근거로 답변 가능' : '근거 부족으로 답변을 보류해야 함'} · 예상 인용 청크: {item.expected_citation_orders.join(', ') || '없음'}</p><p className="text-xs text-ink-muted">청크 번호는 0부터 시작하는 근거의 식별자입니다. ‘0’은 첫 번째 근거이며 인용 개수가 아닙니다.</p><p>포함할 사실: {item.reference_facts.join(' / ') || '지정 없음'}</p><p>포함하면 안 되는 주장: {item.forbidden_claims.join(' / ') || '지정 없음'}</p></div></details>
           </section>
           <section className="min-w-0 rounded-xl border border-brand-primary/20 bg-[#f3f7f5] p-4" aria-label={`${item.case_id} 검토할 답변`}>
             <h4 className="mb-2 font-bold">2. 후보 답변 확인</h4><p className="mb-3 text-xs text-ink-muted">이번에 적합·부적합을 판단할 답변입니다.</p>

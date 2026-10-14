@@ -56,6 +56,7 @@ beforeEach(() => {
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
     if (path === '/api/v1/ops/evaluation-catalog') return json({ datasets: [dataset, comparisonDataset] })
+    if (path === '/api/v1/ops/datasets') return json({ datasets: [], builtin_count: 10 })
     if (path.includes('/api/v1/admin/ai-costs?')) return json(serviceUsage)
     if (path.endsWith('/api/v1/admin/ai-costs/prices')) return json([])
     if (path === '/api/v1/ops/dashboard') return json({ as_of: '2026-10-07T00:00:00Z', configured_model: 'gpt-6-luna', window: { limit: 200, loaded: 0, total: 0, truncated: false }, states: { completed: 0, failed: 0, active: 0, cancelled: 0 }, excluded: { replay: 0, incomplete: 0, unverifiable: 0, duplicate: 0 }, series: [] })
@@ -90,7 +91,7 @@ function open(path = '/ops/evaluations/new') {
 describe('운영 세션과 평가 자료 조회 분리', () => {
   it.each([
     ['/ops/dashboard', '성능 대시보드'], ['/ops/usage', '실사용 모니터링'],
-    ['/ops/budget', '예산 관리'], ['/ops/evaluations', '평가 이력'],
+    ['/ops/budget', '예산 관리'], ['/ops/evaluations', '평가 이력'], ['/ops/datasets', '평가 자료 관리'],
     [`/ops/evaluations/${id}`, '평가 실행 상세'],
   ])('%s 화면은 평가 자료 조회 없이 가벼운 세션으로 연다', async (path, title) => {
     open(path)
@@ -1980,4 +1981,20 @@ it('이력 화면을 떠나면 목록 자동 조회를 중단한다', async () =
   vi.useFakeTimers()
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
   expect(reads()).toHaveLength(count)
+})
+
+
+it.each(['admin-entered-answer', 'recorded-answer'] as const)('관리자 등록 자료의 %s 출처를 모델 실행 기록과 구분한다', async (origin) => {
+  const original = fetchMock.getMockImplementation()!
+  const state: EvaluationReview = { ...reviewDefaults, quality: qualityState, material: { ...reviewMaterial,
+    data_type: 'admin-provided', reference_source: 'admin-authored', candidate_origin: origin,
+    cases: reviewMaterial.cases.map((item) => ({ ...item, source_url: null })),
+  }, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
+  fetchMock.mockImplementation((path, options) => path.endsWith('/review') ? Promise.resolve(json(state)) : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  await screen.findByText('관리자 작성 참조 조건')
+  expect(screen.queryByText('AI 작성 참조 조건')).toBeNull()
+  if (origin === 'admin-entered-answer') expect(screen.getByText(/관리자 입력 답변 · 실제 모델 호출 기록이 아닙니다/)).toBeTruthy()
+  else expect(screen.queryByText(/관리자 입력 답변 · 실제 모델 호출 기록이 아닙니다/)).toBeNull()
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })

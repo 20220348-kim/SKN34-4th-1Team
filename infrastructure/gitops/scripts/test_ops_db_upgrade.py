@@ -357,7 +357,7 @@ class DockerUpgradeTests(unittest.TestCase):
 
                 with patch.object(upgrade, "run_upgrade", side_effect=verify_initial_pause):
                     report = upgrade.rehearse(root / "archive", root / "key", image)
-                self.assertEqual(report["to_evaluations"], "0030_schedule_settings")
+                self.assertEqual(report["to_evaluations"], "0031_managed_datasets")
                 self.assertTrue(report["original_rows_preserved"])
                 self.assertTrue(report["admission_paused"])
                 self.assertTrue(report["repeat_verified"])

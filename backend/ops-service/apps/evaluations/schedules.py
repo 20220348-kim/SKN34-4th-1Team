@@ -15,6 +15,7 @@ from .baselines import lock_baseline
 from .budget import BudgetUnavailable, operation_plan
 from .budget_reporting import budget_summary
 from .catalog import LIVE_CAPTURE_ID, RAG_SCOPE, evaluation_scope, validate_execution
+from .dataset_management import lock_for_submission
 from .execution_spec import digest, profile, read_release
 from .models import (
     EvaluationBudget,
@@ -52,7 +53,9 @@ def required_capacity(request):
         "live",
         request["live_config"],
     )
-    spec = profile(read_release(), request["dataset_id"], "live", request["live_config"])
+    spec = profile(
+        read_release(request["dataset_id"]), request["dataset_id"], "live", request["live_config"]
+    )
     if digest(spec) != request["execution_profile"]:
         raise ScheduleBlocked("EXECUTION_PROFILE_CHANGED")
     plan = operation_plan(SimpleNamespace(execution_spec=spec, live_config=request["live_config"]))
@@ -125,6 +128,8 @@ def create_schedule(user, *, request_id, daily_at, starts_on, ends_on, reason, *
     ):
         raise ScheduleBlocked("REVIEWED_BASELINE_REQUIRED")
     with transaction.atomic():
+        if dataset_id.startswith("managed-"):
+            lock_for_submission(dataset_id)
         baseline = lock_baseline(dataset_id)
         existing = EvaluationSchedule.objects.filter(pk=request_id).first()
         if existing:

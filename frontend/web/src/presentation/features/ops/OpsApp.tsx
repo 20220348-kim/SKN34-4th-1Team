@@ -23,6 +23,7 @@ import { AdminAiCostsPage } from '../admin/view/AdminAiCostsPage'
 import { EvaluationLogsPanel } from './EvaluationLogsPanel'
 import { TraceDetailPage, TraceListPage } from './TracePages'
 import { ProductionQualityPage } from './ProductionQualityPage'
+import { DatasetManagementPage } from './DatasetManagementPage'
 
 const dashboardPath = '/ops/dashboard'
 const listPath = '/ops/evaluations'
@@ -107,6 +108,7 @@ const opsPageGroups = [
   { id: 'testing', label: '테스트', pages: [
     { path: dashboardPath, label: '성능 대시보드', description: '평가 지표와 변화 추이' },
     { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
+    { path: '/ops/datasets', label: '평가 자료 관리', description: '원문·질문·채점 조건 등록' },
     { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
     { path: '/ops/budget', label: '예산 관리', description: '평가 사용량과 한도 관리' },
     { path: '/ops/schedules', label: '정기 실행', description: '평가 일정과 중지 관리' },
@@ -161,6 +163,7 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
         </AdminAiCostsPage>} />
         <Route path="/ops" element={<Navigate replace to={dashboardPath} />} />
         <Route path="/ops/evaluations" element={<EvaluationList onExpired={onExpired} />} />
+        <Route path="/ops/datasets" element={<DatasetManagementPage owner={session.user!.id} onExpired={onExpired} />} />
         <Route path="/ops/evaluations/new" element={<EvaluationCatalogContent key="new" title="새 평가" onExpired={onExpired}>{(datasets) => <EvaluationCreate owner={session.user!.id} datasets={datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />}</EvaluationCatalogContent>} />
         <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
         <Route path="/ops/evaluations/:runId/report" element={<EvaluationReport key={location.pathname} onExpired={onExpired} />} />
@@ -358,7 +361,7 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
     catch { setStorageError('접수되지 않은 요청 기록을 정리하지 못했습니다. 탭 저장소를 확인하세요.') }
   }
   return <>
-    <WorkspacePageHeader title="새 평가" />
+    <WorkspacePageHeader title="새 평가" actions={<Link className={styles.secondaryButton} to="/ops/datasets">평가 자료 등록·관리</Link>} />
     <div className={styles.content}>
       <p className="text-sm text-ink-muted">평가 자료·모델과 비교 대상을 선택한 뒤 실행하세요. 메뉴를 오가도 선택값은 유지되며, 유료 실행 확인과 예산 점검은 다시 해야 합니다.</p>
       <section id="new-evaluation" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행">

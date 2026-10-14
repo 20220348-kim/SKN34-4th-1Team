@@ -825,3 +825,70 @@ class ProductionRegressionCandidate(models.Model):
     snapshot = models.JSONField()
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class EvaluationDataset(models.Model):
+    """관리자가 편집하는 초안. 게시된 실행 자료는 별도 불변 버전으로 보존한다."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    draft = models.JSONField()
+    version = models.PositiveIntegerField(default=1)
+    archived = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_datasets"
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="updated_datasets"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(version__gte=1), name="dataset_version_positive"
+            )
+        ]
+
+
+class EvaluationDatasetRevision(models.Model):
+    """게시 당시 자료·저장 답변의 불변 스냅샷. 수정은 새 게시 번호를 만든다."""
+
+    id = models.CharField(max_length=100, primary_key=True)
+    dataset = models.ForeignKey(
+        EvaluationDataset, on_delete=models.PROTECT, related_name="revisions"
+    )
+    number = models.PositiveIntegerField()
+    snapshot = models.JSONField()
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-number"]
+        constraints = [
+            models.UniqueConstraint(fields=["dataset", "number"], name="dataset_revision_number"),
+            models.CheckConstraint(
+                condition=models.Q(number__gte=1), name="dataset_number_positive"
+            ),
+        ]
+
+
+class EvaluationDatasetChange(models.Model):
+    """요청 ID와 응답을 보존해 재전송이 이후 수정·보관을 되돌리지 않게 한다."""
+
+    request_id = models.UUIDField(primary_key=True)
+    dataset = models.ForeignKey(EvaluationDataset, on_delete=models.PROTECT, related_name="changes")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    action = models.CharField(max_length=10)
+    payload_sha256 = models.CharField(max_length=64)
+    response = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(action__in=["CREATE", "UPDATE", "PUBLISH", "ARCHIVE"]),
+                name="dataset_change_action",
+            )
+        ]

@@ -57,7 +57,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
     {dirty && <p className="text-sm text-amber-800">저장하지 않은 기준 자료 검토가 있습니다. 먼저 자료 검토를 저장하거나 입력을 비운 뒤 다른 검토·품질 판정·기준 지정을 진행하세요.</p>}
     <details id="fixture-review" tabIndex={-1} style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-3"><summary className="cursor-pointer text-sm font-semibold">평가 기준 자료 검토 · {quality.fixture_reviews[0] ? fixtureLabels[quality.fixture_reviews[0].decision] : '미검토'}</summary>
       <div className="mt-3 grid gap-3 text-sm">
-        <p>사례 선택에서 각 사례의 AI 작성 참조 조건을 원문 근거와 대조합니다. 기대 상태·기대 인용·포함할 사실·금지 주장을 모두 확인하세요. 이 기록은 후보 답변 검토와 별개이며 AI 작성 출처는 유지됩니다.</p>
+        <p>사례 선택에서 각 사례의 {data.material?.reference_source === 'admin-authored' ? '관리자 작성' : 'AI 작성'} 참조 조건을 원문 근거와 대조합니다. 기대 상태·기대 인용·포함할 사실·금지 주장을 모두 확인하세요. 이 기록은 후보 답변 검토와 별개이며 작성 출처는 유지됩니다.</p>
         <p>대상 사례: {data.material?.cases.map((item) => item.case_id).join(', ') ?? '자료 확인 불가'}</p>
         <label className="grid gap-2">평가 기준 자료 판단<select className="rounded-xl border border-line p-3" value={decision} disabled={busy} onChange={(event) => setDecision(event.target.value as typeof decision)}><option value="">판단 선택</option><option value="APPROVED">검토 승인</option><option value="CHANGES_REQUESTED">수정 필요</option><option value="DEFERRED">판단 보류</option></select></label>
         <label className="grid gap-2">평가 기준 자료 검토 사유<textarea className="rounded-xl border border-line p-3" rows={2} value={comment} maxLength={3000} disabled={busy} onChange={(event) => setComment(event.target.value)} /></label>
