@@ -377,7 +377,7 @@ describe('App navigation', () => {
   it('준비 상태와 오류 안내가 있어도 검색·취소 버튼을 입력창 안에 배치한다', async () => {
     readinessHookMock.useSupportProgramSearchReadiness.mockReturnValue(createReadinessHook({
       data: {
-        searchState: 'SEARCHABLE_WITH_SYNC_FAILURE', programCount: 12, indexReady: true,
+        searchState: 'SEARCHABLE_WITH_PARTIAL_SOURCES', programCount: 12, indexReady: true,
         lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
         lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
       },
@@ -1043,7 +1043,7 @@ describe('App navigation', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('공고 상태를 처음 확인하는 동안에는 준비 중과 구분된 안내를 표시한다', () => {
+  it('공고 상태를 처음 확인하는 동안에는 깜빡이는 안내를 표시하지 않는다', () => {
     readinessHookMock.useSupportProgramSearchReadiness.mockReturnValue(
       createReadinessHook({
         canSearch: false,
@@ -1054,9 +1054,9 @@ describe('App navigation', () => {
 
     renderApp(createAppStore())
 
-    expect(screen.getByText('공고 데이터 상태를 확인하고 있습니다.')).toBeTruthy()
-    expect(screen.getByRole('textbox', { name: '지원사업 검색어' }).getAttribute('aria-describedby'))
-      .toBe('support-program-search-readiness')
+    expect(screen.queryByText('공고 데이터 상태를 확인하고 있습니다.')).toBeNull()
+    expect(document.getElementById('support-program-search-readiness')).toBeNull()
+    expect(screen.getByRole('textbox', { name: '지원사업 검색어' }).getAttribute('aria-describedby')).toBeNull()
     expectReadinessDetailsAbsent()
     expect((screen.getByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).disabled)
       .toBe(false)
@@ -1118,7 +1118,7 @@ describe('App navigation', () => {
     expectReadinessDetailsAbsent()
   })
 
-  it('최신 동기화가 실패해도 이전 공고 검색은 유지하고 짧은 주의만 표시한다', async () => {
+  it('최신 동기화가 실패해도 이전 공고 검색은 유지하고 깜빡이는 안내는 표시하지 않는다', async () => {
     readinessHookMock.useSupportProgramSearchReadiness.mockReturnValue(
       createReadinessHook({
         data: {
@@ -1138,11 +1138,13 @@ describe('App navigation', () => {
 
     renderApp(createAppStore())
 
-    expect(screen.getByText('최신 공고를 불러오지 못해 이전에 저장한 공고에서 검색합니다.')).toBeTruthy()
+    expect(screen.queryByText('최신 공고를 불러오지 못해 이전에 저장한 공고에서 검색합니다.')).toBeNull()
+    expect(document.getElementById('support-program-search-readiness')).toBeNull()
     expectReadinessDetailsAbsent()
     expect(screen.queryByText('12건')).toBeNull()
 
     const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    expect(searchInput.getAttribute('aria-describedby')).toBeNull()
     expect((searchInput as HTMLTextAreaElement).disabled).toBe(false)
     fireEvent.change(searchInput, { target: { value: '서울 AI' } })
     await submitConfirmedSearch(searchInput)
