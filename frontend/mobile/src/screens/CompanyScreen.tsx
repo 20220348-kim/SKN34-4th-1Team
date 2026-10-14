@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
-import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import { ActivityIndicator, Text } from 'react-native'
 import {
   type BusinessLookup, type Company, type CompanyProfileInput, companyRegions, companyIndustries,
   companyProfileLimits, formatBusinessNumber, formatBusinessNumberInput, isValidBusinessNumber,
@@ -10,10 +10,13 @@ import { businessStatusNotes, canRegisterBusiness, companyRegistrationMessages }
 import { ApiError, errorMessage } from '../api/client'
 import { getCompany, lookupCompanyBusiness, saveCompanyProfile } from '../api/company'
 import { useAuth } from '../auth/session'
+import { ChoiceField } from '../components/ChoiceField'
 import { CompanyPartnerProfileSection } from '../components/CompanyPartnerProfileSection'
-import { Page, Button, Field, Notice, Card, Title, colors, styles } from '../ui'
+import { Page, Button, Field, Notice, Card, Title, styles } from '../ui'
 
 type CompanyState = { token: string | null; company: Company | null; loading: boolean; loadError: string | null }
+const regionOptions = companyRegions.map(value => ({ value, label: value }))
+const industryOptions = companyIndustries.map(value => ({ value, label: value }))
 
 export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
@@ -26,7 +29,6 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
   const [industry, setIndustry] = useState('')
   const [foundedYear, setFoundedYear] = useState('')
   const [homepage, setHomepage] = useState('')
-  const [selection, setSelection] = useState<'region' | 'industry' | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -35,7 +37,7 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
   function populate(company: Company | null) {
     setRegion(company?.region ?? ''); setIndustry(company?.industry ?? ''); setFoundedYear(company ? String(company.foundedYear) : ''); setHomepage(company?.homepageUrl ?? '')
     setBusinessNumber(company ? formatBusinessNumber(company.businessNumber) : '')
-    setLookup(null); setSelection(null)
+    setLookup(null)
   }
 
   useEffect(() => {
@@ -116,12 +118,8 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
       {lookup && <Card><Text style={styles.heading}>{lookup.companyName}</Text><Text style={styles.body}>{lookup.businessStatus}</Text>
         {canRegisterBusiness(lookup) && <Text style={styles.muted}>{businessStatusNotes[lookup.businessStatusCode]}</Text>}</Card>}
     </>}
-    <Text style={styles.label}>소재지</Text>
-    <Button label={region || '소재지를 선택해 주세요'} variant="secondary" disabled={busy} onPress={() => setSelection(selection === 'region' ? null : 'region')} />
-    {selection === 'region' && <Choices values={companyRegions} selected={region} onSelect={(value) => { setRegion(value); setSelection(null) }} />}
-    <Text style={styles.label}>업종</Text>
-    <Button label={industry || '업종을 선택해 주세요'} variant="secondary" disabled={busy} onPress={() => setSelection(selection === 'industry' ? null : 'industry')} />
-    {selection === 'industry' && <Choices values={companyIndustries} selected={industry} onSelect={(value) => { setIndustry(value); setSelection(null) }} />}
+    <ChoiceField label="소재지" value={region} placeholder="소재지를 선택해 주세요" options={regionOptions} onChange={setRegion} disabled={busy} compact />
+    <ChoiceField label="업종" value={industry} placeholder="업종을 선택해 주세요" options={industryOptions} onChange={setIndustry} disabled={busy} compact />
     <Field label="설립연도" value={foundedYear} onChangeText={(value) => setFoundedYear(value.replace(/\D/g, '').slice(0, 4))} keyboardType="number-pad" maxLength={4} editable={!busy} placeholder="예: 2020" />
     <Field label="홈페이지 (선택)" value={homepage} onChangeText={setHomepage} keyboardType="url" autoCapitalize="none" autoCorrect={false} maxLength={companyProfileLimits.homepageMaxLength} editable={!busy} placeholder="https://example.com" />
     {error && <Notice error>{error}</Notice>}
@@ -130,10 +128,6 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
       disabled={!state.company && !(lookup && canRegisterBusiness(lookup))} />
     {state.company && <CompanyPartnerProfileSection key={`${token}:${state.company.businessNumber}`} token={token} disabled={busy} onRefreshCompany={() => setRevision(value => value + 1)} />}
   </Page>
-}
-
-function Choices({ values, selected, onSelect }: { values: readonly string[]; selected: string; onSelect(value: string): void }) {
-  return <View style={{ gap: 4 }}>{values.map((value) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected: selected === value }} onPress={() => onSelect(value)} style={{ padding: 14, borderRadius: 10, backgroundColor: selected === value ? colors.soft : colors.surface }}><Text style={styles.body}>{value}</Text></Pressable>)}</View>
 }
 
 function companyError(error: ApiError): string {
