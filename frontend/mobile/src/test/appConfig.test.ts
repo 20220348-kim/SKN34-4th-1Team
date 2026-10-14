@@ -35,7 +35,7 @@ test('native launchers use an opaque default icon and a separate transparent ada
   const config = readConfig()
   expect(config.icon).toBe('./assets/icon.png')
   expect(config.android?.adaptiveIcon).toEqual({ foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#E7F6ED' })
-  expect(config.android?.versionCode).toBe(3)
+  expect(config.android?.versionCode).toBe(7)
   const fs = jest.requireActual<{ readFileSync(path: string): Uint8Array }>('node:fs')
   const assets = [
     { path: config.icon!, colorType: 2 },
