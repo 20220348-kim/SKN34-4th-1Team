@@ -2,6 +2,8 @@ import { Text } from 'react-native'
 import { Stack, Tabs, useLocalSearchParams } from 'expo-router'
 import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library'
 import SearchRoute from '../../app/(tabs)/index'
+import CollaborationRoute from '../../app/(tabs)/all/collab'
+import RecruitmentCreateRoute from '../../app/partner/new'
 
 jest.mock('../auth/session', () => ({ useAuth: () => ({ status: 'signedIn' }) }))
 jest.mock('../auth/loginFlow', () => ({ useLoginFlow: () => jest.fn() }))
@@ -15,7 +17,9 @@ jest.mock('./SearchScreen', () => ({ SearchScreen: (props: Parameters<typeof imp
     <Pressable accessibilityRole="button" accessibilityLabel="새 검토" onPress={() => props.onOpenReview!({ program, message: '검토' })}><Text>새 검토</Text></Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel="선택 없는 검토" onPress={() => props.onOpenReview!({ program: null, message: '검토' })}><Text>선택 없는 검토</Text></Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel="저장한 검토" onPress={() => props.onOpenReview!({ program, message: '검토', reviewId: 5 })}><Text>저장한 검토</Text></Pressable>
-    <Pressable accessibilityRole="button" accessibilityLabel="파트너 조회" onPress={() => props.onOpenPartners!()}><Text>파트너 조회</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel="파트너 조회" onPress={() => props.onOpenPartners!({ seekingRoles: ['DEMAND', 'PARTICIPANT'], regions: ['경기', '대전'], keywords: ['배터리', '실증'], program })}><Text>파트너 조회</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel="기업 설정" onPress={props.onCompany}><Text>기업 설정</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel="모집글 작성" onPress={() => props.onCreateRecruitment!(program)}><Text>모집글 작성</Text></Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel="모집글 상세" onPress={() => props.onOpenRecruitment!(14)}><Text>모집글 상세</Text></Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel="공고 질문 이동" onPress={() => props.onOpenProgram(program, { ask: true })}><Text>공고 질문 이동</Text></Pressable>
   </View>
@@ -32,6 +36,8 @@ const routes = {
   '(tabs)/all/reviews/[id]': Destination,
   '(tabs)/all/collab': Destination,
   'partner/[id]': Destination,
+  'partner/new': Destination,
+  '(tabs)/all/company': Destination,
   program: Destination,
 }
 test.each([
@@ -40,7 +46,9 @@ test.each([
   ['새 검토', '/all/reviews/new', { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' }],
   ['선택 없는 검토', '/all/reviews/new', {}],
   ['저장한 검토', '/all/reviews/5', { id: '5', step: 'analysis' }],
-  ['파트너 조회', '/all/collab', { view: 'recruitments', mine: '0' }],
+  ['파트너 조회', '/all/collab', { view: 'recruitments', mine: '0', keyword: '배터리', seekingRole: 'DEMAND,PARTICIPANT', region: '경기,대전' }],
+  ['기업 설정', '/all/company', {}],
+  ['모집글 작성', '/partner/new', { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' }],
   ['모집글 상세', '/partner/14', { id: '14' }],
   ['공고 질문 이동', '/program', { sourceCode: 'BIZINFO', sourceProgramId: 'P/123', ask: '1' }],
 ] as const)('%s connects to %s with native parameters', async (label, path, params) => {
@@ -48,4 +56,30 @@ test.each([
   fireEvent.press(screen.getByLabelText(label))
   await waitFor(() => expect(view.getPathname()).toBe(path))
   expect(JSON.parse(screen.getByTestId('gov-destination').props.children)).toMatchObject(params)
+})
+
+
+jest.mock('./CollaborationScreen', () => ({ CollaborationScreen: (props: Parameters<typeof import('./CollaborationScreen').CollaborationScreen>[0]) => {
+  const { Text } = jest.requireActual<typeof import('react-native')>('react-native')
+  return <Text testID="gov-list-query">{JSON.stringify(props.initialQuery)}</Text>
+} }))
+jest.mock('./RecruitmentCreateScreen', () => ({ RecruitmentCreateScreen: (props: Parameters<typeof import('./RecruitmentCreateScreen').RecruitmentCreateScreen>[0]) => {
+  const { Text } = jest.requireActual<typeof import('react-native')>('react-native')
+  return <Text testID="gov-create-program">{JSON.stringify(props.initialProgram)}</Text>
+} }))
+
+test('the destination route decodes multiple roles and regions into the list input', async () => {
+  renderRouter({ ...routes, '(tabs)/all/collab': CollaborationRoute }, { initialUrl: '/' })
+  fireEvent.press(screen.getByLabelText('파트너 조회'))
+  await screen.findByTestId('gov-list-query')
+  expect(JSON.parse(screen.getByTestId('gov-list-query').props.children)).toEqual({
+    keyword: '배터리', seekingRoles: ['DEMAND', 'PARTICIPANT'], regions: ['경기', '대전'],
+  })
+})
+
+test('the creation route delivers the exact program identity to the native form', async () => {
+  renderRouter({ ...routes, 'partner/new': RecruitmentCreateRoute }, { initialUrl: '/' })
+  fireEvent.press(screen.getByLabelText('모집글 작성'))
+  await screen.findByTestId('gov-create-program')
+  expect(JSON.parse(screen.getByTestId('gov-create-program').props.children)).toEqual({ sourceCode: 'BIZINFO', sourceProgramId: 'P/123' })
 })

@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, Sc
 import { randomUUID } from 'expo-crypto'
 import type { ChatConversationSnapshot, ChatConversationSummary, ChatMessage } from '@govbiz/shared/domain/entities/ChatConversation'
 import type { GovAgentApplication, GovAgentProgram, GovAgentReview } from '@govbiz/shared/domain/entities/GovAgent'
-import { emptyPartnerRecruitmentConditions } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
+import { emptyPartnerRecruitmentConditions, type PartnerRecruitmentConditions } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
 import { clarificationQuickReplies, type SupportProgramConversationContext, type SupportProgramInterpretation,
   type SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/SupportProgramSearchResult'
@@ -36,13 +36,14 @@ import { chatSearchOptions, chatSnapshot, contextFromSearch, emptyChatContext as
 
 type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice'
 
-export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, keyboardOffset = 0, active = true, interests, assistantDraft, onDraftConsumed, renderHeaderActions }: {
+export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, onCompany, onCreateRecruitment, keyboardOffset = 0, active = true, interests, assistantDraft, onDraftConsumed, renderHeaderActions }: {
   /** `ask`이면 공고 화면에서 원문 질문 시트를 엽니다. */
   onOpenProgram: (identity: SupportProgramIdentity, options?: { ask?: boolean }) => void
   onLogin: (request?: LoginRequest) => void; keyboardOffset?: number; active?: boolean
   interests?: SearchProgramInterests
   assistantDraft?: AssistantDraft | null; onDraftConsumed?(id: string): void
-  onOpenApplication?(application: GovAgentApplication): void; onOpenReview?(review: GovAgentReview): void; onOpenPartners?(): void
+  onOpenApplication?(application: GovAgentApplication): void; onOpenReview?(review: GovAgentReview): void; onOpenPartners?(conditions: PartnerRecruitmentConditions): void
+  onCompany?(): void; onCreateRecruitment?(program: SupportProgramIdentity): void
   onOpenRecruitment?(id: number): void
   renderHeaderActions?(actions: ReactNode): ReactNode
 }) {
@@ -643,7 +644,9 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
             onLogin={() => onLogin({ direct: true })} onOpenProgram={identity => confirmDiscard(() => onOpenProgram(identity))}
             onOpenApplication={onOpenApplication ? application => confirmDiscard(() => onOpenApplication(application)) : undefined}
             onOpenReview={onOpenReview ? review => confirmDiscard(() => onOpenReview(review)) : undefined}
-            onOpenPartners={onOpenPartners ? () => confirmDiscard(onOpenPartners) : undefined}
+            onOpenPartners={onOpenPartners ? conditions => confirmDiscard(() => onOpenPartners(conditions)) : undefined}
+            onCompany={onCompany ? () => confirmDiscard(onCompany) : undefined}
+            onCreateRecruitment={onCreateRecruitment ? program => confirmDiscard(() => onCreateRecruitment(program)) : undefined}
             onOpenRecruitment={onOpenRecruitment ? id => confirmDiscard(() => onOpenRecruitment(id)) : undefined}
             onReviewSaved={id => attachGovReview(item.id, id)} onWorkingChange={setWorkBusy} />
         </View>}

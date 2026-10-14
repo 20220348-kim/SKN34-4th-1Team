@@ -1,3 +1,4 @@
+import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useFocusEffect, useNavigation } from 'expo-router'
@@ -19,7 +20,7 @@ import { PartnerSheet } from '../components/PartnerSheet'
 import { partnerDeadlineDay, partnerFullDate } from '../components/PartnerDates'
 import { Button, Card, Field, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
-type Props = { recruitmentId?: number; onLogin(): void; onCompany(): void; onSavedPrograms(): void; onCreated(id: number): void; onCancel(): void }
+type Props = { initialProgram?: SupportProgramIdentity; recruitmentId?: number; onLogin(): void; onCompany(): void; onSavedPrograms(): void; onCreated(id: number): void; onCancel(): void }
 const seoulToday = () => new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10)
 const latestDeadline = (program: Pick<SupportProgram, 'applicationEndDate'> | null) => program?.applicationEndDate
   ? new Date(Date.parse(`${program.applicationEndDate}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10) : null
@@ -52,7 +53,7 @@ export function RecruitmentCreateScreen(props: Props) {
     companyName={session.account.company.companyName} {...props} />
 }
 
-function OwnedCreate({ token, companyName, recruitmentId, onCreated, onCancel, onSavedPrograms, onCompany }: Props & { token: string; companyName: string }) {
+function OwnedCreate({ token, companyName, initialProgram, recruitmentId, onCreated, onCancel, onSavedPrograms, onCompany }: Props & { token: string; companyName: string }) {
   const { invalidateSession } = useAuth()
   const insets = useSafeAreaInsets()
   const navigation = useNavigation()
@@ -77,7 +78,8 @@ function OwnedCreate({ token, companyName, recruitmentId, onCreated, onCancel, o
   const [error, setError] = useState<string | null>(null)
   const [companyRequired, setCompanyRequired] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(initialProgram !== undefined && recruitmentId === undefined)
+  const initialSelection = useRef(initialProgram)
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [programs, setPrograms] = useState<SupportProgram[]>([])
   const [pickerLoading, setPickerLoading] = useState(false)
@@ -140,7 +142,16 @@ function OwnedCreate({ token, companyName, recruitmentId, onCreated, onCancel, o
     const controller = new AbortController()
     setPickerLoading(true); setPickerError(null); setPrograms([])
     void listSavedPrograms(token, controller.signal).then(items => {
-      if (!controller.signal.aborted) setPrograms(items.map(item => item.program))
+      if (controller.signal.aborted) return
+      const programs = items.map(item => item.program)
+      setPrograms(programs)
+      const wanted = initialSelection.current
+      if (wanted) {
+        initialSelection.current = undefined
+        const selected = programs.find(item => item.sourceCode === wanted.sourceCode && item.id === wanted.sourceProgramId)
+        if (selected && !programBlocker(selected)) { setProgram(selected); setPickerOpen(false) }
+        else setPickerError('이 공고를 선택할 수 없어요. 관심 공고함과 접수 기간을 확인해 주세요.')
+      }
     }).catch(cause => {
       if (controller.signal.aborted) return
       if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
