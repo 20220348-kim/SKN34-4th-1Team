@@ -3,15 +3,14 @@ import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { ActivityIndicator, Text, View } from 'react-native'
 import type { SignupEmailVerification } from '@govbiz/shared/domain/entities/Account'
 import type { AccountDeletionPreview } from '@govbiz/shared/domain/entities/AccountDeletionPreview'
-import type { OAuthProviderId } from '@govbiz/shared/domain/entities/OAuthProvider'
 import { withdrawalCarryOverNotice } from '@govbiz/shared/domain/entities/PlanUsage'
 import { isEmailAddress, normalizeEmail } from '@govbiz/shared/domain/entities/EmailAddress'
 import { signUpPasswordIssue } from '@govbiz/shared/domain/usecases/SignUpUseCase'
-import { changePassword, deleteAccount, getDeletionPreview, readOAuthProviders, sendSignupEmailCode, verifySignupEmailCode } from '../api/account'
+import { changePassword, deleteAccount, getDeletionPreview, sendSignupEmailCode, verifySignupEmailCode } from '../api/account'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/session'
 import { authErrorMessage } from '../auth/errors'
-import { supportsNativeOAuth } from '../auth/oauth'
+import { SocialLoginOptions } from '../auth/SocialLoginOptions'
 import { PlanUsageSection } from '../components/PlanUsage'
 import { Page, Button, Field, Notice, Card, colors } from '../ui'
 import { PartnerSheet } from '../components/PartnerSheet'
@@ -36,9 +35,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
-  const [providers, setProviders] = useState<OAuthProviderId[]>([])
-  const [providerError, setProviderError] = useState<string | null>(null)
-  const [providerRevision, setProviderRevision] = useState(0)
+  const running = useRef(false)
   const [resetOpen, setResetOpen] = useState(false)
   // const [information, setInformation] = useState<ServiceInformationSection | null>(null)
   const [profileMode, setProfileMode] = useState<'password' | 'deletion' | null>(null)
@@ -48,21 +45,11 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   const profileRunning = useRef(false)
   const owner = useRef(auth.session?.accessToken)
   owner.current = auth.session?.accessToken
-  const socialEnabled = showSocialOptions && process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN === 'true' && supportsNativeOAuth()
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setProviders([]); setProviderError(null)
-    if (auth.status === 'signedOut' && socialEnabled) void readOAuthProviders(controller.signal)
-      .then(value => { if (!controller.signal.aborted) setProviders(value) })
-      .catch(() => { if (!controller.signal.aborted) setProviderError('소셜 로그인 방법을 확인하지 못했어요. 이메일 로그인은 이용할 수 있어요.') })
-    return () => controller.abort()
-  }, [auth.status, socialEnabled, providerRevision])
-
   useEffect(() => () => request.current?.abort(), [])
-  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
+  useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   useEffect(() => {
-    request.current?.abort(); profileRunning.current = false
+    request.current?.abort(); running.current = false; profileRunning.current = false
     setPassword(''); setConfirmation(''); setEmailPass(null); setCode(''); setCodeSent(false)
     setProfileMode(null); setPreview(null); setConfirmDeletion(false); setCurrentPassword(''); setBusy(false); setResetOpen(false)
     setError(null); setNotice(null)
@@ -74,14 +61,16 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     setEmail(value); setEmailPass(null); setCode(''); setCodeSent(false); setNotice(null); setError(null)
   }
   async function run(action: (signal: AbortSignal) => Promise<void>) {
+    if (running.current) return
+    running.current = true
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
-    setBusy(true); setError(null); setNotice(null)
+    onBusyChange?.(true); setBusy(true); setError(null); setNotice(null)
     try { await action(controller.signal) } catch (failure) {
       if (!controller.signal.aborted) setError(authErrorMessage(failure))
     } finally {
-      if (request.current === controller) setBusy(false)
+      if (request.current === controller) { running.current = false; onBusyChange?.(false); setBusy(false) }
     }
   }
   function validEmail(): string {
@@ -210,10 +199,6 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   return <Page>
     <Text style={{ fontSize: 28, fontWeight: '700', color: colors.text }}>{mode === 'login' ? 'GovBiz 로그인' : '계정 만들기'}</Text>
     <Text style={{ color: colors.muted }}>웹에서 사용하던 계정과 관심 공고를 앱에서도 이어서 사용하세요.</Text>
-    {socialEnabled && providers.length > 0 && <View style={{ gap: 10 }}>{(['kakao', 'google'] as const).filter(provider => providers.includes(provider)).map(provider =>
-      <Button key={provider} label={provider === 'kakao' ? '카카오로 계속하기' : 'Google로 계속하기'} variant="secondary" disabled={busy}
-        onPress={() => void run(() => auth.signInWithOAuth(provider))} />)}</View>}
-    {providerError && <><Notice error>{providerError}</Notice><Button label="소셜 로그인 방법 다시 확인" variant="ghost" onPress={() => setProviderRevision(value => value + 1)} /></>}
     <Field label="이메일" value={email} onChangeText={updateEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="email" editable={!busy} maxLength={320} />
     {mode === 'signup' && <>
       <Button label={emailPass ? '인증번호 다시 받기' : codeSent ? '인증번호 재전송' : '인증번호 받기'} variant="secondary" onPress={() => void sendCode()} disabled={busy} />
@@ -234,8 +219,14 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     {error && <Notice error>{error}</Notice>}
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}
     <Button label={mode === 'login' ? '로그인' : '회원가입'} onPress={() => void submit()} busy={busy} disabled={mode === 'signup' && !emailPass} />
-    <Button label={mode === 'login' ? '이메일로 회원가입' : '기존 계정으로 로그인'} variant="ghost" disabled={busy} onPress={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); setNotice(null); setPassword(''); setConfirmation(''); setEmailPass(null); setCodeSent(false); setCode('') }} />
-    {mode === 'login' && <Button label="비밀번호 찾기" variant="ghost" disabled={busy} onPress={() => setResetOpen(true)} />}
+    <SocialLoginOptions enabled={showSocialOptions && auth.status === 'signedOut'} busy={busy}
+      onSelect={provider => void run(() => auth.signInWithOAuth(provider))} />
+    <View testID="account-auth-links" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+      <Button label={mode === 'login' ? '이메일로 회원가입' : '기존 계정으로 로그인'} variant="ghost" disabled={busy}
+        style={{ flex: 1, paddingHorizontal: 4 }} onPress={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); setNotice(null); setPassword(''); setConfirmation(''); setEmailPass(null); setCodeSent(false); setCode('') }} />
+      {mode === 'login' && <><View style={{ width: 1, height: 16, backgroundColor: colors.border }} />
+        <Button label="비밀번호 찾기" variant="ghost" disabled={busy} style={{ flex: 1, paddingHorizontal: 4 }} onPress={() => setResetOpen(true)} /></>}
+    </View>
     <PasswordResetSheet visible={resetOpen} onClose={() => setResetOpen(false)} />
     {/* skn-501: 미확정 안내 시트 연결 보류
     <ServiceInformationSheet section={information} onClose={() => setInformation(null)} />
