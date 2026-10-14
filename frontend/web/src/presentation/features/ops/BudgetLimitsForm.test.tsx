@@ -30,6 +30,21 @@ const fill = () => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 누적 한도 변경', () => {
+  it('설명은 각 입력에 연결하고 설정 화면을 열거나 값을 입력해도 한도를 저장하지 않는다', () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch)
+    const { onSaved } = mount()
+    fireEvent.click(screen.getByRole('button', { name: '누적 한도 설정' }))
+    expect(screen.getByText(/현재 20회 할당 \+ 추가 6회 예약 = 호출 한도 26회/)).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '호출 누적 한도', description: /API 호출의 총횟수/ })).toHaveProperty('value', '')
+    expect(screen.getByRole('textbox', { name: '출력 토큰 누적 한도', description: /최대 출력량을 합산/ })).toHaveProperty('value', '')
+    expect(screen.getByRole('textbox', { name: '입력 토큰 누적 한도', description: /최초 미설정은 빈칸.*한 번 설정하면 해제할 수 없습니다.*숫자 0/ })).toHaveProperty('value', '')
+    expect(screen.getByRole('textbox', { name: '한도 변경 사유', description: /평가 목적·범위/ })).toHaveProperty('value', '')
+    fireEvent.change(screen.getByLabelText('호출 누적 한도'), { target: { value: '26' } })
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    expect(fetch).not.toHaveBeenCalled()
+    expect(onSaved).not.toHaveBeenCalled()
+  })
+
   it('변경 내용을 확인한 후에만 세션·CSRF와 한도 버전을 보내고 입력 미설정은 null로 보낸다', async () => {
     const fetch = vi.fn(async (url: string, options?: RequestInit) => json(url.endsWith('/session') ? session : success(JSON.parse(options!.body as string))))
     vi.stubGlobal('fetch', fetch)

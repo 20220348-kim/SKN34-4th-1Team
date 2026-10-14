@@ -26,7 +26,19 @@ function Breakdown({ value }: { value: BudgetBreakdown }) {
       ['종료 전 반환 대기', '—', count(value.pending_release_output_tokens), inputCount(boundedReservations ? value.pending_release_input_tokens : null)],
       ['현재 할당량 합계', count(value.allocated_calls), count(value.allocated_output_tokens), inputCount(boundedCalls && boundedReservations ? value.allocated_input_tokens : null)],
     ].map(([label, calls, output, input]) => <tr key={label} className="border-b border-line last:border-0"><th scope="row" className="py-3 font-medium">{label}</th><td>{calls}</td><td>{output}</td><td>{input}</td></tr>)}</tbody>
-  </table><p className="mt-3 text-xs text-ink-muted">입력 상한 기록이 없는 과거 예약의 미확인 몫은 0으로 환산하지 않습니다.</p></div>
+  </table><p className="mt-3 text-xs text-ink-muted">입력 상한 기록이 없는 과거 예약의 미확인 몫은 0으로 환산하지 않습니다.</p>
+    <details className="mt-3 text-sm">
+      <summary className="min-h-11 cursor-pointer py-3 font-semibold focus-visible:outline-2 focus-visible:outline-brand-primary">장부 항목은 무슨 뜻인가요?</summary>
+      <dl className="grid gap-3 rounded-xl bg-surface-muted p-4 leading-6 sm:grid-cols-2">{[
+        ['확정 사용량', '응답 기록 등으로 사용량을 확인하고 정산한 몫입니다. 실행이 끝나도 누적 장부에 남으며, 제공자의 청구 금액 확정과는 구분합니다.'],
+        ['과거 저장 응답 반영', '예약 기록이 없던 과거 실행의 저장 응답을 검토해 추가한 사용량입니다. 제공자의 청구 확인이나 답변 품질 승인을 뜻하지 않습니다.'],
+        ['승인 후 사용량 미확인', '호출은 승인했지만 전송 여부나 사용량을 확정하지 못한 몫입니다. 무료로 간주하지 않고 최대 예약량을 유지합니다.'],
+        ['아직 승인하지 않은 예약', '접수된 평가를 위해 확보했지만 개별 모델 호출의 전송 승인을 아직 받지 않은 몫입니다. 사람의 답변 검토 승인을 기다린다는 뜻이 아닙니다.'],
+        ['종료 전 반환 대기', '정산 후 남은 토큰 차액 중 아직 예약을 닫지 않아 돌려놓지 않은 몫입니다. 실행 종료 확인과 예약 정리가 필요합니다.'],
+        ['현재 할당량 합계', '확정·과거 반영 사용량과 미확인·미승인·반환 대기 몫을 합한 양입니다. 잔여 한도를 계산할 때 전체 한도에서 차감합니다.'],
+      ].map(([label, explanation]) => <div key={label}><dt className="font-semibold">{label}</dt><dd className="mt-1 text-ink-muted">{explanation}</dd></div>)}</dl>
+    </details>
+  </div>
 }
 
 export function BudgetOverview({ onExpired, refreshKey, operatorId, onBudgetChanged }: {
@@ -63,7 +75,16 @@ export function BudgetOverview({ onExpired, refreshKey, operatorId, onBudgetChan
   const summary = data?.summary
   return <section id="evaluation-budget" tabIndex={-1} className={styles.card} aria-label="누적 평가 예산">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className={styles.cardTitle}>누적 평가 예산</h2><button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>예산 새로고침</button></div>
-    <p className={styles.cardDescription}>모든 평가 자료가 공유하는 호출·입력·출력 토큰 장부입니다. 금액 한도가 아니며, 사용량 미확인 호출은 기록된 최대 입력·출력 예약을 유지합니다.</p>
+    <p className="text-sm leading-6 text-ink-muted">Ops를 통해 접수하는 새 답변·RAG 평가의 호출·입력·출력 토큰 한도를 관리합니다. 모든 평가 자료와 관리자가 같은 한도를 공유합니다. 일반 서비스의 웹·모바일 AI 사용량은 <Link className="text-brand-primary underline" to="/ops/usage">실사용 모니터링에서 확인</Link>할 수 있습니다.</p>
+    <section aria-label="예산 설정 안내" className="space-y-3 rounded-xl border border-line bg-surface-muted p-4 text-sm leading-6">
+      <h3 className="font-semibold">처음 설정한다면</h3>
+      <ol className="grid gap-4 sm:grid-cols-3">
+        <li><h4 className="font-semibold">1. 평가에 필요한 양 확인</h4><p className="mt-1 text-ink-muted"><Link className="text-brand-primary underline" to="/ops/evaluations/new">새 평가에서 필요량 확인</Link>으로 이동해 자료·새 응답 생성·모델을 선택하고 <strong>실행 설정·예산 점검</strong>을 누르세요. 호출·입력·출력의 최대 예약량을 무료로 조회합니다.</p></li>
+        <li><h4 className="font-semibold">2. 누적 한도 설정</h4><p className="mt-1 text-ink-muted"><strong>현재 할당량 + 앞으로 허용할 평가의 최대 예약량</strong>을 기준으로 총한도를 정하세요. 과거 사용량도 포함되며 날짜가 바뀌어도 초기화되지 않습니다.</p></li>
+        <li><h4 className="font-semibold">3. 일별 한도 설정 후 재점검</h4><p className="mt-1 text-ink-muted">하루에 허용할 평가 횟수와 이월량을 고려해 호출·입력·출력을 각각 정하세요. 정기 실행에는 일별 한도가 필수입니다. 저장 후 새 평가에서 다시 점검하세요.</p></li>
+      </ol>
+      <p className="border-t border-line pt-3 text-xs leading-5 text-ink-muted">점검값은 실제 사용량이나 요금 견적이 아닌 최대 예약량입니다. 설정을 저장해도 유료 평가·정기 실행은 켜지지 않습니다. 현재 월별·원화·달러 금액 한도는 지원하지 않습니다.</p>
+    </section>
     {error && <p role="alert" className="text-sm text-red-700">{error} 표시된 값이 있으면 마지막 조회 기록입니다.</p>}
     {saved && <p role="status">{saved}</p>}
     {!data && !error && <p role="status">예산 장부를 불러오고 있습니다.</p>}
@@ -80,16 +101,19 @@ export function BudgetOverview({ onExpired, refreshKey, operatorId, onBudgetChan
       {operatorId && <BudgetLimitsForm summary={summary} owner={operatorId} onExpired={onExpired} onSaved={() => { setSaved('누적 한도 변경 이력을 저장했습니다.'); setRefresh((value) => value + 1); onBudgetChanged?.() }} />}
       {Boolean(summary.legacy_accounted_run_count) && <p className="text-sm">저장 응답을 검토해 과거 실행 {count(summary.legacy_accounted_run_count!)}건의 사용량을 합산했습니다. 당시 예약이나 제공자의 청구 확인을 뜻하지 않습니다.</p>}
       {summary.limits && <dl className="grid gap-3 text-sm sm:grid-cols-3">{[
-        ['전체 한도', summary.limits], ['저장된 할당량', summary.allocated], ['잔여 한도', summary.state === 'consistent' ? summary.remaining : null],
-      ].map(([label, amount]) => {
+        ['전체 한도', summary.limits, '이미 사용한 양과 앞으로 사용할 양을 포함한 누적 총상한입니다.'],
+        ['저장된 할당량', summary.allocated, '확정 사용량과 아직 해제되지 않은 예약을 합한 양입니다.'],
+        ['잔여 한도', summary.state === 'consistent' ? summary.remaining : null, '전체 한도에서 할당량을 뺀 양입니다. 일별 제한이 적용되면 일별 잔여도 충분해야 합니다.'],
+      ].map(([label, amount, explanation]) => {
         const value = amount as typeof summary.limits
-        return <div className="rounded-xl bg-[#f3f7f5] p-4" key={String(label)}><dt className="text-ink-muted">{String(label)}</dt><dd className="mt-2 font-semibold">{value ? `${count(value.calls)}회 · 출력 ${count(value.output_tokens)}토큰 · 입력 ${inputCount(value.input_tokens)}` : '확인 불가'}</dd></div>
+        return <div className="rounded-xl bg-[#f3f7f5] p-4" key={String(label)}><dt className="text-ink-muted">{String(label)}</dt><dd className="mt-2 font-semibold">{value ? `${count(value.calls)}회 · 출력 ${count(value.output_tokens)}토큰 · 입력 ${inputCount(value.input_tokens)}` : '확인 불가'}</dd><dd className="mt-2 text-xs leading-5 text-ink-muted">{String(explanation)}</dd></div>
       })}</dl>}
       {summary.breakdown && <Breakdown value={summary.breakdown} />}
       <DailyBudgetPanel value={summary.daily} />
       {operatorId && summary.limits && <DailyBudgetLimitsForm daily={summary.daily} owner={operatorId} onExpired={onExpired} onSaved={() => { setSaved('일별 정책 변경 이력을 저장했습니다.'); setRefresh((value) => value + 1); onBudgetChanged?.() }} />}
       <p className="text-xs leading-5 text-ink-muted">응답을 정산해도 실행의 예약을 닫기 전까지 입력·출력 차액은 반환 대기로 남습니다. 승인 기록만으로 모델 전송 완료나 실제 비용을 확정할 수 없습니다.</p>
       <details><summary className="cursor-pointer text-sm font-semibold">실행별 예약 · {count(data.count)}건</summary>
+        <p className="py-2 text-xs leading-5 text-ink-muted">각 평가가 확보한 몫과 미확인 호출을 확인합니다. 예약이 닫혀도 확정 사용량과 미확인 몫은 남을 수 있습니다. 실행 링크에서 상세 내역을 확인하세요.</p>
         {!data.results.length ? <p className="py-3 text-sm">예약 기록이 없습니다.</p> : <div className="overflow-x-auto"><table className="mt-3 w-full text-left text-sm">
           <thead><tr><th>실행</th><th>예약 상태</th><th>할당량</th><th>미확인 호출</th></tr></thead>
           <tbody>{data.results.map((row) => <tr key={row.run_id} className="border-t border-line"><td className="py-3 pr-3"><Link className="text-brand-primary underline" to={`/ops/evaluations/${row.run_id}`}>{row.dataset_id} · {row.run_id.slice(0, 8)}</Link></td><td>{row.closed_at ? '닫힘' : '열림'}</td><td>{count(row.breakdown.allocated_calls)}회 · {count(row.breakdown.allocated_output_tokens)}토큰</td><td>{count(row.breakdown.unknown_calls)}회</td></tr>)}</tbody>
