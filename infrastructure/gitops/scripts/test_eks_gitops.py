@@ -466,6 +466,137 @@ class EksGitOpsTests(unittest.TestCase):
         core["patch"] = json.dumps(operations)
         return app
 
+    def ops_environment(self, app, name, index):
+        entry = next(
+            item for item in app["spec"]["source"]["kustomize"]["patches"]
+            if item["target"]["name"] == name
+        )
+        operations = json.loads(entry["patch"])
+        environment = next(
+            op for op in operations
+            if op["path"] == f"/spec/template/spec/containers/{index}/env"
+        )
+        return entry, operations, environment
+
+    def test_preserved_ops_trace_configuration_is_required_in_every_execution_path(self):
+        for name, index in (
+            ("ops-service", 0),
+            ("ops-service", 1),
+            ("ops-service-release-prepare", 0),
+            ("ops-service-release-resume", 0),
+        ):
+            for key in ("LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+                app, _, _ = self.success()
+                entry, operations, environment = self.ops_environment(app, name, index)
+                environment["value"] = [item for item in environment["value"] if item["name"] != key]
+                entry["patch"] = json.dumps(operations)
+                before = copy.deepcopy(app)
+                with self.subTest(name=name, index=index, key=key), self.assertRaisesRegex(
+                    ValueError, "Ops trace runtime configuration"
+                ):
+                    gitops.check_application(app)
+                self.assertEqual(app, before)
+
+    def test_ops_trace_configuration_rejects_unsafe_sources_and_duplicates(self):
+        changes = [
+            {"name": "LANGFUSE_BASE_URL", "value": "https://public-langfuse.example"},
+            {"name": "LANGFUSE_BASE_URL", "value": gitops.LANGFUSE_ORIGIN + "/api"},
+            {"name": "LANGFUSE_SECRET_KEY", "value": "private-key-must-not-be-printed"},
+            {"name": "LANGFUSE_PUBLIC_KEY", "valueFrom": {"secretKeyRef": {
+                "name": "ops-runtime", "key": "LANGFUSE_PUBLIC_KEY",
+            }}},
+            {"name": "LANGFUSE_SECRET_KEY", "valueFrom": {"secretKeyRef": {
+                "name": "ops-langfuse", "key": "OTHER_SECRET",
+            }}},
+            {"name": "LANGFUSE_SECRET_KEY", "valueFrom": {"secretKeyRef": {
+                "name": "ops-langfuse", "key": "LANGFUSE_SECRET_KEY", "optional": True,
+            }}},
+        ]
+        for changed in changes:
+            app, _, _ = self.success()
+            entry, operations, environment = self.ops_environment(app, "ops-service", 0)
+            environment["value"] = [
+                changed if item["name"] == changed["name"] else item for item in environment["value"]
+            ]
+            entry["patch"] = json.dumps(operations)
+            with self.subTest(entry=changed), self.assertRaises(ValueError) as failure:
+                gitops.check_application(app)
+            self.assertEqual(str(failure.exception), gitops.OPS_TRACES_RUNTIME_ERROR)
+            self.assertEqual(
+                gitops.failure_diagnostic("preflight.application", failure.exception)["code"],
+                "OPS_TRACES_RUNTIME_CONFIG_MISSING",
+            )
+        for duplicate_operation in (False, True):
+            app, _, _ = self.success()
+            entry, operations, environment = self.ops_environment(app, "ops-service", 0)
+            if duplicate_operation:
+                operations.append(copy.deepcopy(environment))
+            else:
+                environment["value"].append(copy.deepcopy(next(
+                    item for item in environment["value"] if item["name"] == "LANGFUSE_BASE_URL"
+                )))
+            entry["patch"] = json.dumps(operations)
+            with self.subTest(duplicate_operation=duplicate_operation), self.assertRaisesRegex(
+                ValueError, "Ops trace runtime configuration"
+            ):
+                gitops.check_application(app)
+
+    def test_ops_trace_configuration_rejects_missing_environment_patch(self):
+        app, _, _ = self.success()
+        entry, operations, environment = self.ops_environment(app, "ops-service-release-resume", 0)
+        operations.remove(environment)
+        entry["patch"] = json.dumps(operations)
+        with self.assertRaisesRegex(ValueError, "Ops trace runtime configuration"):
+            gitops.check_application(app)
+
+    def test_late_broad_environment_patches_cannot_erase_valid_ops_configuration(self):
+        for target in (
+            {"kind": "Deployment", "name": "ops-.*", "namespace": "govbiz-msa"},
+            {"kind": "Job", "name": "ops-service-release-.*", "namespace": "govbiz-msa"},
+            {"kind": "Deployment", "namespace": "govbiz-msa", "labelSelector": "app.kubernetes.io/name=ops-service"},
+            {"kind": "Deployment", "name": "ops-service"},
+            {"name": "ops-service", "namespace": "govbiz-msa"},
+            {"kind": "Deployment", "name": "ops-service", "namespace": "govbiz-msa", "group": "apps"},
+            {},
+        ):
+            app, _, _ = self.success()
+            app["spec"]["source"]["kustomize"]["patches"].append({
+                "target": target,
+                "patch": json.dumps([{
+                    "op": "replace", "path": "/spec/template/spec/containers/0/env", "value": [],
+                }]),
+            })
+            with self.subTest(target=target), self.assertRaisesRegex(
+                ValueError, "Ops trace runtime configuration"
+            ):
+                gitops.check_application(app)
+
+    def test_adoption_rejects_unconfigured_ops_without_inserting_credentials(self):
+        runtime = self.runtime()
+        ops = next(row for row in runtime["items"] if row["metadata"]["name"] == "ops-service")
+        for container in ops["spec"]["template"]["spec"]["containers"]:
+            environment = container["env"]
+            environment[:] = [item for item in environment if not item["name"].startswith("LANGFUSE_")]
+        before = copy.deepcopy(runtime)
+        with self.assertRaisesRegex(ValueError, "Ops trace runtime configuration"):
+            gitops.application(runtime)
+        self.assertEqual(runtime, before)
+
+    def test_missing_preserved_ops_trace_configuration_stops_preflight(self):
+        app, _, _ = self.success()
+        entry, operations, environment = self.ops_environment(app, "ops-service", 0)
+        environment["value"] = [item for item in environment["value"] if not item["name"].startswith("LANGFUSE_")]
+        entry["patch"] = json.dumps(operations)
+        with (
+            patch.object(gitops, "connect"),
+            patch.object(gitops, "kube", return_value=app) as kube,
+            patch.object(gitops.subprocess, "run") as run,
+            self.assertRaisesRegex(ValueError, "Ops trace runtime configuration"),
+        ):
+            gitops.preflight()
+        kube.assert_called_once_with("argocd", "application", "govbiz-eks")
+        run.assert_not_called()
+
     def test_document_jobs_recovery_changes_only_the_flag_and_requires_the_exported_version(self):
         app = self.disabled_document_jobs_application()
         before = copy.deepcopy(app)

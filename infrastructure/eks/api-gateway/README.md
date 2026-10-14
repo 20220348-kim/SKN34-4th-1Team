@@ -28,6 +28,61 @@ Ops API·sync와 두 release hook의 보존 env patch에도 추가해야 합니�
 아래 전용 CloudFront 주소는 **Langfuse 자체 관리 화면**을 직접 사용하는 별도 경로입니다.
 GovBiz 추적 조회는 이 주소나 고정 IP 허용 규칙에 의존하지 않습니다.
 
+### 기존 운영 환경의 추적 연결 설정 보완
+
+앱 이미지가 최신이어도 Argo의 환경변수 보존 패치에 추적 설정이 없으면
+`/api/v1/ops/traces`가 `503`을 반환합니다. `ops-langfuse` Secret과 Langfuse ingress 허용도
+함께 필요합니다. EKS 배포 전 검사는 네 환경 패치가 잘못된 경우
+`OPS_TRACES_RUNTIME_CONFIG_MISSING`으로 중단합니다.
+
+[수정안 준비 도구](../ops_traces.py)는 저장한 JSON만 읽고 클러스터를 변경하지 않습니다.
+기존 다른 환경변수·패치를 보존한 Application 수정안, Ops의 TCP 3000 접근만 추가하는 정책
+수정안, 기존 Core 프로젝트의 두 키만 복사한 전용 Secret을 생성합니다.
+다음 명령은 관리 API에 접근할 수 있는 운영자가 저장소 루트에서 실행합니다.
+
+```bash
+umask 077
+trace_fix_dir="$(mktemp -d)"
+kubectl -n argocd get application govbiz-eks -o json > "$trace_fix_dir/application.json"
+kubectl -n govbiz-observability get networkpolicy langfuse-web-ingress -o json > "$trace_fix_dir/network-policy.json"
+kubectl -n govbiz-msa get secret core-runtime -o json |
+  python3 -c 'import json,sys; s=json.load(sys.stdin); print(json.dumps({"apiVersion":"v1","kind":"Secret","metadata":{"name":s["metadata"]["name"],"namespace":s["metadata"]["namespace"]},"data":{k:s["data"][k] for k in ("LANGFUSE_PUBLIC_KEY","LANGFUSE_SECRET_KEY")}}))' > "$trace_fix_dir/source-secret.json"
+python3 infrastructure/eks/ops_traces.py \
+  --application "$trace_fix_dir/application.json" \
+  --network-policy "$trace_fix_dir/network-policy.json" \
+  --source-secret "$trace_fix_dir/source-secret.json" \
+  --output "$trace_fix_dir/prepared"
+```
+
+입력과 결과에는 비밀 키가 포함되므로 Git에 추가하거나 로그·이슈에 붙이지 않습니다.
+결과 디렉터리는 `0700`, 파일은 `0600`이며 기존 결과를 덮어쓰지 않습니다.
+두 패치는 원본 `resourceVersion`을 검사하므로 준비 후 다른 변경이 있으면 적용이 거절됩니다.
+이 경우 검사를 제거하지 말고 최신 상태를 다시 저장해 수정안을 생성합니다.
+
+현재 `main`과 운영 소스의 변경 범위, 대상 SHA의 필수 CI, 수정안을 확인하고 새 정식 release의
+배포 범위를 승인한 뒤 운영자가 아래 순서로 반영합니다. 현재 `main`이 운영보다 앞서면 추가
+서비스 변경도 배포 대상이 되므로 설정 복구 승인만으로 함께 배포하지 않습니다.
+Application 변경은 Argo 자동 동기화를 일으킬 수 있습니다. 이미 완료된 태그를 다시 동기화하면
+PreSync가 `This release already resumed admission; publish a new release.`로 거절할 수 있습니다.
+동일 태그를 반복 실행하거나 hook을 건너뛰고 DB의 접수·배포 이력을 바꾸어 통과시키지 않습니다.
+이 경우 보호 절차를 유지하는 [정식 배포 경로](../continuous-deployment.md)로 새 release를 발행해야 합니다.
+
+```bash
+kubectl -n govbiz-msa create -f "$trace_fix_dir/prepared/ops-langfuse-secret.json"
+kubectl -n govbiz-observability patch networkpolicy langfuse-web-ingress \
+  --type=json --patch-file "$trace_fix_dir/prepared/network-policy.patch.json"
+kubectl -n argocd patch application govbiz-eks \
+  --type=json --patch-file "$trace_fix_dir/prepared/application.patch.json"
+```
+
+이미 전용 Secret이 있으면 `create`는 중단됩니다. 기존 키를 덮어쓰지 말고 프로젝트와 키가
+맞는지 먼저 확인합니다. 위 설정 반영만으로 적용 완료로 판단하지 않습니다. 승인된 새 release의
+정확한 revision에서 PreSync·PostSync 성공, Argo의 Synced·Healthy, Ops Ready를 확인한 뒤
+GovBiz 관리자 로그인으로 `/ops/traces` 목록·상세가 실제 조회되어야 완료입니다.
+새 모델 호출은 필요하지 않습니다.
+Ops 로그의 `langfuse_trace_read_failed`는 설정·HTTP 상태·시간 초과·응답 검증 실패를 구분하며
+키·원격 주소·추적 본문은 기록하지 않습니다.
+
 ## Langfuse 자체 관리 화면
 
 기존 Core·Ops API와 Argo 연결은 [API 진입점 안내](../api-entrypoint.md)를 따른다.

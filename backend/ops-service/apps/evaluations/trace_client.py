@@ -2,10 +2,11 @@
 
 import base64
 import json
+import logging
 import math
 import re
 from http.client import HTTPException
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
@@ -17,6 +18,7 @@ PAGE_SIZE = 50
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 ID_PATTERN = r"[A-Za-z0-9_-]{1,128}"
 CURSOR_PATTERN = r"[A-Za-z0-9+/=_-]{1,2048}"
+logger = logging.getLogger(__name__)
 
 
 class LangfuseUnavailable(Exception):
@@ -32,6 +34,8 @@ class NoTraceRedirect(HTTPRedirectHandler):
 def read_page(params):
     base = settings.LANGFUSE_BASE_URL
     public, secret = settings.LANGFUSE_PUBLIC_KEY, settings.LANGFUSE_SECRET_KEY
+    category = "configuration"
+    http_status = None
     try:
         parsed = urlsplit(base)
         if (
@@ -58,13 +62,19 @@ def read_page(params):
             headers={"Authorization": "Basic " + authorization, "Accept": "application/json"},
             method="GET",
         )
+        category = "transport"
         with build_opener(ProxyHandler({}), NoTraceRedirect()).open(request, timeout=5) as response:
+            http_status = response.status
             if response.status != 200:
+                category = "upstream_http"
                 raise ValueError("Unexpected trace response")
             raw = response.read(MAX_RESPONSE_BYTES + 1)
+        category = "response_validation"
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ValueError("Trace response too large")
+        category = "response_parse"
         data = json.loads(raw)
+        category = "response_validation"
         if not isinstance(data, dict) or not isinstance(data.get("meta"), dict):
             raise ValueError("Invalid trace response")
         rows, cursor = data.get("data"), data["meta"].get("cursor")
@@ -75,8 +85,19 @@ def read_page(params):
         ):
             raise ValueError("Invalid trace page")
         return rows, cursor
-    except (URLError, OSError, HTTPException, ValueError, TypeError, RecursionError):
-        # 원격 오류 본문·주소·자격 증명은 공개 응답이나 예외에 포함하지 않는다.
+    except (URLError, OSError, HTTPException, ValueError, TypeError, RecursionError) as error:
+        if isinstance(error, HTTPError):
+            category, http_status = "upstream_http", error.code
+        elif isinstance(error, TimeoutError) or (
+            isinstance(error, URLError) and isinstance(error.reason, TimeoutError)
+        ):
+            category = "timeout"
+        # 고정 분류와 숫자 상태만 기록한다. 예외 본문·주소·키·조회 조건은 남기지 않는다.
+        logger.warning(
+            "langfuse_trace_read_failed category=%s http_status=%s",
+            category,
+            http_status if type(http_status) is int and 100 <= http_status <= 599 else "none",
+        )
         raise LangfuseUnavailable from None
 
 
@@ -173,6 +194,7 @@ def read_roots(*, from_time, to_time, name="", cursor=""):
         if len({row["id"] for row in results}) != len(results):
             raise ValueError("Duplicate observation")
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        logger.warning("langfuse_trace_read_failed category=response_validation operation=list")
         raise LangfuseUnavailable from None
     return {"results": results, "next_cursor": next_cursor}
 
@@ -195,5 +217,6 @@ def read_trace(trace_id, *, cursor=""):
         ) != len(results):
             raise ValueError("Unexpected trace observation")
     except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
+        logger.warning("langfuse_trace_read_failed category=response_validation operation=detail")
         raise LangfuseUnavailable from None
     return {"trace_id": trace_id, "observations": results, "next_cursor": next_cursor}
