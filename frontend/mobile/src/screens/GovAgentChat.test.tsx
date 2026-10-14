@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
 import { Alert, Linking } from 'react-native'
 import type { GovAgentResult } from '@govbiz/shared/domain/entities/GovAgent'
 import { GovAgentApiError } from '@govbiz/shared/data/api/govAgentApi'
@@ -86,7 +86,9 @@ test('ADMIN switches the tab and API; USER and guests retain their existing inte
   expect(programClient).toHaveBeenCalledWith('admin-session')
   expect(client.sendGovAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ selectedProgram: null }), expect.any(AbortSignal))
   expect(client.interpretConversation).not.toHaveBeenCalled()
-  for (const label of ['원문 질문', '신청서 쓰기', '중복 검토']) expect(screen.getByLabelText(label)).toBeTruthy()
+  expect(within(screen.getByLabelText('선택 공고의 세 가지 기능')).getAllByRole('button').map(button => button.props.accessibilityLabel))
+    .toEqual(['신청 문서 쓰기', '중복 검토', '파트너 찾기'])
+  expect(screen.queryByLabelText('원문 질문')).toBeNull()
   auth('USER'); view.rerender(<SearchScreen mode="ai" onModeChange={jest.fn()} {...props} />)
   expect(screen.queryByRole('tab', { name: 'Gov 에이전트' })).toBeNull()
   expect(screen.getByRole('tab', { name: 'AI 대화 검색' })).toBeTruthy()
@@ -116,7 +118,7 @@ test('the selected composite identity is used for evidence and saved; answered q
   render(<ChatScreen {...props} />); await select()
   expect(jest.mocked(saveChatConversation).mock.calls.at(-1)![4].govProgram).toEqual(selection)
   const calls = client.sendGovAgentMessage.mock.calls.length
-  fireEvent.press(screen.getByLabelText('원문 질문'))
+  await act(async () => fireEvent.press(screen.getByLabelText(`${program.title}, 이 공고에 질문하기`)))
   expect(client.sendGovAgentMessage).toHaveBeenCalledTimes(calls)
   client.sendGovAgentMessage.mockResolvedValue(evidence)
   await act(async () => fireEvent.press(screen.getByLabelText('신청 방법')))
@@ -138,7 +140,7 @@ test('the selected composite identity is used for evidence and saved; answered q
 
 test('application opens inside the conversation without a route-selection AI call, then moves to forms', async () => {
   render(<ChatScreen {...props} />); await select()
-  await act(async () => fireEvent.press(screen.getByLabelText('신청서 쓰기')))
+  await act(async () => fireEvent.press(screen.getByLabelText('신청 문서 쓰기')))
   expect(screen.getByText('신청 분석 패널')).toBeTruthy()
   expect(screen.getByTestId('ai-search-composer')).toBeTruthy()
   expect(client.sendGovAgentMessage).toHaveBeenCalledTimes(1)
@@ -147,6 +149,36 @@ test('application opens inside the conversation without a route-selection AI cal
   fireEvent.press(screen.getByLabelText('입력칸 분석 보기'))
   fireEvent.press(screen.getByLabelText('양식 선택하고 쓰기'))
   expect(props.onOpenApplication).toHaveBeenCalledWith(expect.objectContaining({ program: selection }))
+})
+
+test('the partner button preserves the selected composite identity without another AI call', async () => {
+  render(<ChatScreen {...props} />); await select()
+  const calls = client.sendGovAgentMessage.mock.calls.length
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '이어서 작성 중인 질문')
+  expect(screen.getByLabelText('파트너 찾기')).toBeDisabled()
+  fireEvent.press(screen.getByLabelText('파트너 찾기'))
+  expect(recommendRecruitments).not.toHaveBeenCalled()
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '')
+  await act(async () => fireEvent.press(screen.getByLabelText('파트너 찾기')))
+  const conditions = { ...emptyPartnerRecruitmentConditions, program: identity }
+  expect(recommendRecruitments).toHaveBeenLastCalledWith(conditions, 'admin-session', expect.any(AbortSignal))
+  expect(client.sendGovAgentMessage).toHaveBeenCalledTimes(calls)
+  expect(client.interpretConversation).not.toHaveBeenCalled()
+  const snapshot = jest.mocked(saveChatConversation).mock.calls.at(-1)![4]
+  expect(chatConversationSnapshotSchema.parse(snapshot).messages.at(-1)!.govPartners?.conditions).toEqual(conditions)
+  fireEvent.press(screen.getByLabelText('파트너 모집글 보기'))
+  expect(props.onOpenPartners).toHaveBeenCalledTimes(1)
+})
+
+test('selecting a program does not repeat evidence usage beside the three actions', async () => {
+  jest.mocked(planUsageUseCase).mockReturnValue({ usage: jest.fn().mockResolvedValue({ plan: 'PLUS', items: [
+    { feature: 'AI_SEARCH', period: 'PLAN', limit: 100, used: 1, resetsAt: '2099-01-01T00:00:00+09:00' },
+    { feature: 'EVIDENCE_QUESTION', period: 'PLAN', limit: 100, used: 1, resetsAt: '2099-01-01T00:00:00+09:00' },
+  ] }) } as unknown as ReturnType<typeof planUsageUseCase>)
+  render(<ChatScreen {...props} />); await select()
+  expect(screen.getByText('AI 대화 검색 이번 기간 99회 남음')).toBeTruthy()
+  expect(within(screen.getByTestId('gov-agent-selected-program')).queryByText(/공고 원문 질문/)).toBeNull()
+  expect(screen.getByLabelText(`${program.title}, 이 공고에 질문하기`)).toBeEnabled()
 })
 
 test('review drafts survive collapse, saving the ID and another answer; execution opens the native result', async () => {

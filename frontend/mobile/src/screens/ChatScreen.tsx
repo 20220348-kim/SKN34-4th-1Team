@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, Sc
 import { randomUUID } from 'expo-crypto'
 import type { ChatConversationSnapshot, ChatConversationSummary, ChatMessage } from '@govbiz/shared/domain/entities/ChatConversation'
 import type { GovAgentApplication, GovAgentProgram, GovAgentReview } from '@govbiz/shared/domain/entities/GovAgent'
+import { emptyPartnerRecruitmentConditions } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
 import { clarificationQuickReplies, type SupportProgramConversationContext, type SupportProgramInterpretation,
   type SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/SupportProgramSearchResult'
@@ -493,12 +494,16 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
     historyRef.current = next; setHistory(next)
     await persist(chatSnapshot(next, context, proposal, clarification, govProgram))
   }
-  function startGovTool(tool: 'APPLICATION' | 'COMBINATION_REVIEW') {
-    if (!isGovAgent || !govProgram || blocked || history.length >= 197) return
-    const text = tool === 'APPLICATION' ? '이 공고 신청서 쓰기' : '이 공고 중복 검토'
+  function startGovTool(tool: 'APPLICATION' | 'COMBINATION_REVIEW' | 'PARTNERS') {
+    if (!isGovAgent || !govProgram || blocked || message.trim() || history.length >= 197) return
+    const text = tool === 'APPLICATION' ? '이 공고 신청 문서 쓰기' : tool === 'COMBINATION_REVIEW' ? '이 공고 중복 검토' : '이 공고 파트너 찾기'
     const answer: ChatMessage = { id: randomUUID(), role: 'assistant', text: tool === 'APPLICATION'
-      ? '신청 양식을 확인하고 입력칸 분석을 시작할 수 있어요.' : '두 공고와 회사 상황을 확인한 뒤 검토를 실행해 주세요.',
-      ...(tool === 'APPLICATION' ? { govApplication: { program: govProgram, message: text } } : { govReview: { program: govProgram, message: text } }) }
+      ? '신청 양식을 확인하고 입력칸 분석을 시작할 수 있어요.' : tool === 'COMBINATION_REVIEW'
+        ? '두 공고와 회사 상황을 확인한 뒤 검토를 실행해 주세요.' : '선택한 공고의 파트너 모집글을 확인해 주세요.',
+      ...(tool === 'APPLICATION' ? { govApplication: { program: govProgram, message: text } }
+        : tool === 'COMBINATION_REVIEW' ? { govReview: { program: govProgram, message: text } }
+          : { govPartners: { message: text, conditions: { ...emptyPartnerRecruitmentConditions,
+            program: { sourceCode: govProgram.sourceCode, sourceProgramId: govProgram.sourceProgramId } } } }) }
     const next: ChatMessage[] = [...history, { id: randomUUID(), role: 'user', text }, answer]
     setHistory(next); setProposal(null); setClarification(null); setHistoryRestored(false); setGovAskAnchor(null)
     requestTimelineScroll('answer')
@@ -695,12 +700,10 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
         <View style={local.govProgramHeader}><Text numberOfLines={2} style={[styles.label, { flex: 1 }]}>선택한 공고: {govProgram.title}</Text>
           <Button label="×" accessibilityLabel="공고 선택 해제" size="small" variant="ghost" disabled={blocked} onPress={() => selectGovProgram(null)} />
         </View>
-        {evidenceUsage && usage && hasPlanLimit(evidenceUsage) && <PlanUsageLine item={evidenceUsage} plan={usage.plan} />}
         <View accessibilityLabel="선택 공고의 세 가지 기능" style={local.govActions}>
-          <Button label="원문 질문" size="small" variant="secondary" style={local.govAction} disabled={blocked}
-            onPress={() => { setGovAskAnchor(history.at(-1)?.id ?? null); composerInput.current?.focus() }} />
-          <Button label="신청서 쓰기" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('APPLICATION')} />
+          <Button label="신청 문서 쓰기" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('APPLICATION')} />
           <Button label="중복 검토" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('COMBINATION_REVIEW')} />
+          <Button label="파트너 찾기" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('PARTNERS')} />
         </View>
       </View>}
       {/* 아직 한도를 정하지 않은 요금제는 이용량 줄을 두지 않습니다. */}
