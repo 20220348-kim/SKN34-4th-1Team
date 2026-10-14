@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
-import { Alert, Linking } from 'react-native'
+import { Alert, Linking, ScrollView } from 'react-native'
 import type { GovAgentResult } from '@govbiz/shared/domain/entities/GovAgent'
 import { GovAgentApiError } from '@govbiz/shared/data/api/govAgentApi'
 import { chatConversationSnapshotSchema } from '@govbiz/shared/data/models/ChatConversationDto'
@@ -111,6 +111,40 @@ test.each(['ADMIN', 'USER'] as const)('the result-card question button keeps the
     expect(screen.getByTestId('gov-agent-selected-program')).toBeTruthy()
     expect(props.onOpenProgram).not.toHaveBeenCalled()
   } else expect(props.onOpenProgram).toHaveBeenCalledWith(identity, { ask: true })
+})
+
+test('the first question click places the selected program and four questions after all five cards and scrolls there', async () => {
+  const programs = Array.from({ length: 5 }, (_, index) => ({ ...program, id: `result-${index}`, title: `추천 공고 ${index + 1}` }))
+  client.search.mockResolvedValue({ query: '서울 사업화', programs, totalCount: 5, resultToken: null, expiresAt: null })
+  const scroll = jest.spyOn(ScrollView.prototype, 'scrollTo')
+  const frames: FrameRequestCallback[] = []
+  jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => { frames.push(callback); return frames.length })
+  render(<ChatScreen {...props} />)
+  await send('사업화 지원 찾아줘')
+  await act(async () => fireEvent.press(screen.getByLabelText('이 조건으로 검색')))
+  const calls = client.sendGovAgentMessage.mock.calls.length
+  await act(async () => fireEvent.press(screen.getByLabelText('추천 공고 1, 이 공고에 질문하기')))
+  const selected = screen.getByTestId('gov-agent-selected-program')
+  expect(within(selected).getByText('선택한 공고: 추천 공고 1')).toBeTruthy()
+  expect(within(selected).getAllByRole('button').map(button => button.props.accessibilityLabel))
+    .toEqual(['공고 선택 해제', '지원 대상', '신청 방법', '신청 기간', '문의처', '신청 문서 쓰기', '중복 검토', '파트너 찾기'])
+  expect(screen.getAllByLabelText('신청 방법')).toHaveLength(1)
+  const timeline = screen.getByTestId('ai-search-timeline')
+  expect(within(timeline).getByTestId('gov-agent-selected-program')).toBeTruthy()
+  expect(within(screen.getByTestId('ai-search-results')).queryByLabelText('신청 방법')).toBeNull()
+  expect(within(screen.getByTestId('ai-search-composer')).queryByTestId('gov-agent-selected-program')).toBeNull()
+  fireEvent(timeline, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 600 } } })
+  fireEvent(selected, 'layout', { nativeEvent: { layout: { x: 0, y: 3000, width: 360, height: 300 } } })
+  fireEvent(timeline, 'contentSizeChange', 360, 3300)
+  act(() => { frames.splice(0).forEach(callback => callback(0)) })
+  expect(scroll).toHaveBeenLastCalledWith({ y: 2700, animated: true })
+  expect(client.sendGovAgentMessage).toHaveBeenCalledTimes(calls)
+  expect(client.search).toHaveBeenCalledTimes(1)
+  await act(async () => fireEvent.press(screen.getByLabelText('추천 공고 5, 이 공고 선택')))
+  expect(screen.getByText('선택한 공고: 추천 공고 5')).toBeTruthy()
+  expect(screen.queryByText('선택한 공고: 추천 공고 1')).toBeNull()
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '작성 중인 질문')
+  expect(screen.getByLabelText('신청 방법')).toBeDisabled()
 })
 
 test('the selected composite identity is used for evidence and saved; answered quick questions do not repeat', async () => {

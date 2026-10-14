@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
+import { ScrollView } from 'react-native'
 import { CombinationReviewError } from '@govbiz/shared/domain/errors/CombinationReviewError'
 import type { CombinationReview, ReviewDraft, RunRequest } from '@govbiz/shared/domain/entities/CombinationReview'
 import { MobileCombinationReviewRepository } from '../api/combinationReviews'
@@ -141,6 +142,37 @@ async function confirm() {
   await prepare()
   fireEvent.changeText(screen.getByLabelText('추가로 알려줄 내용 (선택)'), '같은 비용을 사용하려고 합니다.')
 }
+
+test.each(['filter', 'saved'] as const)('an empty title on Next scrolls the active %s selection to the title without saving', async method => {
+  const scroll = jest.spyOn(ScrollView.prototype, 'scrollTo')
+  try {
+    render(editor())
+    await screen.findByText('검색 결과 3건')
+    if (method === 'saved') {
+      fireEvent.press(screen.getByRole('tab', { name: '관심 공고함' }))
+      await screen.findByLabelText('검토 사업 1 선택')
+    }
+    fireEvent.changeText(screen.getByLabelText('검토 제목'), '   ')
+    fireEvent.press(screen.getByLabelText('검토 사업 1 선택'))
+    fireEvent.press(screen.getByLabelText('검토 사업 2 선택'))
+    await waitFor(() => expect(screen.getByLabelText('다음 · 분석 확인')).toBeEnabled())
+    const input = screen.getByLabelText('검토 제목').parent!.instance
+    const focus = jest.spyOn(input, 'focus')
+    focus.mockClear()
+    fireEvent.press(screen.getByLabelText('다음 · 분석 확인'))
+    expect(scroll).toHaveBeenLastCalledWith({ y: 0, animated: true })
+    expect(focus).toHaveBeenCalledTimes(1)
+    expect(focus.mock.contexts[0]).toBe(input)
+    expect(screen.getByText('검토 제목을 입력해 주세요.')).toBeTruthy()
+    expect(mockRepository.create).not.toHaveBeenCalled()
+    expect(mockRepository.start).not.toHaveBeenCalled()
+    fireEvent.changeText(screen.getByLabelText('검토 제목'), '제목 입력 후 이어가기')
+    expect(screen.queryByText('검토 제목을 입력해 주세요.')).toBeNull()
+    await act(async () => fireEvent.press(screen.getByLabelText('다음 · 분석 확인')))
+    await screen.findByText('이 내용으로 검토할까요?')
+    expect(mockRepository.create).toHaveBeenCalledWith(expect.objectContaining({ title: '제목 입력 후 이어가기' }), expect.any(AbortSignal))
+  } finally { jest.restoreAllMocks() }
+})
 /** 내 상황의 사업별 지금 상태를 골라요. 관계 칸의 "모름" 칩과 섞이지 않게 선택 시트 항목(이름이 정확히 같은 것)만 눌러요. */
 function chooseStatus(index: number, current: string, next: string) {
   fireEvent.press(screen.getByLabelText(`사업 ${index} 지금 상태: ${current}`))

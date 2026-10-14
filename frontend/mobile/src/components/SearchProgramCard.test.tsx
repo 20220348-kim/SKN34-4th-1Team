@@ -1,5 +1,5 @@
 import { Linking } from 'react-native'
-import { fireEvent, render, screen } from '@testing-library/react-native'
+import { fireEvent, render, screen, within } from '@testing-library/react-native'
 import { SearchProgramCard } from './SearchProgramCard'
 import { programDetail } from '../test/preparationFixtures'
 
@@ -63,6 +63,23 @@ test('the question action is offered only for programs that accept official-sour
   rerender(<SearchProgramCard program={supported} />)
   expect(screen.queryByLabelText(/질문하기/)).toBeNull()
 })
+test('question and selection share a row before the existing source and detail actions', () => {
+  const ask = jest.fn(), select = jest.fn(), open = jest.fn()
+  render(<SearchProgramCard program={{ ...program, evidenceQuestionSupported: true }} onOpen={open} onAsk={ask} onSelect={select} signedIn />)
+  const actions = screen.getByTestId('search-program-primary-actions')
+  expect(actions).toHaveStyle({ flexDirection: 'row' })
+  expect(within(actions).getAllByRole('button')).toHaveLength(2)
+  const question = within(actions).getByLabelText(`${program.title}, 이 공고에 질문하기`)
+  const selection = within(actions).getByLabelText(`${program.title}, 이 공고 선택`)
+  fireEvent.press(question)
+  fireEvent.press(selection)
+  expect(ask).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id })
+  expect(select).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id })
+  expect(screen.getByRole('link', { name: '원문 보러가기' })).toBeTruthy()
+  fireEvent.press(screen.getByLabelText(`${program.title}, 상세 보기`))
+  expect(open).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id })
+})
+
 test('official-link failures remain explicit', async () => {
   const link = jest.spyOn(Linking, 'openURL').mockRejectedValueOnce(new Error('unavailable'))
   render(<SearchProgramCard program={program} onOpen={jest.fn()} />)

@@ -34,7 +34,7 @@ import { Button, Notice, colors, styles } from '../ui'
 
 import { chatSearchOptions, chatSnapshot, contextFromSearch, emptyChatContext as emptyContext } from './chatConversationState'
 
-type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice'
+type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice' | 'selection'
 
 export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, onCompany, onCreateRecruitment, keyboardOffset = 0, active = true, interests, assistantDraft, onDraftConsumed, renderHeaderActions }: {
   /** `ask`이면 공고 화면에서 원문 질문 시트를 엽니다. */
@@ -55,7 +55,7 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
   const timelineActive = useRef(active)
   const timelineSize = useRef({ viewport: 0, content: 0 })
   const pendingScroll = useRef<{ id: number; target: TimelineTarget; layout?: { y: number; height: number } } | null>(null)
-  const [timelineVersions, setTimelineVersions] = useState({ message: 0, waiting: 0, answer: 0, proposal: 0, results: 0, notice: 0 })
+  const [timelineVersions, setTimelineVersions] = useState({ message: 0, waiting: 0, answer: 0, proposal: 0, results: 0, notice: 0, selection: 0 })
   const token = status === 'signedIn' ? session?.accessToken : undefined
   const isGovAgent = status === 'signedIn' && session?.account?.role === 'ADMIN'
   const govOwner = useRef({ token, isGovAgent, email: session?.account?.email })
@@ -69,7 +69,6 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
   const [history, setHistory] = useState<ChatMessage[]>([])
   const historyRef = useRef(history); historyRef.current = history
   const [govProgram, setGovProgram] = useState<GovAgentProgram | null>(null)
-  const [govAskAnchor, setGovAskAnchor] = useState<string | null>(null)
   const [workBusy, setWorkBusy] = useState(false)
   const [busy, setBusy] = useState<'interpret' | 'search' | 'restore' | null>(null)
   // 검색을 보낸 시각입니다. 대기 화면이 지난 시간과 보통 걸리는 시간 안내를 이 시각부터 셉니다.
@@ -177,7 +176,7 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
     deletionId.current = null; setDeletingRecord(null); setDeleteError(null)
     setSavingHistory(false); setHistoryError(null); setRecordsOpen(false); setRecords([]); setRecordsCursor(null); setLoadingRecords(false); setRecordsError(null); setHistoryRestored(false)
     setMessage(''); setContext(emptyContext); setProposal(null); setClarification(null); setResult(null)
-    setHistory([]); setGovProgram(null); setGovAskAnchor(null); setWorkBusy(false); setBusy(null); setError(null); setRetryAction(null); setRetryUntil(0)
+    setHistory([]); setGovProgram(null); setWorkBusy(false); setBusy(null); setError(null); setRetryAction(null); setRetryUntil(0)
     setRestoreFailure(null)
     if (token) setSessionNotice(null)
     if (selected && token) void restore(selected, token)
@@ -226,7 +225,7 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
   function newConversation() {
     generation.current += 1; request.current?.abort(); historyWork.current?.abort(); clearTimelineScroll()
     pendingRestore.current = null; retryRestore.current = null; conversationVersion.current = 0; unsavedSnapshot.current = null
-    setHistory([]); setGovProgram(null); setGovAskAnchor(null); setWorkBusy(false); setContext(emptyContext); setResult(null); setProposal(null); setClarification(null); setMessage('')
+    setHistory([]); setGovProgram(null); setWorkBusy(false); setContext(emptyContext); setResult(null); setProposal(null); setClarification(null); setMessage('')
     setError(null); setRetryAction(null); setRetryUntil(0); setHistoryError(null); setRestoreFailure(null); setSessionNotice(null)
     setHistoryRestored(false)
     timeline.current?.scrollTo({ y: 0, animated: false })
@@ -267,7 +266,6 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
       conversationVersion.current = detail.conversation.version; unsavedSnapshot.current = null
       setHistory(snapshot.messages); setContext(restoredContext); setMessage(''); setProposal(restoredProposal); setClarification(snapshot.pendingClarification)
       setGovProgram(isGovAgent ? snapshot.govProgram ?? null : null)
-      setGovAskAnchor(isGovAgent ? snapshot.messages.at(-1)?.id ?? null : null)
       setResult(latestResult ? { query: latestResult.searchQuery ?? '', programs: latestResult.programs!, totalCount: latestResult.totalCount ?? latestResult.programs!.length,
         resultToken: latestResult.resultToken ?? null, expiresAt: latestResult.expiresAt ?? null } : null)
       pendingRestore.current = null; retryRestore.current = null
@@ -415,7 +413,7 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     const nextContext = proposal.proposedContext
-    setBusy('search'); setSearchStartedAt(Date.now()); setGovProgram(null); setGovAskAnchor(null); setError(null); setRetryAction(null)
+    setBusy('search'); setSearchStartedAt(Date.now()); setGovProgram(null); setError(null); setRetryAction(null)
     let completed: SupportProgramSearchResult | null = null
     requestTimelineScroll('waiting')
     try {
@@ -477,15 +475,12 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
   const latestResultId = [...history].reverse().find(item => item.programs !== undefined)?.id
   const blocked = Boolean(busy) || workBusy || savingHistory || loadingRecords || deletingRecord !== null
   const latestWorkId = [...history].reverse().find(item => item.govApplication || item.govReview || item.govPartners)?.id
-  const latestAnswer = history.at(-1)
-  const selectedEvidence = Boolean(govProgram && latestAnswer?.govEvidence
-    && latestAnswer.govEvidence.program.sourceCode === govProgram.sourceCode && latestAnswer.govEvidence.program.sourceProgramId === govProgram.sourceProgramId)
   const askedQuestions = govProgram ? history.flatMap((item, index) => item.govEvidence?.program.sourceCode === govProgram.sourceCode
     && item.govEvidence.program.sourceProgramId === govProgram.sourceProgramId && history[index - 1]?.role === 'user' ? [history[index - 1].text] : []) : []
   function selectGovProgram(program: GovAgentProgram | null) {
     if (!isGovAgent || blocked) return
     setGovProgram(program)
-    setGovAskAnchor(program ? history.at(-1)?.id ?? null : null)
+    if (program) requestTimelineScroll('selection')
     if (history.some(item => item.role === 'user')) void persist(chatSnapshot(history, context, proposal, clarification, program))
   }
   async function attachGovReview(messageId: string, id: number) {
@@ -507,7 +502,7 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
           : { govPartners: { message: text, conditions: { ...emptyPartnerRecruitmentConditions,
             program: { sourceCode: govProgram.sourceCode, sourceProgramId: govProgram.sourceProgramId } } } }) }
     const next: ChatMessage[] = [...history, { id: randomUUID(), role: 'user', text }, answer]
-    setHistory(next); setProposal(null); setClarification(null); setHistoryRestored(false); setGovAskAnchor(null)
+    setHistory(next); setProposal(null); setClarification(null); setHistoryRestored(false)
     requestTimelineScroll('answer')
     void persist(chatSnapshot(next, context, null, null, govProgram))
   }
@@ -558,12 +553,11 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
       {programs.map(program => <View key={JSON.stringify([program.sourceCode, program.id])} style={{ gap: 8 }}>
         <SearchProgramCard program={program} onOpen={onOpenProgram}
           onAsk={identity => {
-            if (govVisible) { selectGovProgram({ ...identity, title: program.title }); composerInput.current?.focus() }
+            if (govVisible) { selectGovProgram({ ...identity, title: program.title }) }
             else onOpenProgram(identity, { ask: true })
-          }} signedIn={Boolean(token)}
+          }} signedIn={Boolean(token)} disabled={blocked}
+          onSelect={govVisible ? identity => selectGovProgram({ ...identity, title: program.title }) : undefined}
           interests={interests} onLogin={() => onLogin()} searchRegion={item.searchOptions?.companyConditions?.region ?? null} />
-        {govVisible && <Button label="이 공고 선택" accessibilityLabel={`${program.title}, 이 공고 선택`} variant="secondary" disabled={blocked}
-          onPress={() => selectGovProgram({ sourceCode: program.sourceCode, sourceProgramId: program.id, title: program.title })} />}
       </View>)}
       {!token && item.resultToken && totalCount > programs.length && <View style={local.locked}>
         <Text style={styles.heading}>이번 추천에 {totalCount - programs.length}건이 더 있어요</Text>
@@ -650,17 +644,6 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
             onOpenRecruitment={onOpenRecruitment ? id => confirmDiscard(() => onOpenRecruitment(id)) : undefined}
             onReviewSaved={id => attachGovReview(item.id, id)} onWorkingChange={setWorkBusy} />
         </View>}
-        {govVisible && govProgram && item.role === 'assistant' && index === history.length - 1
-          && (item.id === govAskAnchor || selectedEvidence) && !blocked && !evidenceLimitReached && <View style={local.contentGroup}>
-          <Text style={styles.muted}>{selectedEvidence ? '이어서 묻기' : '이 공고에 바로 묻기'}</Text>
-          <View style={local.quickReplies}>
-            {govQuestions.filter(([, question]) => !askedQuestions.includes(question)).map(([label, question]) =>
-              <Pressable key={label} accessibilityRole="button" accessibilityLabel={label} style={local.quickReply}
-                disabled={history.length >= 197 || retryRemaining > 0} onPress={() => void interpret(question)}>
-                <Text style={local.quickReplyText}>{label}</Text>
-              </Pressable>)}
-          </View>
-        </View>}
         {item.programs !== undefined && renderResults(item)}</Fragment>)}
       {busy === 'interpret' && <View key={`message-${timelineVersions.message}`} testID="ai-search-pending-message" style={local.userBubble}
         onLayout={event => recordTimelineTarget('message', timelineVersions.message, event)}><Text style={styles.body}>{message}</Text></View>}
@@ -699,11 +682,18 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
       </View>}
       {introductory && status === 'signedOut' && <View style={local.guestHint}><Text style={local.hintText}>
         로그인 없이 검색과 협업 모집글을 둘러볼 수 있어요.{'\n'}공고 저장과 맞춤 리포트는 로그인 후 이용해요.</Text></View>}
-    </ScrollView>
-    <View testID="ai-search-composer" style={local.composerDock}>
-      {govVisible && govProgram && <View testID="gov-agent-selected-program" style={local.govProgram}>
-        <View style={local.govProgramHeader}><Text numberOfLines={2} style={[styles.label, { flex: 1 }]}>선택한 공고: {govProgram.title}</Text>
+      {govVisible && govProgram && <View key={`selection-${timelineVersions.selection}`} testID="gov-agent-selected-program" style={local.govProgram}
+        onLayout={event => recordTimelineTarget('selection', timelineVersions.selection, event)}>
+        <View style={local.govProgramHeader}><Text style={[styles.label, { flex: 1 }]}>선택한 공고: {govProgram.title}</Text>
           <Button label="×" accessibilityLabel="공고 선택 해제" size="small" variant="ghost" disabled={blocked} onPress={() => selectGovProgram(null)} />
+        </View>
+        <Text style={styles.muted}>이 공고에 바로 묻기</Text>
+        <View accessibilityLabel="선택 공고의 빠른 질문" style={local.quickReplies}>
+          {govQuestions.filter(([, question]) => !askedQuestions.includes(question)).map(([label, question]) =>
+            <Pressable key={label} accessibilityRole="button" accessibilityLabel={label}
+              accessibilityState={{ disabled: quickReplyDisabled || evidenceLimitReached || history.length >= 197 || retryRemaining > 0 }}
+              style={local.quickReply} disabled={quickReplyDisabled || evidenceLimitReached || history.length >= 197 || retryRemaining > 0}
+              onPress={() => void interpret(question)}><Text style={local.quickReplyText}>{label}</Text></Pressable>)}
         </View>
         <View accessibilityLabel="선택 공고의 세 가지 기능" style={local.govActions}>
           <Button label="신청 문서 쓰기" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('APPLICATION')} />
@@ -711,6 +701,8 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
           <Button label="파트너 찾기" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('PARTNERS')} />
         </View>
       </View>}
+    </ScrollView>
+    <View testID="ai-search-composer" style={local.composerDock}>
       <View style={local.composer}>
         <TextInput ref={composerInput} accessibilityLabel="회사 상황이나 궁금한 점" placeholder={isGovAgent ? '검색, 공고 질문, 신청 준비를 요청해 주세요.' : introductory
           ? '예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?'

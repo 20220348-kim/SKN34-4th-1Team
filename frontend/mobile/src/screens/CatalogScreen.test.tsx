@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
 import { Modal } from 'react-native'
 import type { SupportProgramCatalogFilters } from '@govbiz/shared/domain/entities/SupportProgramCatalog'
 import { regionNames } from '@govbiz/shared/domain/entities/Region'
@@ -31,6 +31,22 @@ test('keyboard search keeps draft input local and rejects invalid input before a
   await screen.findByText('검색 조건을 확인해 주세요.')
   expect(browseCatalog).toHaveBeenCalledTimes(1)
   expect(screen.queryByText('검색 결과 0건')).toBeNull()
+})
+
+test('the result count and sort stay on one row and sorting opens a compact sheet', async () => {
+  browseCatalog.mockResolvedValue({ ...emptyPage, total: 1632 })
+  render(<CatalogScreen onOpenProgram={jest.fn()} />)
+  await screen.findByText('검색 결과 1,632건')
+  const toolbar = screen.getByTestId('catalog-results-toolbar')
+  expect(toolbar).toHaveStyle({ flexDirection: 'row' })
+  expect(within(toolbar).getByText('검색 결과 1,632건')).toBeTruthy()
+  expect(within(toolbar).getByLabelText('정렬: 최신순')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('정렬: 최신순'))
+  const sheet = screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.visible)
+  expect(sheet?.props.transparent).toBe(true)
+  fireEvent.press(screen.getByRole('radio', { name: '마감일순' }))
+  await waitFor(() => expect(browseCatalog).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'DEADLINE', page: 1 }), expect.any(AbortSignal)))
+  expect(screen.getByLabelText('정렬: 마감일순')).toBeTruthy()
 })
 
 test('the filter sheet keeps multiple choices as a draft and submits them together on Apply', async () => {

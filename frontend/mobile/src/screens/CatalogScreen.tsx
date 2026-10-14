@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { BrowseSupportProgramsUseCase } from '@govbiz/shared/domain/usecases/BrowseSupportProgramsUseCase'
 import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalog, type SupportProgramCatalogFilters } from '@govbiz/shared/domain/entities/SupportProgramCatalog'
 import { defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges, defaultCatalogRegions,
@@ -26,10 +26,10 @@ const options = (defaults: readonly string[], available?: readonly string[]) =>
 const statusOptions = [{ value: 'ALL', label: '전체 접수 상태' }, ...Object.entries(programStatusLabels).map(([value, label]) => ({ value, label }))]
 const sortOptions = [{ value: 'RECENT', label: '최신순' }, { value: 'DEADLINE', label: '마감일순' }] as const
 
-export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header, interests, onLogin, inline = false, active: enabled = true }: {
+export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header, interests, onLogin, inline = false, active: enabled = true, scrollRef }: {
   onOpenProgram(identity: SupportProgramIdentity): void; keyboardOffset?: number; header?: ReactNode
   interests?: SearchProgramInterests; onLogin?(): void
-  inline?: boolean; active?: boolean
+  inline?: boolean; active?: boolean; scrollRef?: Ref<ScrollView>
   selection?: { keys: string[]; disabled?: boolean; maximum?: number; labels?: ProgramSelectionLabels; onToggle(program: SupportProgram): void }
 }) {
   const defaults = { ...initialFilters, status: selection ? 'ALL' as const : initialFilters.status }
@@ -113,8 +113,8 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       {activeConditions.map(item => <Button key={`${item.key}:${item.value}`} accessibilityLabel={`${item.label} 조건 해제`}
         label={`${item.label} ×`} size="small" variant="secondary" onPress={() => clearCondition(item)} />)}
     </View>
-    <View style={local.results}><Text accessibilityLiveRegion="polite" style={styles.heading}>검색 결과 {loading || error ? '—' : catalog?.total.toLocaleString() ?? '—'}건</Text>
-      <View style={local.sort}><ChoiceField label="정렬" value={applied.sort} options={sortOptions}
+    <View testID="catalog-results-toolbar" style={local.results}><Text accessibilityLiveRegion="polite" style={[styles.label, local.resultCount]}>검색 결과 {loading || error ? '—' : catalog?.total.toLocaleString() ?? '—'}건</Text>
+      <View style={local.sort}><ChoiceField label="정렬" inline compact value={applied.sort} options={sortOptions}
         onChange={value => change('sort', value as SupportProgramCatalogFilters['sort'])} /></View></View>
     {loading && <ActivityIndicator accessibilityLabel="공고를 불러오는 중" color={colors.primary} />}
     {error && <><Notice error>{error}</Notice><Button label="다시 불러오기" onPress={() => setRetry(value => value + 1)} /></>}
@@ -155,12 +155,12 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       {selection && <Text style={styles.muted}>공고 상세 조회와 작성·비교 대상 선택은 별도 동작입니다.</Text>}
     </PartnerSheet>
   </>
-  return inline ? <View style={{ gap: 12 }}>{content}</View> : <Page keyboardOffset={keyboardOffset}>{content}</Page>
+  return inline ? <View style={{ gap: 12 }}>{content}</View> : <Page keyboardOffset={keyboardOffset} scrollRef={scrollRef}>{content}</Page>
 }
 const local = StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'flex-end', gap: 9 }, keyword: { flex: 1, minWidth: 0 },
   filterButton: { minHeight: 48, paddingHorizontal: 13, borderRadius: 24, borderWidth: 1, borderColor: colors.border,
     backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: 6 }, filterText: { fontSize: 14, color: colors.primary },
   conditions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, results: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  sort: { marginLeft: 'auto', minWidth: 108 },
+  resultCount: { flex: 1, minWidth: 0 }, sort: { marginLeft: 'auto', flexShrink: 0 },
 })

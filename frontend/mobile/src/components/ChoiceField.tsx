@@ -4,9 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Button, colors, styles } from '../ui'
 import { PartnerSheet } from './PartnerSheet'
 
-export function ChoiceField({ label, value, options, onChange, placeholder = '', disabled = false, compact = false }: {
+export function ChoiceField({ label, value, options, onChange, placeholder = '', disabled = false, compact = false, inline = false }: {
   label: string; value: string; options: readonly { value: string; label: string }[]; onChange: (value: string) => void
-  placeholder?: string; disabled?: boolean; compact?: boolean
+  placeholder?: string; disabled?: boolean; compact?: boolean; inline?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const selectedOption = options.find((item) => item.value === value)
@@ -16,7 +16,7 @@ export function ChoiceField({ label, value, options, onChange, placeholder = '',
     onPress={() => { onChange(item.value); setOpen(false) }} style={[styles.input, value === item.value && { backgroundColor: colors.soft }]}>
     <Text style={styles.body}>{item.label}{value === item.value ? '  ✓' : ''}</Text>
   </Pressable>)
-  return <View style={{ gap: 7 }}>
+  return <View style={[{ gap: 7 }, inline && { flexDirection: 'row', alignItems: 'center' }]}>
     <Text style={styles.label}>{label}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${displayValue}`}
       disabled={disabled} accessibilityState={{ disabled }} onPress={() => setOpen(true)} style={[styles.input, disabled && { opacity: 0.55 }]}>

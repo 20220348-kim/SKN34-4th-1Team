@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Text, View } from 'react-native'
+import { useEffect, useState, type ReactNode, type Ref } from 'react'
+import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
@@ -8,11 +8,11 @@ import { useAuth } from '../auth/session'
 import { ProgramCard, type ProgramSelectionLabels } from './ProgramCard'
 import { Button, Notice, Page, colors, styles } from '../ui'
 
-export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, header, maximum = 2, labels, inline = false, active = true }: {
+export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, header, maximum = 2, labels, inline = false, active = true, scrollRef }: {
   token: string; keys: string[]; disabled: boolean; onToggle(program: SupportProgram): void; onOpen(identity: SupportProgramIdentity): void
   header?: ReactNode
   maximum?: number; labels?: ProgramSelectionLabels
-  inline?: boolean; active?: boolean
+  inline?: boolean; active?: boolean; scrollRef?: Ref<ScrollView>
 }) {
   const { invalidateSession } = useAuth()
   const [programs, setPrograms] = useState<SupportProgram[] | null>(null)
@@ -42,5 +42,5 @@ export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, h
         selection={{ selected, labels, disabled: disabled || (!selected && keys.length >= maximum), onToggle: () => onToggle(program) }} />
     })}
   </>
-  return inline ? <View style={{ gap: 12 }}>{content}</View> : <Page>{content}</Page>
+  return inline ? <View style={{ gap: 12 }}>{content}</View> : <Page scrollRef={scrollRef}>{content}</Page>
 }

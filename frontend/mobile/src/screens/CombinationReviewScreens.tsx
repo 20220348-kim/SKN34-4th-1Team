@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
-import { ActivityIndicator, Alert, AppState, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, AppState, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useFocusEffect, useRouter } from 'expo-router'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, type ReviewProgram } from '@govbiz/shared/domain/entities/CombinationReview'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
@@ -109,6 +109,11 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, 
   const [names, setNames] = useState<Record<string, string>>({})
   const [nameError, setNameError] = useState<string | null>(null)
   const [nameRevision, setNameRevision] = useState(0)
+  const filterTitleInput = useRef<TextInput>(null)
+  const savedTitleInput = useRef<TextInput>(null)
+  const filterScroll = useRef<ScrollView>(null)
+  const savedScroll = useRef<ScrollView>(null)
+  const [titleRequired, setTitleRequired] = useState(false)
   const initialSelected = useRef(false)
   const latest = useRef(vm); latest.current = vm
   const referencePrograms = [...new Map([...vm.draft.programs, ...(vm.run?.input.programs ?? [])].map(program => [reviewProgramKey(program), program])).values()]
@@ -175,6 +180,14 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, 
   }
   async function saveStep(next: CombinationReviewStep) {
     if (disabled) return
+    if (step === 'selection' && !vm.draft.title.trim()) {
+      setTitleRequired(true)
+      const scroll = method === 'filter' ? filterScroll : savedScroll
+      scroll.current?.scrollTo({ y: 0, animated: true })
+      const input = method === 'filter' ? filterTitleInput : savedTitleInput
+      input.current?.focus()
+      return
+    }
     const saved = await vm.saveInputs()
     if (saved) changeStep(next, saved.id)
   }
@@ -193,8 +206,9 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, 
     style={[styles.muted, value === step && local.current]}>{index + 1}. {value === 'selection' ? '공고 선택' : '분석 확인'}</Text>)}</View>
   const saveHint = <Text accessibilityLiveRegion="polite" style={styles.muted}>{vm.saving ? '저장 중…' : vm.saveError ? '저장하지 못했어요. 입력은 이 화면에 유지됩니다.'
     : vm.review && !vm.dirty ? '제목·공고·내 상황 저장됨' : step === 'confirm' ? '바꾼 입력은 검토 실행 전에 저장돼요.' : '다음 단계로 넘어가면 입력이 저장돼요.'}</Text>
-  const selectionHeader = <View style={local.selectionHeader}>{progress}{saveHint}<Field label="검토 제목" value={vm.draft.title} maxLength={200} editable={!locked}
-    placeholder="예: 창업·기술개발 사업 함께 지원하기" onChangeText={title => vm.setDraft(previous => ({ ...previous, title }))} />
+  const selectionHeader = (selectionMethod: typeof method) => <View style={local.selectionHeader}>{progress}{saveHint}<Field label="검토 제목" inputRef={selectionMethod === 'filter' ? filterTitleInput : savedTitleInput} value={vm.draft.title} maxLength={200} editable={!locked}
+    placeholder="예: 창업·기술개발 사업 함께 지원하기" onChangeText={title => { setTitleRequired(false); vm.setDraft(previous => ({ ...previous, title })) }} />
+    {titleRequired && <Notice error>검토 제목을 입력해 주세요.</Notice>}
     <Card><View style={styles.row}><Text style={styles.label}>비교할 공고</Text><StatusBadge label={vm.draft.programs.length > 2 ? `기존 공고 ${vm.draft.programs.length}개` : `${vm.draft.programs.length} / 2 선택`} /></View>
       {vm.draft.programs.length > 2 && <Notice>기존 결과는 볼 수 있지만 새 분석은 공고를 2개로 줄여야 해요.</Notice>}
       {vm.draft.programs.map((program, index) => <View key={reviewProgramKey(program)} style={local.selected}><Text style={[styles.muted, { flex: 1 }]}>{name(program, index)}</Text>
@@ -213,12 +227,12 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, 
       accessibilityElementsHidden={step !== 'selection'} importantForAccessibility={step === 'selection' ? 'auto' : 'no-hide-descendants'}>
       <View style={method !== 'filter' ? { display: 'none' } : undefined} accessibilityElementsHidden={method !== 'filter'}
         importantForAccessibility={method === 'filter' ? 'auto' : 'no-hide-descendants'}>
-        <CatalogScreen inline active={active && step === 'selection' && method === 'filter'} header={selectionHeader} onOpenProgram={onOpenProgram}
+        <CatalogScreen inline active={active && step === 'selection' && method === 'filter'} header={selectionHeader('filter')} onOpenProgram={onOpenProgram}
           selection={{ keys: vm.selectedKeys, disabled: locked, onToggle: toggle }} />
       </View>
       {savedVisited && <View style={method !== 'saved' ? { display: 'none' } : undefined} accessibilityElementsHidden={method !== 'saved'}
         importantForAccessibility={method === 'saved' ? 'auto' : 'no-hide-descendants'}>
-        <ReviewSavedPrograms inline active={active && step === 'selection' && method === 'saved'} header={selectionHeader} token={token}
+        <ReviewSavedPrograms inline active={active && step === 'selection' && method === 'saved'} header={selectionHeader('saved')} token={token}
           keys={vm.selectedKeys} disabled={locked} onToggle={toggle} onOpen={onOpenProgram} />
       </View>}
     </View>}
@@ -247,9 +261,9 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, 
     {selectionVisited && <View style={[local.panel, step !== 'selection' && local.hidden]} accessibilityElementsHidden={step !== 'selection'}
       importantForAccessibility={step === 'selection' ? 'auto' : 'no-hide-descendants'} pointerEvents={step === 'selection' ? 'auto' : 'none'}>
       <View style={[local.panel, method !== 'filter' && local.hidden]} accessibilityElementsHidden={method !== 'filter'} importantForAccessibility={method === 'filter' ? 'auto' : 'no-hide-descendants'} pointerEvents={method === 'filter' ? 'auto' : 'none'}>
-        <CatalogScreen header={selectionHeader} onOpenProgram={onOpenProgram} selection={{ keys: vm.selectedKeys, disabled: locked, onToggle: toggle }} /></View>
+        <CatalogScreen scrollRef={filterScroll} header={selectionHeader('filter')} onOpenProgram={onOpenProgram} selection={{ keys: vm.selectedKeys, disabled: locked, onToggle: toggle }} /></View>
       {savedVisited && <View style={[local.panel, method !== 'saved' && local.hidden]} accessibilityElementsHidden={method !== 'saved'} importantForAccessibility={method === 'saved' ? 'auto' : 'no-hide-descendants'} pointerEvents={method === 'saved' ? 'auto' : 'none'}>
-        <ReviewSavedPrograms header={selectionHeader} token={token} keys={vm.selectedKeys} disabled={locked} onToggle={toggle} onOpen={onOpenProgram} /></View>}
+        <ReviewSavedPrograms scrollRef={savedScroll} header={selectionHeader('saved')} token={token} keys={vm.selectedKeys} disabled={locked} onToggle={toggle} onOpen={onOpenProgram} /></View>}
     </View>}
     {step === 'confirm' && <Page key="confirm">{progress}{saveHint}<Title>이 내용으로 검토할까요?</Title>
       <Notice>{scopeNotice}</Notice>
@@ -286,7 +300,7 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onCreated, 
     </Page>}
     {step === 'confirm' && <FeatureUsageLine token={token} feature="COMBINATION_REVIEW" revision={vm.busy} />}
     {step !== 'analysis' && <View style={local.actions}>
-      {step === 'selection' && <Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('confirm')} />}
+      {step === 'selection' && <Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading || !vm.storageReady || vm.draft.programs.length !== 2} onPress={() => void saveStep('confirm')} />}
       {/* 이전 단계로 갈 때도 바꾼 내 상황을 저장해요. [검토 실행]은 바뀐 입력을 먼저 저장(입력 버전 확인)한 뒤 그 버전으로 분석을 접수해요. */}
       {step === 'confirm' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked || vm.loading} onPress={() => void saveStep('selection')} /><Button style={local.action} label="검토 실행"
         busy={vm.busy} disabled={vm.loading || !vm.storageReady || !vm.review || Boolean(vm.startBlocked)} onPress={() => void saveAndStart()} /></>}

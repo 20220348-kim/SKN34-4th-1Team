@@ -12,8 +12,9 @@ import { AppIcon } from './AppIcon'
  * AI 검색 결과 카드입니다. `onOpen`이 있으면 자세한 카드로 원문·상세·원문 질문 동작을 두고, 없으면 소개용 작은 카드입니다.
  * 원문 질문(`onAsk`)은 서버가 질문을 받는다고 알린 공고(또는 함께 묶인 같은 공고)에만 둡니다.
  */
-export function SearchProgramCard({ program, onOpen, onAsk, signedIn = false, interests, onLogin, searchRegion }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
+export function SearchProgramCard({ program, onOpen, onAsk, onSelect, disabled = false, signedIn = false, interests, onLogin, searchRegion }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
   onAsk?(identity: SupportProgramIdentity): void; signedIn?: boolean
+  onSelect?(identity: SupportProgramIdentity): void; disabled?: boolean
   searchRegion?: string | null
   interests?: SearchProgramInterests; onLogin?(): void }) {
   const [linkError, setLinkError] = useState<string | null>(null)
@@ -65,8 +66,12 @@ export function SearchProgramCard({ program, onOpen, onAsk, signedIn = false, in
         : <Text style={local.evidence}>확인 가능한 본문 인용이 제공되지 않았습니다.</Text>}
     </View>
     {onOpen && <>
-      {onAsk && questionTarget && <Button label={askLabel} accessibilityLabel={`${program.title}, ${askLabel}`} variant="secondary"
-        onPress={() => onAsk(questionTarget)} />}
+      {(onAsk && questionTarget || onSelect) && <View testID="search-program-primary-actions" style={local.primaryActions}>
+        {onAsk && questionTarget && <Button label={askLabel} accessibilityLabel={`${program.title}, ${askLabel}`} variant="secondary"
+          style={local.primaryAction} disabled={disabled} onPress={() => onAsk(questionTarget)} />}
+        {onSelect && <Button label="이 공고 선택" accessibilityLabel={`${program.title}, 이 공고 선택`} variant="secondary"
+          style={local.primaryAction} disabled={disabled} onPress={() => onSelect({ sourceCode: program.sourceCode, sourceProgramId: program.id })} />}
+      </View>}
       <View style={local.actions}>
         <View style={local.sourceLinks}>
           <SourceLink label={sourceLabel} onPress={() => void openSource(program.sourceUrl)} />
@@ -90,6 +95,7 @@ function SourceLink({ label, onPress }: { label: string; onPress(): void }) {
 }
 
 const local = StyleSheet.create({
+  primaryActions: { flexDirection: 'row', gap: 8 }, primaryAction: { flex: 1, minWidth: 0, paddingHorizontal: 8 },
   card: { backgroundColor: colors.surface, borderRadius: 18, padding: 16, gap: 10 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 6, height: 6, borderRadius: 3 },

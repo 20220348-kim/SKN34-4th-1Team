@@ -1,4 +1,4 @@
-import { useContext, type PropsWithChildren } from 'react'
+import { useContext, type PropsWithChildren, type Ref } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps, type StyleProp, type ViewStyle } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BottomTabBarHeightContext } from 'expo-router/js-tabs'
@@ -16,8 +16,8 @@ export const colors = {
 }
 
 // Tabs own the bottom inset; a root page or its fixed footer owns it otherwise.
-export function Page({ children, scroll = true, headerless = false, bottomSafeArea = true, keyboardOffset = 0, refreshing, onRefresh, backgroundColor = colors.background }: PropsWithChildren<{
-  scroll?: boolean; headerless?: boolean; bottomSafeArea?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void; backgroundColor?: string
+export function Page({ children, scroll = true, headerless = false, bottomSafeArea = true, keyboardOffset = 0, refreshing, onRefresh, backgroundColor = colors.background, scrollRef }: PropsWithChildren<{
+  scroll?: boolean; headerless?: boolean; bottomSafeArea?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void; backgroundColor?: string; scrollRef?: Ref<ScrollView>
 }>) {
   const insets = useSafeAreaInsets()
   const tabBarHeight = useContext(BottomTabBarHeightContext)
@@ -27,7 +27,7 @@ export function Page({ children, scroll = true, headerless = false, bottomSafeAr
     paddingLeft: insets.left, paddingRight: insets.right }]}
     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     keyboardVerticalOffset={keyboardOffset + (headerless ? 0 : insets.top + 56)}>
-    {scroll ? <ScrollView {...scrollBoundary} contentContainerStyle={[styles.content, { paddingBottom: 0 }]}
+    {scroll ? <ScrollView ref={scrollRef} {...scrollBoundary} contentContainerStyle={[styles.content, { paddingBottom: 0 }]}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={colors.primary} /> : undefined}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">{children}</ScrollView>
       : <View style={[styles.content, { flex: 1, paddingBottom: 0 }]}>{children}</View>}
@@ -53,9 +53,9 @@ export function Button({ label, onPress, disabled, variant = 'primary', busy, si
   </Pressable>
 }
 
-export function Field({ label, ...props }: TextInputProps & { label: string }) {
+export function Field({ label, inputRef, ...props }: TextInputProps & { label: string; inputRef?: Ref<TextInput> }) {
   return <View style={{ gap: 7 }}><Text style={styles.label}>{label}</Text>
-    <TextInput accessibilityLabel={label} placeholderTextColor={colors.placeholder} {...props} style={[styles.input, props.style]} />
+    <TextInput ref={inputRef} accessibilityLabel={label} placeholderTextColor={colors.placeholder} {...props} style={[styles.input, props.style]} />
   </View>
 }
 
