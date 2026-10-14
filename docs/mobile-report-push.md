@@ -25,6 +25,14 @@ ACCEPTED는 Expo 접수, DELIVERED는 FCM/APNs 접수이며 사용자 기기 표
 알림에는 ID·날짜와 일반 안내만 담는다. 기업명·추천 내용·로그인 정보는 넣지 않는다.
 앱은 shared 스키마로 type/ID/날짜를 검증하고 임의 URL을 열지 않는다. 로그인 뒤 ID로 본인 리포트를 조회하며 AI를 재호출하지 않는다.
 
+앱 설정 조회와 기기 등록·해제는 별도 취소 경계를 사용한다. 등록·해제 중의 새로고침은 작업과 서버 상태 확인이 끝난 뒤 한 번 처리하며,
+조회가 쓰기 요청을 취소하거나 저장 중 잠금을 풀지 않는다. 계정 전환·로그아웃·Provider 종료는 두 요청을 취소하고 늦게 도착한 결과를 버린다.
+Expo의 기기 토큰 이벤트는 받은 네이티브 토큰을 `getExpoPushTokenAsync`의 `devicePushToken` 옵션으로 전달한다.
+같은 이벤트에서 기기 토큰을 다시 조회하지 않으며, 등록된 Expo 토큰이 같으면 PUT을 반복하지 않는다.
+이벤트 처리도 등록·해제와 순서대로 실행한다. 꺼진 기기는 토큰 이벤트만으로 켜지지 않고 권한 요청은 사용자의 켜기 동작에서만 실행한다.
+전송 중 통신 실패는 변경 결과 미확인으로, 저장 후 조회 실패는 서버 상태 미확인으로 표시하며 마지막으로 확인한 스위치 값을 유지한다.
+사용자가 다시 확인해서 서버 상태를 받아야 표시를 갱신한다. OS 권한 해제도 서버의 DELETE와 확인 GET을 거쳐 수신을 끈다.
+
 ## HTTP 계약
 
 | 요청 | 동작 |
@@ -67,6 +75,10 @@ Expo/Firebase 프로젝트·인증이 없으면 자동 테스트와 JS export까
 SQL·아키텍처 경계·설정·문서 참조 및 `git diff --check`를 확인한다.
 기존 GovBiz CI의 Core clean build는 MySQL 8.4 Testcontainers로 UPSERT·세션 경계·중복 예약·소유권·rollback을 검증한다.
 모바일 전체 test/typecheck/lint/export도 기존 CI에 포함된다. CI와 실기기/에뮬레이터 실수신은 별도 검증이다.
+
+모바일 Provider 회귀 테스트는 토큰 조회 중 SDK 이벤트, 켜진 기기의 조회 순환 방지, 등록 중 새로고침 보류,
+중복·연속 토큰 이벤트, 꺼진 기기의 이벤트, 로그아웃·계정 전환·종료 뒤의 결과 폐기, 등록·확인 실패와 활성화 시 권한 해제를 모의한다.
+기기 토큰 helper 테스트는 이벤트 토큰 전달과 권한·Expo 토큰 조회 실패를 확인한다. 이 테스트는 실제 SDK 이벤트 순서나 푸시 수신 검증이 아니다.
 
 공식 안내: [Expo 설정](https://docs.expo.dev/push-notifications/push-notifications-setup/),
 [FCM 인증](https://docs.expo.dev/push-notifications/fcm-credentials/),
