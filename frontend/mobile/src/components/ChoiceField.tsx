@@ -1,23 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Button, colors, styles } from '../ui'
 import { PartnerSheet } from './PartnerSheet'
 
-export function ChoiceField({ label, value, options, onChange, disabled = false, compact = false }: {
+export function ChoiceField({ label, value, options, onChange, placeholder = '', disabled = false, compact = false }: {
   label: string; value: string; options: readonly { value: string; label: string }[]; onChange: (value: string) => void
-  disabled?: boolean; compact?: boolean
+  placeholder?: string; disabled?: boolean; compact?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  const choices = options.map(item => <Pressable key={item.value} accessibilityRole="radio" accessibilityLabel={item.label} accessibilityState={{ checked: value === item.value }}
+  const selectedOption = options.find((item) => item.value === value)
+  const displayValue = selectedOption?.label ?? (value || placeholder)
+  useEffect(() => { if (disabled) setOpen(false) }, [disabled])
+  const choices = options.map(item => <Pressable key={item.value} accessibilityRole="radio" accessibilityLabel={item.label} accessibilityState={{ checked: value === item.value, disabled }} disabled={disabled}
     onPress={() => { onChange(item.value); setOpen(false) }} style={[styles.input, value === item.value && { backgroundColor: colors.soft }]}>
     <Text style={styles.body}>{item.label}{value === item.value ? '  ✓' : ''}</Text>
   </Pressable>)
   return <View style={{ gap: 7 }}>
     <Text style={styles.label}>{label}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${options.find((item) => item.value === value)?.label ?? value}`}
-      disabled={disabled} accessibilityState={{ disabled }} onPress={() => setOpen(true)} style={styles.input}>
-      <Text style={styles.body}>{options.find((item) => item.value === value)?.label ?? value} ▾</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${displayValue}`}
+      disabled={disabled} accessibilityState={{ disabled }} onPress={() => setOpen(true)} style={[styles.input, disabled && { opacity: 0.55 }]}>
+      <Text style={[styles.body, !selectedOption && !value && { color: colors.placeholder }]}>{displayValue} ▾</Text>
     </Pressable>
     {compact ? <PartnerSheet visible={open} title={label} compact actions={null} onClose={() => setOpen(false)}>{choices}</PartnerSheet>
       : <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
