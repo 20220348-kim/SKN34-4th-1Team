@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AppState, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { Animated, AppState, Easing, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { OnboardingPreview } from '../components/OnboardingPreview'
 import { Button, Notice, colors, styles } from '../ui'
@@ -23,6 +23,8 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
   const [pageWidth, setPageWidth] = useState(Math.max(1, dimensions.width - insets.left - insets.right))
   const carousel = useRef<ScrollView | null>(null)
   const animateAdvance = useRef(false)
+  const progress = useRef(new Animated.Value(0)).current
+  const fillWidth = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
   useEffect(() => {
     const subscription = AppState.addEventListener('change', setAppState)
     return () => subscription.remove()
@@ -32,19 +34,27 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
     animateAdvance.current = false
   }, [index, pageWidth, busy])
   useEffect(() => {
-    if (busy || autoAdvancePaused || dragging || appState !== 'active' || index === slides.length - 1) return
+    if (busy || autoAdvancePaused || dragging || appState !== 'active') return
+    progress.setValue(0)
+    const animation = Animated.timing(progress, { toValue: 1, duration: autoAdvanceDelay, easing: Easing.linear, useNativeDriver: false })
+    animation.start()
     const timer = setTimeout(() => {
-      animateAdvance.current = true
-      setIndex(current => Math.min(slides.length - 1, current + 1))
+      progress.setValue(1)
+      if (index < slides.length - 1) {
+        animateAdvance.current = true
+        setIndex(current => Math.min(slides.length - 1, current + 1))
+      }
     }, autoAdvanceDelay)
-    return () => clearTimeout(timer)
-  }, [index, pageWidth, busy, autoAdvancePaused, dragging, appState])
+    return () => { clearTimeout(timer); animation.stop() }
+  }, [index, pageWidth, busy, autoAdvancePaused, dragging, appState, progress])
   return <View style={[local.page, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }]}>
     <View style={local.navigation}>
       <Text accessibilityLiveRegion="polite" style={styles.muted}>{index + 1} / {slides.length}</Text>
     </View>
     <View style={local.progress} accessibilityLabel={`기능 소개 ${index + 1}단계`}>
-      {slides.map((_, step) => <View key={step} style={[local.bar, step <= index && { backgroundColor: colors.primary }]} />)}
+      {slides.map((_, step) => <View key={step} style={local.bar}>
+        <Animated.View testID={`welcome-progress-${step}`} style={[local.barFill, { width: step < index ? '100%' : step === index ? fillWidth : '0%' }]} />
+      </View>)}
     </View>
     {error && <View style={{ paddingHorizontal: 20 }}><Notice error>{error}</Notice></View>}
     <ScrollView ref={carousel} testID="welcome-carousel" horizontal pagingEnabled directionalLockEnabled bounces={false} overScrollMode="never"
@@ -80,7 +90,8 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, navigation: { minHeight: 48, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
   progress: { paddingHorizontal: 20, paddingVertical: 16, flexDirection: 'row', gap: 6 },
-  bar: { flex: 1, height: 3, borderRadius: 3, backgroundColor: colors.track }, slide: { paddingHorizontal: 20 },
+  bar: { flex: 1, height: 3, borderRadius: 3, backgroundColor: colors.track, overflow: 'hidden' },
+  barFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 3 }, slide: { paddingHorizontal: 20 },
   heading: { paddingTop: 15, paddingBottom: 18 }, title: { fontSize: 26, lineHeight: 37, fontWeight: '700', color: colors.text, textAlign: 'center' },
   swipeHint: { fontSize: 12, lineHeight: 20, color: colors.muted, textAlign: 'center', paddingTop: 5 },
   footerLinks: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 6 },
