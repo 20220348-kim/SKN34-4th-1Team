@@ -139,6 +139,7 @@ jobs:
           cache: gradle
           cache-dependency-path: |
             backend/core-service/*.gradle
+            backend/core-service/gradle.properties
             backend/core-service/gradle/wrapper/gradle-wrapper.properties
 
       - name: Clean build and test

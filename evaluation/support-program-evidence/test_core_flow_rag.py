@@ -255,7 +255,11 @@ def test_imported_capture_reaches_ops_pandera_evidently_and_score_contract(
     item = datasets[-1]
     release = execution_spec.build_release(repository)
     monkeypatch.setattr(catalog, "DATASETS", {item["id"]: item for item in datasets})
-    monkeypatch.setattr(execution_spec, "read_release", lambda: release)
+    monkeypatch.setattr(
+        execution_spec,
+        "RELEASE_PATH",
+        repository / importer.OPS / "execution_release.json",
+    )
     monkeypatch.setattr(ops_flow, "ROOT", repository)
     monkeypatch.setattr(
         ops_flow, "__file__", str(repository / importer.EVIDENCE / "ops_flow.py")

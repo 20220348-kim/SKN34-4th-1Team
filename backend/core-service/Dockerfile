@@ -6,7 +6,7 @@ WORKDIR /workspace
 
 COPY gradlew ./gradlew
 COPY gradle ./gradle
-COPY build.gradle settings.gradle ./
+COPY build.gradle settings.gradle gradle.properties ./
 RUN chmod +x ./gradlew
 
 COPY src ./src

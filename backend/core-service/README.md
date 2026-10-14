@@ -1303,6 +1303,9 @@ Langfuse를 거치는 여섯 사례는 기존 격리 CI에 `--evidence-traces-ou
 ./gradlew clean test --no-daemon
 ```
 
+`gradle.properties`에서 Kotlin 컴파일 데몬의 최대 힙을 2GiB로, Gradle worker를 최대 2개로 지정합니다.
+로컬·CI·Docker 빌드에 같은 설정을 적용해 전체 컴파일 시 기본 512MiB 힙의 메모리 부족을 방지합니다.
+
 Gradle 테스트 JVM의 최대 힙은 1GiB, Spring 테스트 컨텍스트 캐시는 최대 4개로 제한합니다.
 서로 다른 통합 테스트의 컨텍스트·DB 풀·Testcontainers가 오래 누적되지 않도록 오래된 컨텍스트를
 퇴출하고 종료합니다. 이 설정은 테스트에만 적용되며 전체 테스트와 실제 MySQL 검증은 유지합니다.

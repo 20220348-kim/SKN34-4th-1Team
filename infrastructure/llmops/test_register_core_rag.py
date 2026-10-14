@@ -193,7 +193,11 @@ def test_registered_core_capture_uses_existing_ops_flow_and_preserves_failures(
         )
     }
     monkeypatch.setattr(catalog, "DATASETS", datasets)
-    monkeypatch.setattr(execution_spec, "read_release", lambda: release)
+    monkeypatch.setattr(
+        execution_spec,
+        "RELEASE_PATH",
+        repository / execution_spec.OPS / "execution_release.json",
+    )
     monkeypatch.setattr(ops_flow, "ROOT", repository)
     monkeypatch.setattr(
         ops_flow, "__file__", str(repository / execution_spec.EVIDENCE / "ops_flow.py")
