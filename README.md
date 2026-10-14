@@ -263,9 +263,9 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 **GovBiz 사용자·Ops 화면은 Vercel**, 새로 설치한 **Argo CD 배포 관리 화면은 EKS의 `argocd-server` Pod**에서 제공합니다. Argo 관리자는 CloudFront의 `/argocd/`로 직접 접속하고, 기존 내부 ALB·Gateway를 거쳐 `argocd` Namespace의 Service·Pod에 연결됩니다. 그림의 ⑥이 이 관리 웹 경로입니다.
 
-![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=27631e4266f5)
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=5f371df5397a)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=27631e4266f5) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=bc65fcd202fd)
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=5f371df5397a) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=ef7f947d2d6e)
 
 | 구분 | 운영 구성 |
 |---|---|
@@ -274,7 +274,7 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 | **로드밸런싱** | 내부 ALB가 정상 상태의 Nginx Gateway Pod로 HTTP 요청을 분산합니다. Gateway는 업무 API를 Core·Ops Service로, `/argocd/`를 Argo Service로 전달합니다. Core는 필요할 때 AI Service를 호출합니다. Core·AI의 Service는 준비된 Pod로 연결을 분산하며, Ops·Argo 웹은 각각 단일 Pod로 전달합니다. |
 | **Pod 오토스케일링 — HPA** | 컨테이너 CPU 요청량 대비 평균 사용률 60%를 기준으로 Core·AI는 각각 2\~3개, Gateway는 1\~3개로 조절합니다. Catalog·Ops·DB·평가 서비스는 단일 실행을 유지합니다. 부하 감소 시에는 5분 안정화 구간을 거쳐 Pod를 줄입니다. |
 | **EC2 오토스케일링 — Cluster Autoscaler** | application은 1\~2대, observability는 1대로 전체 EC2를 기본 2대·최대 3대로 설정합니다. 기존 노드의 자원·분산 조건을 만족하지 못해 Pod가 대기하면 application 노드를 추가합니다. 세 번째 Core 또는 AI Pod는 분산 규칙상 세 번째 EC2가 필요합니다. 추가 노드가 불필요해진 상태로 10분이 지나고 남은 Pod를 안전하게 옮길 수 있으면 축소합니다. |
-| **외부 API 연결** | Catalog → 공고 제공처 API, AI Service → OpenAI의 요청은 사설 Pod에서 NAT Gateway → Internet Gateway를 거쳐 나갑니다. 외부 API는 VPC 밖에 있으며, 사용자 요청이 들어오는 ALB 경로와 구분합니다. |
+| **외부 API 연결** | Catalog → 공고 제공처 API, AI Service → OpenAI의 요청은 **Private Subnet의 Pod → Public Subnet의 NAT Gateway → VPC 경계의 Internet Gateway → VPC 밖 API**로 나갑니다. Public Subnet에는 Internet Gateway로 직접 나가는 경로가 있어 인터넷 통신용 NAT를 이곳에 둡니다. 요청의 응답은 돌아오지만 외부에서 이 NAT 경로로 Pod에 새 연결을 시작할 수는 없습니다. 사용자 요청이 들어오는 ALB 경로와 구분합니다. |
 | **데이터 보존** | MySQL·검색·큐·평가·관측 데이터는 EBS gp3 PVC에 보존합니다. S3는 암호화한 이전 백업을 보관합니다. |
 | **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → Helm 배포 YAML·불변 Git 태그 발행 → Argo CD의 EKS 동기화 → Vercel 웹 전환 순서입니다. |
 | **배포 도구** | Helm은 Chart·EKS 설정·이미지 digest로 YAML을 만듭니다. EKS의 `argocd` Namespace에는 Core 4개와 상시 대시보드 `argocd-server` 1개, 총 Pod 5개를 observability 노드에 배치합니다. Git의 배포 설정을 읽어 Kubernetes API로 앱·배포 hook을 동기화하고 CodeBuild는 결과를 조회합니다. |
