@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
-import { ActivityIndicator, DevSettings, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { useAuth } from '../auth/session'
-import { clearIntroductionCompleted } from '../auth/introductionStorage'
+import { useAssistantBlock } from '../assistant/context'
+import { WelcomeScreen } from './WelcomeScreen'
 import { AppIcon, type AppIconName } from '../components/AppIcon'
 import { MenuPressable } from '../components/MenuPressable'
 import { Button, Notice, Page, colors } from '../ui'
@@ -16,18 +18,10 @@ type MenuItem = { destination: MenuDestination /* | ServiceInformationSection */
 
 export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): void }) {
   const { status, session, restoreError } = useAuth()
-  const [introBusy, setIntroBusy] = useState(false)
-  const [introError, setIntroError] = useState<string | null>(null)
+  const [introOpen, setIntroOpen] = useState(false)
+  useAssistantBlock(introOpen)
   // const [information, setInformation] = useState<ServiceInformationSection | null>(null)
-  async function replayIntroduction() {
-    if (introBusy) return
-    setIntroBusy(true); setIntroError(null)
-    try {
-      await clearIntroductionCompleted()
-      DevSettings.reload()
-    } catch { setIntroError('기능 소개를 다시 열지 못했습니다. 다시 시도해 주세요.') }
-    finally { setIntroBusy(false) }
-  }
+  const closeIntroduction = () => setIntroOpen(false)
   if (status === 'loading') return <Page headerless backgroundColor={colors.surface}><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page headerless><Notice error>{restoreError ?? '로그인 상태를 확인하지 못했습니다.'}</Notice>
     <Button label="로그인 상태 확인" onPress={() => onOpen('account')} />
@@ -66,7 +60,8 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
       */
     ] },
   ]
-  return <Page headerless backgroundColor={colors.surface}>
+  return <><View style={{ flex: 1 }} accessibilityElementsHidden={introOpen} importantForAccessibility={introOpen ? 'no-hide-descendants' : 'auto'}>
+    <Page headerless backgroundColor={colors.surface}>
     <View style={local.profile}>
       <View style={local.identity}>
         <Text style={local.name}>{account?.company?.companyName ?? (account ? screenTitles.profile : '로그인해 주세요')}</Text>
@@ -92,11 +87,13 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
     {/* skn-501: 미확정 안내 시트 연결 보류
     <ServiceInformationSheet section={information} onClose={() => setInformation(null)} />
     */}
-    {__DEV__ && status === 'signedOut' && <>
-      {introError && <Notice error>{introError}</Notice>}
-      <Button label="기능 소개 다시 보기" variant="secondary" busy={introBusy} onPress={() => void replayIntroduction()} />
-    </>}
-  </Page>
+    <Button label="기능 소개 다시 보기" variant="secondary" onPress={() => setIntroOpen(true)} />
+  </Page></View>
+    <Modal visible={introOpen} animationType="slide" onRequestClose={closeIntroduction}>
+      {introOpen && <SafeAreaProvider><View accessibilityViewIsModal style={{ flex: 1 }}><WelcomeScreen busy={false} error={null}
+        onClose={closeIntroduction} onBrowse={closeIntroduction} onLogin={closeIntroduction} onSignup={closeIntroduction} /></View></SafeAreaProvider>}
+    </Modal>
+  </>
 }
 
 const local = StyleSheet.create({

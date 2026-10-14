@@ -1,12 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
-import { DevSettings } from 'react-native'
+import { act, fireEvent, render, screen } from '@testing-library/react-native'
+import { AppState, DevSettings, Modal } from 'react-native'
 import { useAuth } from '../auth/session'
 import { MenuScreen } from './MenuScreen'
-import { clearIntroductionCompleted } from '../auth/introductionStorage'
+import { clearIntroductionCompleted, completeIntroduction } from '../auth/introductionStorage'
 import { serviceContact } from '../content/serviceInformation'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
-jest.mock('../auth/introductionStorage', () => ({ clearIntroductionCompleted: jest.fn() }))
+jest.mock('../auth/introductionStorage', () => ({ clearIntroductionCompleted: jest.fn(), completeIntroduction: jest.fn() }))
 jest.mock('react-native/Libraries/Utilities/DevSettings', () => ({ __esModule: true, default: { reload: jest.fn() } }))
 const auth = (account: { email: string; company: { companyName: string } | null } | null) => {
   jest.mocked(useAuth).mockReturnValue({ status: account ? 'signedIn' : 'signedOut',
@@ -74,29 +74,61 @@ test('an unavailable session is an explicit error with a recovery destination', 
   expect(open).toHaveBeenCalledWith('account')
 })
 
-test('development replay clears introduction before reloading without opening another account route', async () => {
+test.each([false, true])('replay opens in release and development builds without deleting completion with dev=%s', development => {
+  jest.replaceProperty(globalThis as unknown as { __DEV__: boolean }, '__DEV__', development)
   const reload = jest.spyOn(DevSettings, 'reload').mockImplementation(() => undefined)
   const open = jest.fn()
   render(<MenuScreen onOpen={open} />)
   fireEvent.press(screen.getByLabelText('기능 소개 다시 보기'))
-  await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
-  expect(clearIntroductionCompleted).toHaveBeenCalledTimes(1)
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  expect(screen.queryByLabelText('회원가입하고 시작하기')).toBeNull()
+  expect(screen.queryByLabelText('이미 계정이 있습니다')).toBeNull()
+  fireEvent.press(screen.getByLabelText('기능 소개 닫기'))
+  expect(screen.getByLabelText('파트너 관리')).toBeTruthy()
+  expect(screen.queryByText('1 / 4')).toBeNull()
+  expect(clearIntroductionCompleted).not.toHaveBeenCalled()
+  expect(completeIntroduction).not.toHaveBeenCalled()
+  expect(reload).not.toHaveBeenCalled()
   expect(open).not.toHaveBeenCalled()
 })
 
-test('failed introduction reset remains visible and does not reload the app', async () => {
-  const reload = jest.spyOn(DevSettings, 'reload').mockImplementation(() => undefined)
-  jest.mocked(clearIntroductionCompleted).mockRejectedValueOnce(new Error('storage failure'))
-  render(<MenuScreen onOpen={jest.fn()} />)
+test('replay swipes and closes via Android back then starts from the first slide on reopening', () => {
+  const view = render(<MenuScreen onOpen={jest.fn()} />)
   fireEvent.press(screen.getByLabelText('기능 소개 다시 보기'))
-  await screen.findByText('기능 소개를 다시 열지 못했습니다. 다시 시도해 주세요.')
-  expect(reload).not.toHaveBeenCalled()
+  fireEvent(screen.getByTestId('welcome-carousel'), 'layout', { nativeEvent: { layout: { width: 360 } } })
+  fireEvent(screen.getByTestId('welcome-carousel'), 'momentumScrollEnd', { nativeEvent: { contentOffset: { x: 720 } } })
+  expect(screen.getByText('3 / 4')).toBeTruthy()
+  act(() => view.UNSAFE_getByType(Modal).props.onRequestClose())
+  expect(screen.queryByText('3 / 4')).toBeNull()
+  fireEvent.press(screen.getByLabelText('기능 소개 다시 보기'))
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('메뉴로 돌아가기'))
+  expect(screen.getByLabelText('파트너 관리')).toBeTruthy()
 })
 
-test('the introduction reset is unavailable for signed-in accounts', () => {
+test('replay finishes on the fourth slide and closes without writing completion', () => {
+  const previousAppState = AppState.currentState
+  AppState.currentState = 'active'
+  jest.useFakeTimers()
+  render(<MenuScreen onOpen={jest.fn()} />)
+  try {
+    fireEvent.press(screen.getByLabelText('기능 소개 다시 보기'))
+    for (let step = 0; step < 4; step++) act(() => jest.advanceTimersByTime(5000))
+    expect(screen.getByText('4 / 4')).toBeTruthy()
+    expect(completeIntroduction).not.toHaveBeenCalled()
+    fireEvent.press(screen.getByLabelText('메뉴로 돌아가기'))
+    expect(screen.getByLabelText('파트너 관리')).toBeTruthy()
+  } finally { AppState.currentState = previousAppState; jest.useRealTimers() }
+})
+
+test('a signed-in account can replay and keeps its identity when returning to the menu', () => {
   auth({ email: 'member@example.test', company: null })
   render(<MenuScreen onOpen={jest.fn()} />)
-  expect(screen.queryByLabelText('기능 소개 다시 보기')).toBeNull()
+  fireEvent.press(screen.getByLabelText('기능 소개 다시 보기'))
+  expect(screen.queryByLabelText('이미 계정이 있습니다')).toBeNull()
+  fireEvent.press(screen.getByLabelText('메뉴로 돌아가기'))
+  expect(screen.getByText('member@example.test')).toBeTruthy()
+  expect(clearIntroductionCompleted).not.toHaveBeenCalled()
 })
 
 test('guest All retains all feature destinations and labels private ones as requiring login', () => {

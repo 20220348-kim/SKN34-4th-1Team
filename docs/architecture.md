@@ -72,6 +72,7 @@ API 경계에서 shared `CompanyDto`의 schema·Mapper로 내부 모델을 만�
 
 모바일의 `auth/AppEntryGate`는 세션 복원과 기기 소개 기록을 확인하고 첫 실행 소개 또는 기존 화면으로 연결합니다.
 기기 저장은 `auth/introductionStorage.ts`, 로그인 안내·폼·선택한 작업의 재개는 `auth/loginFlow.tsx`의 `LoginFlowProvider`가 소유합니다.
+`MenuScreen`의 기능 소개 다시보기는 배포 앱에서도 `WelcomeScreen`을 모달로 재사용합니다. 가입·로그인 진입 대신 닫기를 제공하고 완료 기록·세션·메뉴 위치를 유지하며 앱 재로드나 기록 초기화를 하지 않습니다.
 `screens/WelcomeScreen`은 진행 바의 5초 채움과 자동 전환, 가로 스와이프를 담당하며 마지막 장의 바까지 채운 뒤 멈춥니다. 이동 버튼·진행 표시 선택은 제공하지 않습니다.
 드래그·백그라운드·진입 처리 중에는 채움과 전환을 함께 멈추고, 재개 시 현재 장의 5초를 다시 시작합니다.
 `AppEntryGate`는 가입·로그인 시트가 열린 동안 자동 전환을 보류하고 취소 시 다시 시작합니다.

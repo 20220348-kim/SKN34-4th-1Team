@@ -12,8 +12,8 @@ const slides = [
 ]
 const autoAdvanceDelay = 5000
 
-export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse, onLogin, onSignup }: {
-  busy: boolean; error: string | null; autoAdvancePaused?: boolean; onBrowse(): void; onLogin(): void; onSignup(): void
+export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse, onLogin, onSignup, onClose }: {
+  busy: boolean; error: string | null; autoAdvancePaused?: boolean; onBrowse(): void; onLogin(): void; onSignup(): void; onClose?(): void
 }) {
   const [index, setIndex] = useState(0)
   const [dragging, setDragging] = useState(false)
@@ -50,6 +50,9 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
   return <View style={[local.page, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }]}>
     <View style={local.navigation}>
       <Text accessibilityLiveRegion="polite" style={styles.muted}>{index + 1} / {slides.length}</Text>
+      {onClose && <Pressable accessibilityRole="button" accessibilityLabel="기능 소개 닫기" onPress={onClose} style={local.close}>
+        <Text style={local.closeText}>×</Text>
+      </Pressable>}
     </View>
     <View style={local.progress} accessibilityLabel={`기능 소개 ${index + 1}단계`}>
       {slides.map((_, step) => <View key={step} style={local.bar}>
@@ -76,6 +79,7 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
     </ScrollView>
     <Text style={local.swipeHint}>{index === slides.length - 1 ? '좌우로 밀어서 다시 볼 수 있어요' : '5초마다 자동으로 넘어가요 · 좌우로 밀어볼 수 있어요'}</Text>
     <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 16), gap: 6 }}>
+      {onClose ? <Button label="메뉴로 돌아가기" onPress={onClose} size="large" /> : <>
       <Button label="회원가입하고 시작하기" busy={busy} onPress={onSignup} size="large" />
       <View style={local.footerLinks}>
         <Pressable accessibilityRole="button" accessibilityLabel="이미 계정이 있습니다" disabled={busy} onPress={onLogin} style={local.link}>
@@ -83,12 +87,14 @@ export function WelcomeScreen({ busy, error, autoAdvancePaused = false, onBrowse
         <View style={local.separator} />
         <Pressable accessibilityRole="button" accessibilityLabel="로그인 없이 둘러보기" disabled={busy} onPress={onBrowse} style={local.link}>
           <Text style={local.linkText}>로그인 없이 둘러보기</Text></Pressable>
-      </View>
+      </View></>}
     </View>
   </View>
 }
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, navigation: { minHeight: 48, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
+  close: { position: 'absolute', right: 8, top: 0, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  closeText: { fontSize: 28, color: colors.secondaryText },
   progress: { paddingHorizontal: 20, paddingVertical: 16, flexDirection: 'row', gap: 6 },
   bar: { flex: 1, height: 3, borderRadius: 3, backgroundColor: colors.track, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 3 }, slide: { paddingHorizontal: 20 },
