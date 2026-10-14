@@ -1,6 +1,7 @@
 package ai.govbiz.core.supportprogram.client.ops
 
 import ai.govbiz.core.supportprogram.client.ops.config.ProductionQualityProperties
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
 import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityChunkRequest
 import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityMaterialRequest
 import ch.qos.logback.classic.Logger
@@ -255,6 +256,86 @@ class ProductionQualityClientTest {
         assertThrows(IllegalArgumentException::class.java) { properties(rate = 10_001) }
         assertThrows(IllegalArgumentException::class.java) { ProductionQualityProperties(1, "http://ops.test", "short") }
         assertFalse(properties().toString().contains(secret))
+    }
+
+    @Test
+    fun sendsOperationAllowlistWithRedactedPublicContactsAndNoInventedDocumentId() {
+        val requests = mutableListOf<HttpRequest>()
+        val client = ProductionQualityClient(properties(), mapper, http(requests, CompletableFuture()))
+        client.recordOperation("support-program-search", "창업 지원", listOf(
+            ProductionQualityContextRequest("candidate-1", "문의 owner@example.com", "공고 문의 02-123-4567"),
+        ), "1. 창업 공고", traceId = "b".repeat(32))
+        val payload = mapper.readTree(body(requests.single()))
+        assertEquals(2, payload["schema_version"].asInt())
+        assertEquals("support-program-search", payload["scope"].asText())
+        assertEquals("", payload["source_document_id"].asText())
+        assertTrue(payload["evidence_redacted"].asBoolean())
+        assertEquals("공고 문의 [REDACTED]", payload["material"]["contexts"][0]["text"].asText())
+        assertEquals("COMPLETED", payload["material"]["output_status"].asText())
+        assertFalse(payload["material"]["context_truncated"].asBoolean())
+        assertFalse(payload.toString().contains("owner@example.com"))
+        assertFalse(payload.has("account_id"))
+    }
+
+    @Test
+    fun limitsUtf8OperationSizeAndExplicitlyMarksContextAndOutputTruncation() {
+        val requests = mutableListOf<HttpRequest>()
+        val client = ProductionQualityClient(properties(), mapper, http(requests, CompletableFuture()))
+        client.recordOperation("combination-review", "중복 지원 검토", List(22) {
+            ProductionQualityContextRequest("context-$it", "공고".repeat(150), "근거".repeat(8_000))
+        }, "검토".repeat(9_000))
+        val bytes = body(requests.single())
+        val material = mapper.readTree(bytes)["material"]
+        assertTrue(bytes.size <= 102_400)
+        assertEquals(20, material["contexts"].size())
+        assertTrue(material["context_truncated"].asBoolean())
+        assertTrue(material["output_truncated"].asBoolean())
+        assertEquals(16_000, material["output"].asText().length)
+    }
+
+    @Test
+    fun skipsSensitiveOrInvalidOperationBeforeSendingEvenWhenSecretWouldBeTruncated() {
+        val requests = mutableListOf<HttpRequest>()
+        val client = ProductionQualityClient(properties(), mapper, http(requests, CompletableFuture()))
+        val context = ProductionQualityContextRequest("context", "공고", "일반 근거")
+        val blocked = listOf("Bearer private", "Cookie=session-private", "https://files.test/doc?X-Amz-Signature=private")
+        blocked.forEach { private ->
+            client.recordOperation("assistant-agent", "질문", listOf(context.copy(text = "가".repeat(12_000) + private)), "답변")
+        }
+        client.recordOperation("assistant-agent", "가".repeat(4_001), listOf(context), "답변")
+        client.recordOperation("assistant-agent", "질문", listOf(context, context), "답변")
+        client.recordOperation("unknown", "질문", listOf(context), "답변")
+        assertTrue(requests.isEmpty())
+        client.recordOperation("assistant-agent", "질문", listOf(context), "답변")
+        assertEquals(1, requests.size)
+    }
+
+    @Test
+    fun doesNotSplitEmojiSurrogatesAtSnapshotLimits() {
+        val requests = mutableListOf<HttpRequest>()
+        val client = ProductionQualityClient(properties(), mapper, http(requests, CompletableFuture()))
+        client.recordOperation("assistant-agent", "질문", listOf(ProductionQualityContextRequest(
+            "context", "가".repeat(199) + "😀", "가".repeat(11_999) + "😀",
+        )), "가".repeat(15_999) + "😀")
+        val payload = mapper.readTree(body(requests.single()))["material"]
+        assertEquals(199, payload["contexts"][0]["label"].asText().length)
+        assertEquals(11_999, payload["contexts"][0]["text"].asText().length)
+        assertEquals(15_999, payload["output"].asText().length)
+        assertTrue(payload["context_truncated"].asBoolean())
+        assertTrue(payload["output_truncated"].asBoolean())
+    }
+
+    @Test
+    fun sharesEightInFlightSlotsAcrossEvidenceAndNewFeatureSamples() {
+        val requests = mutableListOf<HttpRequest>()
+        val pending = CompletableFuture<HttpResponse<Void>>()
+        val client = ProductionQualityClient(properties(), mapper, http(requests, pending))
+        repeat(4) { client.record(material, null) }
+        repeat(5) { client.recordOperation("assistant-agent", "질문", emptyList(), "답변") }
+        assertEquals(8, requests.size)
+        pending.completeExceptionally(IllegalStateException("private"))
+        client.recordOperation("assistant-agent", "질문", emptyList(), "답변")
+        assertEquals(9, requests.size)
     }
 
     private fun properties(rate: Int = 10_000, timeout: Duration = Duration.ofSeconds(15)) =

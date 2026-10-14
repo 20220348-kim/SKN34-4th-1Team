@@ -299,7 +299,7 @@ class SupportProgramConversationControllerTest {
     fun existingSearchAlsoConsumesInterpretationQuotaAndInvalidInputDoesNot() {
         val mvc = mvc(perClient = 1)
         mvc.perform(request("{}")).andExpect(status().isBadRequest())
-        Mockito.`when`(search.search("AI", true)).thenReturn(SupportProgramSearchResult("AI", emptyList()))
+        Mockito.`when`(search.search("AI", true, sampleProduction = true)).thenReturn(SupportProgramSearchResult("AI", emptyList()))
         mvc.perform(get("/api/v1/support-programs/search").param("query", "AI").with { it.remoteAddr = "192.0.2.1"; it }).andExpect(status().isOk())
         mvc.perform(request()).andExpect(status().isTooManyRequests())
         Mockito.verifyNoInteractions(service)

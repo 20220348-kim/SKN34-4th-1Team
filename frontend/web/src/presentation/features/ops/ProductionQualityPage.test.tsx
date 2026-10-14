@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getProductionQuality, getProductionSample } from '../../../data/ops/opsApi'
 import { ProductionQualityPage } from './ProductionQualityPage'
@@ -27,7 +27,8 @@ const setup = (override?: (path: string, options?: RequestInit) => Response | Pr
   vi.stubGlobal('fetch', fetch)
   return fetch
 }
-const mount = (onExpired = vi.fn(), path = '/ops/production-quality') => render(<MemoryRouter initialEntries={[path]}><ProductionQualityPage owner="core:99" onExpired={onExpired} /></MemoryRouter>)
+const Location = () => <output aria-label="현재 표본 경로">{useLocation().search}</output>
+const mount = (onExpired = vi.fn(), path = '/ops/production-quality') => render(<MemoryRouter initialEntries={[path]}><ProductionQualityPage owner="core:99" onExpired={onExpired} /><Location /></MemoryRouter>)
 const select = async () => { fireEvent.click(await screen.findByRole('button', { name: 'bizinfo:NOTICE-1 표본 검토' })); await screen.findByText('개인정보·민감정보가 마스킹된 표본입니다. 문맥이 부족해 판단하기 어렵다면 ‘판단 불가’를 선택하세요.') }
 const fillReview = () => {
   for (const label of ['근거 일치', '질문 관련성', '중요 조건 포함']) fireEvent.change(screen.getByLabelText(new RegExp(`^${label}`)), { target: { value: 'yes' } })
@@ -202,4 +203,166 @@ describe('운영 표본 품질', () => {
     await act(async () => { resolve(json({}, 401)); await pending })
     expect(expired).not.toHaveBeenCalled()
   })
+})
+
+
+const featureCases = [
+  ['assistant-agent', '통합 도우미', ['도구 근거 일치', '요청 해결', '중요 안내 포함']],
+  ['support-program-search', '공고 검색', ['검색 조건 일치', '검색 관련성', '결과 설명 충분']],
+  ['application-document-generation', '신청 문서 생성', ['제공 자료 일치', '작성 요청 충족', '필수 항목 포함']],
+  ['combination-review', '중복 검토', ['공고 조건 일치', '검토 요청 충족', '제한 조건 포함']],
+] as const
+const featureDetail = (feature: typeof featureCases[number]) => ({
+  ...detail, scope: feature[0], regression_supported: false,
+  review_criteria: ['grounded', 'relevant', 'complete'].map((key, index) => ({ key, label: feature[2][index], description: `${feature[1]} 검토 기준 ${index + 1}` })),
+  material: { question: '저장된 요청 <script>실행 금지</script>', contexts: [{ id: 'context-1', label: '선택 공고 조건', text: '지역: 서울\n대상: 소상공인' }], output: '저장된 결과 <img src=x onerror="bad()">', output_status: 'COMPLETED', context_truncated: false, output_truncated: false },
+})
+
+describe('기능별 운영 표본 품질', () => {
+  it.each(featureCases)('%s의 입력·결과와 서버 검토 기준을 표시하고 검토를 저장한다', async (scope, label, labels) => {
+    const value = featureDetail([scope, label, labels] as typeof featureCases[number])
+    const fetch = setup((path) => {
+      if (path === `${base}?page=1&scope=${scope}`) return json({ ...page, scope, results: [value] })
+      if (path === `${base}/${id}`) return json(value)
+      if (path.endsWith('/review')) return json({ ...value, review_version: 1, review: { ...reviewed.review, note: '저장 자료와 결과를 대조했습니다.', reference_answer: '', expected_status: null, expected_citation_ids: [] } })
+      return undefined
+    })
+    const view = mount(vi.fn(), `/ops/production-quality?scope=${scope}&sample=${id}`)
+    await screen.findByText(value.material.output)
+    expect(screen.getByRole('heading', { name: `저장·검토 범위 · ${label}` })).toBeTruthy()
+    expect(screen.getByText('선택 공고 조건')).toBeTruthy()
+    expect(screen.getByText('지역: 서울 대상: 소상공인')).toBeTruthy()
+    expect(screen.getByText(value.material.question)).toBeTruthy()
+    expect(view.container.querySelector('script, img')).toBeNull()
+    expect(screen.queryByRole('button', { name: '회귀 후보 저장' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '회귀 후보 JSON 다운로드' })).toBeNull()
+    expect(screen.queryByText('회귀 후보용 정답 작성 · 선택')).toBeNull()
+    expect(screen.getByText(/기능별 평가 자료 편입과 회귀 후보 내보내기는 아직 지원하지 않습니다/)).toBeTruthy()
+    for (const criterion of labels) fireEvent.change(screen.getByLabelText(new RegExp(`^${criterion}`)), { target: { value: 'yes' } })
+    fireEvent.change(screen.getByLabelText('검토 근거 · 필수'), { target: { value: '저장 자료와 결과를 대조했습니다.' } })
+    fireEvent.click(screen.getByRole('button', { name: '사람 검토 저장' }))
+    await screen.findByText('사람 검토를 저장했습니다.')
+    const save = fetch.mock.calls.find(([path]) => path.endsWith('/review'))!
+    expect(JSON.parse(save[1]!.body as string)).toMatchObject({ grounded: 'yes', relevant: 'yes', complete: 'yes', reference_answer: '', expected_status: null, expected_citation_ids: [] })
+    expect(fetch.mock.calls.some(([path]) => path.endsWith('/regression-candidate'))).toBe(false)
+  })
+
+  it('기능 변경은 1페이지에서 선택을 지우고 이후 표본 선택·페이지 이동에 기능을 유지한다', async () => {
+    const value = featureDetail(featureCases[1])
+    const scope = value.scope
+    const fetch = setup((path) => {
+      if (path === `${base}?page=2`) return json({ ...page, scope: 'all', page: 2 })
+      if (path === `${base}?page=1&scope=${scope}`) return json({ ...page, scope, results: [value], next: true })
+      if (path === `${base}?page=2&scope=${scope}`) return json({ ...page, scope, page: 2, results: [] })
+      if (path === `${base}/${id}`) return json(value)
+      return undefined
+    })
+    mount(vi.fn(), `/ops/production-quality?page=2&sample=${id}`)
+    await screen.findByText(value.material.output)
+    fireEvent.change(screen.getByLabelText('검토할 기능'), { target: { value: scope } })
+    await screen.findByRole('heading', { name: '저장·검토 범위 · 공고 검색' })
+    expect(screen.queryByRole('region', { name: '운영 표본 상세 검토' })).toBeNull()
+    expect(screen.getByLabelText('현재 표본 경로').textContent).toBe(`?page=1&scope=${scope}`)
+    fireEvent.click(screen.getByRole('button', { name: 'bizinfo:NOTICE-1 표본 검토' }))
+    await screen.findByText(value.material.output)
+    expect(screen.getByLabelText('현재 표본 경로').textContent).toBe(`?page=1&scope=${scope}&sample=${id}`)
+    fireEvent.click(screen.getByRole('button', { name: '다음' }))
+    await screen.findByText('2페이지')
+    expect(screen.getByLabelText('현재 표본 경로').textContent).toBe(`?page=2&scope=${scope}`)
+    expect(screen.queryByRole('region', { name: '운영 표본 상세 검토' })).toBeNull()
+    expect(fetch).toHaveBeenCalledWith(`${base}?page=2&scope=${scope}`, expect.anything())
+  })
+
+  it('전체 기능은 서로 다른 표본을 함께 표시하고 신규 결과없음을 오류로 표시하지 않는다', async () => {
+    const value = featureDetail(featureCases[1])
+    const search = { ...value, id: candidateId, source_document_id: '검색 요청', material: { ...value.material, contexts: [], output: '', output_status: 'NO_RESULTS' } }
+    setup((path) => path === `${base}?page=1` ? json({ ...page, scope: 'all', results: [row, search], count: 2 }) : path === `${base}/${candidateId}` ? json(search) : undefined)
+    mount(); await screen.findByRole('heading', { name: '저장·검토 범위 · 전체 기능' })
+    expect(screen.getByRole('region', { name: '운영 표본 목록' }).textContent).toContain('공고 검색')
+    fireEvent.click(screen.getByRole('button', { name: '검색 요청 표본 검토' }))
+    await screen.findByRole('heading', { name: '저장 결과 · 결과 없음' })
+    expect(screen.getByText(/저장된 입력·근거가 없습니다/)).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it.each([[true, false], [false, true], [true, true]])('잘린 입력(%s)·결과(%s)는 판정 제한을 안내한다', async (context_truncated, output_truncated) => {
+    const value = featureDetail(featureCases[2])
+    setup((path) => path === `${base}/${id}` ? json({ ...value, material: { ...value.material, context_truncated, output_truncated } }) : undefined)
+    mount(vi.fn(), `/ops/production-quality?sample=${id}`)
+    expect((await screen.findByRole('note')).textContent).toContain('저장 용량 제한')
+    expect(screen.getByRole('note').textContent).toContain('판단 불가')
+  })
+
+  it('다른 기능 목록·잘못된 자료 형식·중복 검토 기준과 신규 기능 회귀 지원 응답을 거절한다', async () => {
+    const value = featureDetail(featureCases[0])
+    setup(() => json({ ...page, scope: 'all', results: [value] }))
+    await expect(getProductionQuality(1, undefined, value.scope)).rejects.toThrow()
+    setup(() => json({ ...page, scope: value.scope, results: [row] }))
+    await expect(getProductionQuality(1, undefined, value.scope)).rejects.toThrow()
+    for (const invalid of [
+      { ...value, material: detail.material },
+      { ...detail, material: value.material },
+      { ...value, review_criteria: [value.review_criteria[0], value.review_criteria[0], value.review_criteria[0]] },
+      { ...value, regression_supported: true },
+      { ...value, regression_candidate_id: candidateId },
+    ]) {
+      setup(() => json(invalid))
+      await expect(getProductionSample(id)).rejects.toThrow()
+    }
+  })
+  it('입력 미수집과 잘림 코드를 한글로 안내하고 전부 예인 적합 저장을 차단한다', async () => {
+    const value = { ...featureDetail(featureCases[2]), check_codes: ['CONTEXT_NOT_CAPTURED', 'CONTEXT_TRUNCATED', 'OUTPUT_TRUNCATED'] }
+    const fetch = setup((path) => path === `${base}/${id}` ? json(value) : undefined)
+    mount(vi.fn(), `/ops/production-quality?sample=${id}`)
+    await screen.findByText('검토할 입력·근거가 저장되지 않음')
+    expect(screen.getByText('저장 용량 제한으로 입력·근거 일부 생략')).toBeTruthy()
+    expect(screen.getByText('저장 용량 제한으로 결과 일부 생략')).toBeTruthy()
+    const form = screen.getByRole('form', { name: '운영 표본 사람 검토' })
+    for (const criterion of value.review_criteria) fireEvent.change(within(form).getByLabelText(new RegExp(`^${criterion.label}`)), { target: { value: 'yes' } })
+    fireEvent.change(within(form).getByLabelText('검토 근거 · 필수'), { target: { value: '잘린 부분은 확인할 수 없습니다.' } })
+    expect((within(form).getByRole('button', { name: '사람 검토 저장' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.submit(form)
+    expect(fetch.mock.calls.some(([path]) => path.endsWith('/review'))).toBe(false)
+  })
+
+  it('자료가 부족한 표본도 판단 불가 검토와 근거는 저장할 수 있다', async () => {
+    const value = { ...featureDetail(featureCases[2]), check_codes: ['CONTEXT_NOT_CAPTURED'] }
+    setup((path) => path === `${base}/${id}` ? json(value) : path.endsWith('/review') ? json({ ...value, review_version: 1, review: { ...reviewed.review, verdict: 'unassessable', grounded: 'unknown', relevant: 'unknown', complete: 'unknown', reference_answer: '', expected_status: null, expected_citation_ids: [] } }) : undefined)
+    mount(vi.fn(), `/ops/production-quality?sample=${id}`)
+    await screen.findByText('검토할 입력·근거가 저장되지 않음')
+    fireEvent.change(screen.getByLabelText('검토 근거 · 필수'), { target: { value: '저장 자료가 부족해 판단하지 않았습니다.' } })
+    fireEvent.click(screen.getByRole('button', { name: '사람 검토 저장' }))
+    await screen.findByText('사람 검토를 저장했습니다.')
+    expect(screen.getByText(/최근 사람 검토: 판단 보류/)).toBeTruthy()
+  })
+
+  it.each([
+    ['STRUCTURAL_ISSUES_REQUIRE_REVIEW', '구조 오류나 저장 자료의 누락·잘림이 있는 표본은 적합으로 저장할 수 없습니다.'],
+    ['REGRESSION_SCOPE_UNSUPPORTED', '이 기능은 사람 검토만 저장할 수 있으며 회귀 후보용 정답과 인용은 지원하지 않습니다.'],
+  ])('%s 저장 거절은 구체적인 원인을 알리고 입력을 보존한다', async (code, message) => {
+    const value = featureDetail(featureCases[0])
+    setup((path) => path === `${base}/${id}` ? json(value) : path.endsWith('/review') ? json({ code }, 400) : undefined)
+    mount(vi.fn(), `/ops/production-quality?sample=${id}`)
+    await screen.findByText(value.material.output)
+    for (const criterion of value.review_criteria) fireEvent.change(screen.getByLabelText(new RegExp(`^${criterion.label}`)), { target: { value: 'yes' } })
+    fireEvent.change(screen.getByLabelText('검토 근거 · 필수'), { target: { value: '검토 근거 보존' } })
+    fireEvent.click(screen.getByRole('button', { name: '사람 검토 저장' }))
+    expect((await screen.findByRole('alert')).textContent).toContain(message)
+    expect((screen.getByLabelText('검토 근거 · 필수') as HTMLTextAreaElement).value).toBe('검토 근거 보존')
+  })
+
+  it.each([200, 401])('기능 변경 후 늦게 도착한 이전 목록 응답(%s)은 목록·세션을 바꾸지 않는다', async (status) => {
+    let resolve!: (response: Response) => void
+    const pending = new Promise<Response>((done) => { resolve = done })
+    const value = featureDetail(featureCases[1])
+    setup((path) => path === `${base}?page=1` ? pending : path === `${base}?page=1&scope=${value.scope}` ? json({ ...page, scope: value.scope, results: [value] }) : undefined)
+    const expired = vi.fn(); mount(expired)
+    fireEvent.change(screen.getByLabelText('검토할 기능'), { target: { value: value.scope } })
+    await screen.findByRole('heading', { name: '저장·검토 범위 · 공고 검색' })
+    await act(async () => { resolve(json({ ...page, scope: 'all' }, status)); await pending })
+    expect(screen.getByRole('heading', { name: '저장·검토 범위 · 공고 검색' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '저장·검토 범위 · 전체 기능' })).toBeNull()
+    expect(expired).not.toHaveBeenCalled()
+  })
+
 })

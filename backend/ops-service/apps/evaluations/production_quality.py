@@ -23,12 +23,55 @@ from .models import (
 )
 
 SCOPE = "support-program-evidence-answer"
+OPERATION_SCOPES = {
+    "assistant-agent",
+    "support-program-search",
+    "application-document-generation",
+    "combination-review",
+}
+SCOPES = {SCOPE, *OPERATION_SCOPES}
+OPERATION_STATUSES = {"COMPLETED", "NO_RESULTS", "INSUFFICIENT_EVIDENCE"}
+REVIEW_CRITERIA = {
+    SCOPE: (
+        ("근거 일치", "답변의 주장이 저장된 근거에 의해 뒷받침됩니까?"),
+        ("질문 관련성", "질문에 필요한 내용을 답했습니까?"),
+        ("중요 조건 포함", "지원 자격·제한 등 중요한 조건을 빠뜨리지 않았습니까?"),
+    ),
+    "assistant-agent": (
+        ("근거·실행 일치", "응답이 제공된 근거와 실제 선택한 작업에 부합합니까?"),
+        ("작업 선택 적절성", "사용자의 요청에 맞는 기능을 선택하고 응답했습니까?"),
+        ("안내 완전성", "필요한 확인·다음 단계·제한 사항을 빠뜨리지 않았습니까?"),
+    ),
+    "support-program-search": (
+        ("결과·공고 일치", "결과의 추천 사유와 조건이 저장된 공고 정보로 뒷받침됩니까?"),
+        ("검색 관련성", "검색어와 공개된 검색 조건에 맞는 결과입니까?"),
+        (
+            "조건·한계 안내",
+            "확인 가능한 조건과 미확인 조건을 구분했습니까? 전체 검색 재현율은 판단하지 않습니다.",
+        ),
+    ),
+    "application-document-generation": (
+        ("작성 사실 일치", "초안이 제공된 사실에 기반하며 확인되지 않은 실적을 만들지 않았습니까?"),
+        ("문항 적합성", "초안이 문항의 작성 요구에 답합니까?"),
+        ("작성 요구 충족", "필수 항목과 분량 등 확인 가능한 작성 조건을 충족합니까?"),
+    ),
+    "combination-review": (
+        ("판단 근거 일치", "중복 검토의 판단이 두 공고의 공개 조건과 제공된 상황에 근거합니까?"),
+        ("비교 적절성", "사용자가 선택한 두 공고와 검토 상황에 맞게 비교했습니까?"),
+        (
+            "주의사항 완전성",
+            "불확실한 조건·추가 확인 사항을 명시하고 기관의 확정 판단처럼 표현하지 않았습니까?",
+        ),
+    ),
+}
 MAX_BODY_BYTES = 100 * 1024
 HEX64 = re.compile(r"^[a-f0-9]{64}$")
 STATUSES = {"ANSWERED", "INSUFFICIENT_EVIDENCE"}
 DECISIONS = {"yes", "no", "unknown"}
 # 고정 패턴만 사용한다. 원문·예외를 로그로 내보내지 않으며 의미 기반 PII 검출을 주장하지 않는다.
 PRIVATE_PATTERNS = (
+    re.compile(r"https?://[^\s]*[?&](?:X-Amz-[^=]*|signature|token|credential)=[^\s]+", re.I),
+    re.compile(r"\b(?:set-cookie|cookie)\s*:\s*[^\r\n]+", re.I),
     re.compile(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I),
     re.compile(r"(?<!\d)\d{6}\s*[-–]?\s*[1-8]\d{6}(?!\d)"),
     re.compile(
@@ -37,7 +80,8 @@ PRIVATE_PATTERNS = (
     re.compile(r"\bBearer\s+[A-Za-z0-9_.~+/=-]+", re.I),
     re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b"),
     re.compile(
-        r"\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|token)"
+        r"\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|token"
+        r"|set-cookie|cookie)"
         r"\s*[=:]\s*[\"']?[^\s\"',;]+",
         re.I,
     ),
@@ -147,12 +191,16 @@ def validate_sample(payload):
     evidence_redacted = payload.get("evidence_redacted", False)
     if type(evidence_redacted) is not bool:
         raise ProductionQualityError("INVALID_EVIDENCE_REDACTION")
-    integer(payload["schema_version"], 1, 1)
+    version = integer(payload["schema_version"], 1, 2)
     request_uuid(payload["id"])
-    if payload["scope"] != SCOPE:
+    scope = payload["scope"]
+    if not isinstance(scope, str) or scope not in SCOPES:
         raise ProductionQualityError("UNSUPPORTED_SAMPLE_SCOPE")
+    if (scope == SCOPE) != (version == 1):
+        raise ProductionQualityError("SAMPLE_SCHEMA_SCOPE_MISMATCH")
     integer(payload["sample_rate_bps"], 1, 10000)
-    identifier(payload["source_document_id"])
+    if version == 1 or payload["source_document_id"] != "":
+        identifier(payload["source_document_id"])
     if not isinstance(payload["captured_at"], str):
         raise ProductionQualityError("INVALID_CAPTURE_TIME")
     try:
@@ -172,6 +220,27 @@ def validate_sample(payload):
     ):
         raise ProductionQualityError("INVALID_RELEASE")
     material = payload["material"]
+    clean = (
+        validate_evidence_material(material, payload["source_document_id"])
+        if version == 1
+        else validate_operation_material(material)
+    )
+    return {
+        "id": request_uuid(payload["id"]),
+        "captured_at": captured,
+        "scope": scope,
+        "source_document_id": payload["source_document_id"],
+        "sample_rate_bps": payload["sample_rate_bps"],
+        "trace_id": payload["trace_id"],
+        "release": payload["release"],
+        "payload_sha256": digest(payload),
+        "material": clean,
+        "material_sha256": digest(clean),
+        "redacted": evidence_redacted or clean != material,
+    }
+
+
+def validate_evidence_material(material, document_id):
     exact_fields(material, {"question", "chunks", "answer", "answer_status", "citation_chunk_ids"})
     text(material["question"], 500)
     text(material["answer"], 1200)
@@ -185,31 +254,73 @@ def validate_sample(payload):
         exact_fields(chunk, {"id", "document_id", "order", "text"})
         if not isinstance(chunk["id"], str) or not HEX64.fullmatch(chunk["id"]):
             raise ProductionQualityError("INVALID_CHUNK_ID")
-        if chunk["document_id"] != payload["source_document_id"]:
+        if chunk["document_id"] != document_id:
             raise ProductionQualityError("CHUNK_DOCUMENT_MISMATCH")
         integer(chunk["order"], 0, 2147483647)
         text(chunk["text"], 12000)
     if len({chunk["id"] for chunk in chunks}) != len(chunks):
         raise ProductionQualityError("DUPLICATE_CHUNK_ID")
-    clean = {
+    return {
         **material,
         "question": redact(material["question"]),
         "answer": redact(material["answer"]),
         "chunks": [{**chunk, "text": redact(chunk["text"])} for chunk in chunks],
     }
-    return {
-        "id": request_uuid(payload["id"]),
-        "captured_at": captured,
-        "scope": SCOPE,
-        "source_document_id": payload["source_document_id"],
-        "sample_rate_bps": payload["sample_rate_bps"],
-        "trace_id": payload["trace_id"],
-        "release": payload["release"],
-        "payload_sha256": digest(payload),
-        "material": clean,
-        "material_sha256": digest(clean),
-        "redacted": evidence_redacted or clean != material,
+
+
+def validate_operation_material(material):
+    """기능별로 선별한 검토용 사본만 허용한다. 원본 업무 DTO는 받지 않는다."""
+    exact_fields(
+        material,
+        {
+            "question",
+            "contexts",
+            "output",
+            "output_status",
+            "context_truncated",
+            "output_truncated",
+        },
+    )
+    text(material["question"], 4000)
+    text(material["output"], 16000)
+    if (
+        not isinstance(material["output_status"], str)
+        or material["output_status"] not in OPERATION_STATUSES
+    ):
+        raise ProductionQualityError("INVALID_OPERATION_STATUS")
+    if any(type(material[key]) is not bool for key in ("context_truncated", "output_truncated")):
+        raise ProductionQualityError("INVALID_TRUNCATION_FLAGS")
+    contexts = material["contexts"]
+    if not isinstance(contexts, list) or len(contexts) > 20:
+        raise ProductionQualityError("INVALID_CONTEXTS")
+    for context in contexts:
+        exact_fields(context, {"id", "label", "text"})
+        if (
+            not isinstance(context["id"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_:.\-]{1,128}", context["id"])
+            or redact(context["id"]) != context["id"]
+        ):
+            raise ProductionQualityError("INVALID_CONTEXT_ID")
+        text(context["label"], 200)
+        text(context["text"], 12000)
+    if len({context["id"] for context in contexts}) != len(contexts):
+        raise ProductionQualityError("DUPLICATE_CONTEXT_ID")
+    clean = {
+        **material,
+        "question": redact(material["question"]),
+        "output": redact(material["output"]),
+        "contexts": [
+            {**context, "label": redact(context["label"]), "text": redact(context["text"])}
+            for context in contexts
+        ],
     }
+    # 마스킹으로 길어진 값은 수신 때 거절한다. worker에서 뒤늦게 오류가 되지 않게 한다.
+    text(clean["question"], 4000)
+    text(clean["output"], 16000)
+    for context in clean["contexts"]:
+        text(context["label"], 200)
+        text(context["text"], 12000)
+    return clean
 
 
 def ingest_sample(payload):
@@ -245,8 +356,20 @@ def ingest_sample(payload):
     return sample, True
 
 
-def structural_checks(material):
+def structural_checks(material, scope=SCOPE):
     """인용 참조와 응답 상태의 구조만 확인한다. 원문에 대한 의미적 지지는 판단하지 않는다."""
+    if scope in OPERATION_SCOPES:
+        validate_operation_material(material)
+        codes = []
+        if not material["contexts"]:
+            codes.append("CONTEXT_NOT_CAPTURED")
+        if material["context_truncated"]:
+            codes.append("CONTEXT_TRUNCATED")
+        if material["output_truncated"]:
+            codes.append("OUTPUT_TRUNCATED")
+        return codes
+    if scope != SCOPE:
+        raise ProductionQualityError("UNSUPPORTED_SAMPLE_SCOPE")
     chunk_ids = {chunk["id"] for chunk in material["chunks"]}
     cited = material["citation_chunk_ids"]
     codes = []
@@ -277,7 +400,7 @@ def process_pending_samples(batch_size=25):
             try:
                 if digest(sample.material) != sample.material_sha256:
                     raise ValueError("MATERIAL_CHANGED")
-                sample.check_codes = structural_checks(sample.material)
+                sample.check_codes = structural_checks(sample.material, sample.scope)
                 sample.checks_status = "checked"
             except Exception:
                 # 저장 자료 손상 등은 정상 checked로 바꾸지 않고 고정 오류만 보관한다.
@@ -321,6 +444,14 @@ def sample_data(sample, *, detail=False):
     candidate = ProductionRegressionCandidate.objects.filter(sample=sample).first()
     value = {
         "id": str(sample.pk),
+        "scope": sample.scope,
+        "regression_supported": sample.scope == SCOPE,
+        "review_criteria": [
+            {"key": key, "label": label, "description": description}
+            for key, (label, description) in zip(
+                ("grounded", "relevant", "complete"), REVIEW_CRITERIA[sample.scope], strict=True
+            )
+        ],
         "captured_at": sample.captured_at.isoformat(),
         "source_document_id": sample.source_document_id,
         "sample_rate_bps": sample.sample_rate_bps,
@@ -365,9 +496,13 @@ def trace_url(sample):
     )
 
 
-def sample_dashboard(page):
+def sample_dashboard(page, scope=""):
     integer(page, 1, 1000000)
+    if not isinstance(scope, str) or scope not in {"", "all", *SCOPES}:
+        raise ProductionQualityError("INVALID_SAMPLE_SCOPE")
     queryset = retained_samples()
+    if scope in SCOPES:
+        queryset = queryset.filter(scope=scope)
     # 최신 검토만 집계한다. 검토 이력이 많은 요청에 가중치가 생기지 않도록 한다.
     current = Q(reviews__version=F("review_version"))
     totals = queryset.aggregate(
@@ -401,7 +536,7 @@ def sample_dashboard(page):
         day["date"] = day["date"].isoformat()
     start = (page - 1) * 20
     return {
-        "scope": SCOPE,
+        "scope": scope or "all",
         "enabled": settings.LLMOPS_PRODUCTION_SAMPLES_ENABLED,
         "retention_days": settings.LLMOPS_PRODUCTION_SAMPLE_RETENTION_DAYS,
         "daily_limit": settings.LLMOPS_PRODUCTION_SAMPLE_DAILY_LIMIT,
@@ -481,10 +616,17 @@ def save_review(sample_id, user, payload):
         )
         if verdict == "acceptable" and sample.check_codes:
             raise ProductionQualityError("STRUCTURAL_ISSUES_REQUIRE_REVIEW")
-        if not set(values["expected_citation_ids"]) <= {
-            chunk["id"] for chunk in sample.material["chunks"]
-        }:
-            raise ProductionQualityError("EXPECTED_CITATION_NOT_IN_CONTEXT")
+        if sample.scope == SCOPE:
+            if not set(values["expected_citation_ids"]) <= {
+                chunk["id"] for chunk in sample.material["chunks"]
+            }:
+                raise ProductionQualityError("EXPECTED_CITATION_NOT_IN_CONTEXT")
+        elif (
+            values["reference_answer"]
+            or values["expected_status"]
+            or values["expected_citation_ids"]
+        ):
+            raise ProductionQualityError("REGRESSION_SCOPE_UNSUPPORTED")
         sample.review_version += 1
         try:
             with transaction.atomic():
@@ -521,6 +663,8 @@ def save_regression_candidate(sample_id, user, payload):
     stamp = digest({**payload, "actor": user.pk, "sample_id": str(sample_id)})
     with transaction.atomic():
         sample = locked_sample(sample_id)
+        if sample.scope != SCOPE:
+            raise ProductionQualityError("REGRESSION_SCOPE_UNSUPPORTED")
         previous = ProductionRegressionCandidate.objects.filter(
             request_id=payload["request_id"]
         ).first()

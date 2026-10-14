@@ -1,5 +1,7 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+
 import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
@@ -39,7 +41,7 @@ class ApplicationPreparationServiceOnlineFormTest {
     private val contents = mock(ApplicationPreparationContentRepository::class.java)
     private val saved = mock(SavedSupportProgramRepository::class.java)
     private val onlineMcp = mock(ApplicationOnlineFormMcpClient::class.java)
-    private val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp, mock(SupportProgramRepository::class.java), PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
+    private val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp, mock(SupportProgramRepository::class.java), PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), mock(ProductionQualityClient::class.java))
     private val now = LocalDateTime.of(2026, 9, 27, 12, 0)
     private val owner = Account(1, "owner@example.com", AccountRole.USER, null, null, now)
     private val source = ApplicationOnlineFormSource(1, "review-form", "검토 신청서", listOf(
@@ -74,7 +76,7 @@ class ApplicationPreparationServiceOnlineFormTest {
             .messageConverters { it.clear(); it.add(JacksonJsonHttpMessageConverter(json)) }
         val http = MockRestServiceServer.bindTo(builder).build()
         val realClient = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json, ApplicationOnlineFormMcpMapper())
-        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient, mock(SupportProgramRepository::class.java), PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient, mock(SupportProgramRepository::class.java), PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), mock(ProductionQualityClient::class.java))
         val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
             json.readValue(it, ApplicationFormManifest::class.java)
         }
@@ -111,7 +113,7 @@ class ApplicationPreparationServiceOnlineFormTest {
         val http = MockRestServiceServer.bindTo(builder).build()
         val supportPrograms = mock(SupportProgramRepository::class.java)
         val realClient = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json, ApplicationOnlineFormMcpMapper())
-        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), mock(ProductionQualityClient::class.java))
         val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
             json.readValue(it, ApplicationFormManifest::class.java)
         }
@@ -158,7 +160,7 @@ class ApplicationPreparationServiceOnlineFormTest {
             jacksonObjectMapper().readValue(it, ApplicationFormManifest::class.java)
         }
         val supportPrograms = mock(SupportProgramRepository::class.java)
-        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), mock(ProductionQualityClient::class.java))
         val draft = NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId,
             manifest.formVersionId, manifest.supportedServiceFields.first())
         `when`(repository.findOwned(owner.id, 10)).thenReturn(

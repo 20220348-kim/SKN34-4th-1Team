@@ -34,6 +34,9 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import ai.govbiz.core.aiusage.domain.AiUsageFeature
 import ai.govbiz.core.aiusage.helper.AiUsageContextHelper
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
+import org.slf4j.LoggerFactory
 
 /** HTTP는 입력 스냅샷만 접수한다. 큐 소비자가 DB transaction 밖에서 수집·파싱·AI를 실행한다. */
 @Service
@@ -48,6 +51,7 @@ class CombinationReviewRunService(
     @param:Qualifier("seoulClock") private val clock: Clock,
     @param:Value("\${app.combination-review.queue.enabled:false}") private val queueEnabled: Boolean,
     private val properties: CombinationReviewProperties,
+    private val productionQuality: ProductionQualityClient,
 ) {
     private val runnerInstanceId = UUID.randomUUID().toString()
     private val transactions = TransactionTemplate(transactionManager)
@@ -152,6 +156,7 @@ class CombinationReviewRunService(
                 ai.analyze(run.input, evidence, configuration)
             }
             runs.succeed(run.id, analysis)
+            recordReviewQuality(run.input, evidence, analysis)
         } catch (error: Exception) {
             val code = failureCode(error)
             // 검증 실패는 확정 실패다. 호출/결과 저장 중 단절은 과금 여부를 알 수 없어 자동 재호출하지 않는다.
@@ -161,6 +166,85 @@ class CombinationReviewRunService(
                 runs.fail(run.id, code.name)
             }
         }
+    }
+
+    /** 확정 저장 뒤 모델에 전달한 검토 조건·공개 근거와 실제 판정을 복사한다. 계정·원본 파일·URL은 제외한다. */
+    private fun recordReviewQuality(input: ReviewRunSnapshot, evidence: ReviewEvidenceSnapshot, analysis: ReviewAnalysis) {
+        runCatching {
+            val cited = analysis.pairs.flatMap { pair ->
+                pair.stages.flatMap { it.citations } + pair.answers.flatMap { answer ->
+                    answer.citations + answer.conditions.flatMap { it.citations } + answer.consequences.flatMap { it.citations }
+                }
+            }.map { it.evidenceId }.toSet()
+            // 인용된 근거를 앞에 놓고 두 공고를 번갈아 수집해 첫 공고만으로 상한을 채우지 않는다.
+            val programBlocks = input.programs.indices.map { index ->
+                evidence.blocks.filter { it.programIndex == index }.sortedBy { it.id !in cited }
+            }
+            val orderedBlocks = (0 until (programBlocks.maxOfOrNull { it.size } ?: 0)).flatMap { index ->
+                programBlocks.mapNotNull { it.getOrNull(index) }
+            }
+            val contexts = buildList {
+                input.programs.forEachIndexed { index, program ->
+                    add(ProductionQualityContextRequest("program-${index + 1}", "사업 ${index + 1} · 선택 조건", buildString {
+                        appendLine("공고: ${program.identity.sourceCode}:${program.identity.sourceProgramId}")
+                        with(program.participation) {
+                            appendLine("신청: $applicationSubmitted / 선정: $selected / 확약: $commitmentSubmitted")
+                            append("협약: $agreementSigned / 수행: $executionStatus / 지원금 수령: $fundingReceived")
+                        }
+                    }))
+                }
+                add(ProductionQualityContextRequest("review-conditions", "검토 상황", buildString {
+                    appendLine("기준일: ${input.asOfDate}")
+                    appendLine("같은 과제: ${input.relation.sameProject} / 같은 비용: ${input.relation.sameCost}")
+                    append("추가 상황: ${input.additionalFacts.ifBlank { "없음" }}")
+                }))
+                addAll(orderedBlocks.map { block ->
+                    ProductionQualityContextRequest(block.id, "사업 ${block.programIndex + 1} · ${block.locator}", block.text)
+                })
+                if (evidence.coverageWarnings.isNotEmpty()) {
+                    // 기존 경고에는 원본 파일명이 들어갈 수 있어 개수와 한계만 남긴다.
+                    add(ProductionQualityContextRequest("coverage", "근거 수집 제한",
+                        "읽지 못하거나 제외된 첨부 관련 경고 ${evidence.coverageWarnings.size}건. 원문 전체가 포함되지 않았을 수 있습니다."))
+                }
+            }
+            productionQuality.recordOperation(
+                scope = "combination-review",
+                question = "선택한 두 공고의 중복 신청·동시 수행·동일 과제와 비용의 중복 지원 가능성을 검토해 주세요.",
+                contexts = contexts,
+                output = buildString {
+                    appendLine(analysis.summary)
+                    analysis.pairs.forEach { pair ->
+                        appendLine("사업 ${pair.firstProgramIndex + 1} / 사업 ${pair.secondProgramIndex + 1}")
+                        pair.stages.forEach { stage ->
+                            appendLine("${stage.stage}: ${stage.judgment} · ${stage.scope}")
+                            appendLine(stage.explanation)
+                            stage.questions.forEach { appendLine("확인 질문: $it") }
+                            appendLine("기관 확인 필요: ${stage.requiresInstitutionConfirmation}")
+                            stage.citations.forEach { appendLine("근거 [${it.evidenceId}]: ${it.quote}") }
+                        }
+                        pair.answers.forEach { answer ->
+                            appendLine("${answer.question}: ${answer.verdict}")
+                            appendLine(answer.explanation)
+                            answer.conditions.forEach { condition ->
+                                appendLine("조건: ${condition.condition} → ${condition.result}")
+                                condition.citations.forEach { appendLine("근거 [${it.evidenceId}]: ${it.quote}") }
+                            }
+                            answer.consequences.forEach { consequence ->
+                                appendLine("${consequence.moment}: ${consequence.action}")
+                                consequence.citations.forEach { appendLine("근거 [${it.evidenceId}]: ${it.quote}") }
+                            }
+                            appendLine("기관 확인 질문: ${answer.institutionQuestion}")
+                            answer.citations.forEach { appendLine("근거 [${it.evidenceId}]: ${it.quote}") }
+                        }
+                    }
+                    analysis.limitations.forEach { appendLine("제한 사항: $it") }
+                },
+                outputStatus = if (analysis.pairs.any { pair ->
+                    pair.stages.any { it.judgment in setOf(ReviewJudgment.INSUFFICIENT_EVIDENCE, ReviewJudgment.CONFLICTING_EVIDENCE) } ||
+                        pair.answers.any { it.verdict in setOf(ReviewVerdict.NO_RULE, ReviewVerdict.ASK_INSTITUTION) }
+                }) "INSUFFICIENT_EVIDENCE" else "COMPLETED",
+            )
+        }.onFailure { logger.warn("production_quality_sample_skipped scope=combination-review reason=snapshot") }
     }
 
     fun findOwned(account: Account, reviewId: Long, runId: Long): StoredCombinationReviewRun =
@@ -229,6 +313,7 @@ class CombinationReviewRunService(
     }
 
     private companion object {
+        val logger = LoggerFactory.getLogger(CombinationReviewRunService::class.java)
         const val MAX_REVIEW_SOURCE_DOCUMENTS = 12
         val NUMERIC_PROGRAM_ID = Regex("[1-9][0-9]{0,254}")
     }

@@ -1,5 +1,7 @@
 package ai.govbiz.core.supportprogram.service.search
 
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
 import ai.govbiz.core.supportprogram.domain.SupportProgramRankingExclusions
 import ai.govbiz.core.supportprogram.facade.SupportProgramRanking
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
@@ -605,6 +607,44 @@ class SupportProgramSearchServiceTest {
             logger.detachAppender(appender)
             appender.stop()
         }
+    }
+
+    @Test
+    fun collectsCandidateTextAndFinalRankingButNeverEvaluationCalls() {
+        val query = "AI 지원"
+        val candidate = catalogProgram("quality")
+        Mockito.doReturn(listOf(candidate)).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(listOf(candidate)).`when`(retrieval).retrieve(query, listOf(candidate))
+        ranking.response = { listOf(it.single().program.copy(matchedReasons = listOf("질문과 분야 일치"), recommendationScore = 95)) }
+        val quality = Mockito.mock(ProductionQualityClient::class.java)
+        val collecting = SupportProgramSearchService(supportProgramRepository, ranking, retrieval,
+            Clock.fixed(Instant.parse("2026-09-06T15:00:00Z"), ZoneId.of("Asia/Seoul")), productionQualityClient = quality)
+        collecting.search(query, true, sampleProduction = true)
+        val call = Mockito.mockingDetails(quality).invocations.single()
+        assertEquals("support-program-search", call.arguments[0])
+        assertEquals(query, call.arguments[1])
+        @Suppress("UNCHECKED_CAST") val contexts = call.arguments[2] as List<ProductionQualityContextRequest>
+        assertTrue(contexts.any { it.text.contains(candidate.program.summary) && it.text.contains("BIZINFO:quality") })
+        assertTrue((call.arguments[3] as String).contains("질문과 분야 일치"))
+        assertTrue((call.arguments[3] as String).contains("95"))
+        assertFalse(call.arguments.contentDeepToString().contains(candidate.program.sourceUrl))
+        Mockito.clearInvocations(quality)
+        collecting.searchWithTrace(query, true)
+        collecting.search(query, true)
+        Mockito.verifyNoInteractions(quality)
+    }
+
+    @Test
+    fun capturesNoResultsAndDoesNotFailSearchWhenCollectionFails() {
+        Mockito.doReturn(emptyList<CatalogSupportProgram>()).`when`(supportProgramRepository).findSearchablePresent()
+        Mockito.doReturn(emptyList<ai.govbiz.core.supportprogram.domain.SupportProgramSyncStatus>()).`when`(supportProgramRepository).findSyncStatuses()
+        val quality = Mockito.mock(ProductionQualityClient::class.java)
+        val collecting = SupportProgramSearchService(supportProgramRepository, ranking, retrieval, Clock.systemUTC(), productionQualityClient = quality)
+        assertTrue(collecting.search("AI 지원", true, sampleProduction = true).programs.isEmpty())
+        assertEquals("NO_RESULTS", Mockito.mockingDetails(quality).invocations.single().arguments[4])
+        val throwing = Mockito.mock(ProductionQualityClient::class.java) { throw IllegalStateException("unavailable") }
+        assertTrue(SupportProgramSearchService(supportProgramRepository, ranking, retrieval, Clock.systemUTC(), productionQualityClient = throwing)
+            .search("AI 지원", true, sampleProduction = true).programs.isEmpty())
     }
 
     private fun service() = SupportProgramSearchService(

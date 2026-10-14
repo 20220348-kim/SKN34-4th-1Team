@@ -44,11 +44,23 @@ class GovAgentControllerTest {
     fun adminGetsTypedSelectionRequestWithoutCaching() {
         doReturn(admin).`when`(sessions).requireAccount("test-session")
         val question = GovAgentQuestion("지원 대상은?", SupportProgramConversationContext(null, true, SupportProgramCompanyConditions()), null, null, null, null)
-        doReturn(GovAgentResult(GovAgentOutcome.NEEDS_PROGRAM, message = "공고를 선택해 주세요.")).`when`(service).answer(admin, "127.0.0.1", question)
+        doReturn(GovAgentResult(GovAgentOutcome.NEEDS_PROGRAM, message = "공고를 선택해 주세요.")).`when`(service).answer(admin, "127.0.0.1", question, sampleProduction = true)
         mvc.perform(post("/api/v1/gov-agent/messages").header("Authorization", "Bearer test-session")
             .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk())
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.outcome").value("NEEDS_PROGRAM"))
+    }
+
+    @Test
+    fun evaluationHeaderExplicitlyDisablesProductionSampling() {
+        doReturn(admin).`when`(sessions).requireAccount("test-session")
+        val question = GovAgentQuestion("지원 대상은?", SupportProgramConversationContext(null, true, SupportProgramCompanyConditions()), null, null, null, null)
+        doReturn(GovAgentResult(GovAgentOutcome.NEEDS_PROGRAM, message = "공고 선택 필요"))
+            .`when`(service).answer(admin, "127.0.0.1", question, sampleProduction = false)
+        mvc.perform(post("/api/v1/gov-agent/messages").header("Authorization", "Bearer test-session")
+            .header("X-GovBiz-Evaluation", "evaluation-run").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk())
+        verify(service).answer(admin, "127.0.0.1", question, sampleProduction = false)
     }
 
     @Test
@@ -58,7 +70,7 @@ class GovAgentControllerTest {
         val question = GovAgentQuestion("신청서 작성해 줘", SupportProgramConversationContext(null, true, SupportProgramCompanyConditions()), null, null, null, program)
         val message = "신청서를 선택한 뒤 양식 분석과 초안 작성 버튼을 눌러 주세요."
         doReturn(GovAgentResult(GovAgentOutcome.APPLICATION, program = program, message = message))
-            .`when`(service).answer(admin, "127.0.0.1", question)
+            .`when`(service).answer(admin, "127.0.0.1", question, sampleProduction = true)
         val request = body.replace("지원 대상은?", question.message)
             .replace("\"selectedProgram\":null", "\"selectedProgram\":{\"sourceCode\":\"KSTARTUP\",\"sourceProgramId\":\"P001\"}")
 
@@ -89,7 +101,7 @@ class GovAgentControllerTest {
             val question = GovAgentQuestion("중복 수혜를 검토해 줘", SupportProgramConversationContext(null, true, SupportProgramCompanyConditions()), null, null, null, program)
             val message = "두 공고와 참여 상태를 확인한 뒤 검토를 실행해 주세요."
             doReturn(GovAgentResult(GovAgentOutcome.COMBINATION_REVIEW, program = program, message = message))
-                .`when`(service).answer(admin, "127.0.0.1", question)
+                .`when`(service).answer(admin, "127.0.0.1", question, sampleProduction = true)
             var request = body.replace("지원 대상은?", question.message)
             if (program != null) request = request.replace("\"selectedProgram\":null", "\"selectedProgram\":{\"sourceCode\":\"KSTARTUP\",\"sourceProgramId\":\"P001\"}")
 
@@ -112,7 +124,7 @@ class GovAgentControllerTest {
         val question = GovAgentQuestion("협업 파트너 찾아줘", SupportProgramConversationContext(null, true, SupportProgramCompanyConditions()), null, null, null, null)
         val message = "모집 역할과 지역으로 파트너 모집글을 조회해 주세요."
         doReturn(GovAgentResult(GovAgentOutcome.PARTNERS, message = message))
-            .`when`(service).answer(admin, "127.0.0.1", question)
+            .`when`(service).answer(admin, "127.0.0.1", question, sampleProduction = true)
 
         mvc.perform(post("/api/v1/gov-agent/messages").header("Authorization", "Bearer test-session")
             .contentType(MediaType.APPLICATION_JSON).content(body.replace("지원 대상은?", question.message)))

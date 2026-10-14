@@ -24,7 +24,7 @@ class GovAgentController(
     fun answer(admin: AdminPrincipal, @Valid @RequestBody request: GovAgentMessageRequest, httpRequest: HttpServletRequest): ResponseEntity<GovAgentMessageResponse> =
         admission.execute(httpRequest.remoteAddr) {
             ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
-                GovAgentMessageResponse.from(service.answer(admin.account, httpRequest.remoteAddr, request.toDomain())),
+                GovAgentMessageResponse.from(service.answer(admin.account, httpRequest.remoteAddr, request.toDomain(), sampleProduction = httpRequest.getHeader("X-GovBiz-Evaluation") == null)),
             )
         }
 }

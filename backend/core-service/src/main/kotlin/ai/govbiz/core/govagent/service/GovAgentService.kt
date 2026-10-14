@@ -20,7 +20,11 @@ import ai.govbiz.core.partner.domain.PartnerMatchProgram
 import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.service.PlanUsageService
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
 import ai.govbiz.core.supportprogram.service.conversation.SupportProgramConversationService
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
+import org.slf4j.LoggerFactory
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
 import org.springframework.stereotype.Service
 
@@ -31,14 +35,48 @@ class GovAgentService(
     private val conversationService: SupportProgramConversationService,
     private val evidenceService: SupportProgramEvidenceService,
     private val planUsageService: PlanUsageService,
+    private val productionQualityClient: ProductionQualityClient? = null,
 ) {
-    fun answer(account: Account, clientIp: String, question: GovAgentQuestion): GovAgentResult {
+    fun answer(account: Account, clientIp: String, question: GovAgentQuestion, sampleProduction: Boolean = false): GovAgentResult {
         if (!account.isAdmin) throw AdminAccessDeniedException()
         // 경로 선택과 검색 조건 해석의 OpenAI 사용량을 이 관리자와 Gov 에이전트로 기록합니다. 원문 답변은 이용량 차감 안에서 EVIDENCE_QUESTION으로 바뀝니다.
-        return AiUsageContextHelper.attribute(account.id, AiUsageFeature.GOV_AGENT) { decideAndRun(account, clientIp, question) }
+        return AiUsageContextHelper.attribute(account.id, AiUsageFeature.GOV_AGENT) { decideAndRun(account, clientIp, question, sampleProduction) }
     }
 
-    private fun decideAndRun(account: Account, clientIp: String, question: GovAgentQuestion): GovAgentResult {
+    private fun recordQuality(question: GovAgentQuestion, result: GovAgentResult, selectedAction: String) {
+        val quality = productionQualityClient ?: return
+        runCatching {
+            val sourceId = question.selectedProgram?.let { "${it.sourceCode}:${it.sourceProgramId}" }.orEmpty()
+            val contexts = listOf(ProductionQualityContextRequest("routing", "실행 분기와 입력 범위",
+                "선택한 업무: $selectedAction\n실제 결과 분기: ${result.outcome.name}\n선택 공고: ${sourceId.ifEmpty { "없음" }}\n" +
+                    "이전 검색어: ${question.context.query.orEmpty()}\n보완 질문: ${question.pendingClarification?.question.orEmpty()}\n" +
+                    "기업 프로필·계정·쿠키·전체 대화는 수집하지 않음. 근거는 최종 답변이 인용한 발췌만 포함함.")) +
+                result.evidence?.citations.orEmpty().mapIndexed { index, citation ->
+                    ProductionQualityContextRequest("citation-${index + 1}", citation.sourceLabel, citation.excerpt)
+                }
+            val output = buildString {
+                appendLine("실행 결과: ${result.outcome.name}")
+                result.message?.let { appendLine(it) }
+                result.evidence?.let { appendLine("답변 상태: ${it.answerStatus.name}"); appendLine(it.answer) }
+                result.interpretation?.let {
+                    appendLine("검색 해석: ${it.status.name}")
+                    appendLine("제안 검색어: ${it.proposedContext.query.orEmpty()}")
+                    appendLine("접수 중만: ${it.proposedContext.acceptingOnly}")
+                    it.clarificationQuestion?.let(::appendLine)
+                    it.answer?.let(::appendLine)
+                }
+                result.partnerConditions?.let {
+                    appendLine("파트너 조건: 역할=${it.seekingRoles.joinToString()} / 지역=${it.regions.joinToString()} / 검색어=${it.keywords.joinToString()}")
+                    appendLine("모집글 결과는 후속 조회에서 확인하며 이 표본은 경로·조건 해석까지만 포함함.")
+                }
+            }
+            quality.recordOperation("assistant-agent", question.message, contexts, output,
+                outputStatus = if (result.evidence?.answerStatus == SupportProgramEvidenceAnswerStatus.INSUFFICIENT_EVIDENCE || result.outcome == GovAgentOutcome.NEEDS_PROGRAM) "INSUFFICIENT_EVIDENCE" else "COMPLETED",
+                sourceDocumentId = sourceId)
+        }.onFailure { logger.warn("production_quality_sample_failed scope=assistant-agent reason=snapshot") }
+    }
+
+    private fun decideAndRun(account: Account, clientIp: String, question: GovAgentQuestion, sampleProduction: Boolean): GovAgentResult {
         val maskedMessage = AssistantPiiMasker.mask(question.message)
         val decision = client.decide(AiGovAgentRequest(
             maskedMessage, question.selectedProgram != null,
@@ -55,7 +93,7 @@ class GovAgentService(
             "EVIDENCE" -> {
                 val program = question.selectedProgram ?: return GovAgentResult(
                     GovAgentOutcome.NEEDS_PROGRAM, message = "검색 결과에서 공고를 선택한 뒤 질문해 주세요.",
-                )
+                ).also { if (sampleProduction) recordQuality(question, it, decision.action) }
                 // AI가 만든 공고 ID·URL로 호출하지 않는다. 사용자가 선택한 복합 식별자로 기존 근거 검증을 거친다.
                 val evidence = planUsageService.consume(account, clientIp, PlanUsageFeature.EVIDENCE_QUESTION) {
                     evidenceService.answer(program.sourceCode, program.sourceProgramId, question.message)
@@ -65,7 +103,7 @@ class GovAgentService(
             "APPLICATION" -> {
                 val program = question.selectedProgram ?: return GovAgentResult(
                     GovAgentOutcome.NEEDS_PROGRAM, message = "신청서를 준비할 공고를 검색 결과에서 선택한 뒤 요청해 주세요.",
-                )
+                ).also { if (sampleProduction) recordQuality(question, it, decision.action) }
                 GovAgentResult(GovAgentOutcome.APPLICATION, program = program,
                     message = "신청 양식과 지원 분야를 확인한 뒤 작성을 시작해 주세요. 저장된 양식이 없으면 분석을 요청할 수 있습니다.")
             }
@@ -81,7 +119,7 @@ class GovAgentService(
             "UNSUPPORTED" -> GovAgentResult(GovAgentOutcome.UNSUPPORTED,
                 message = "현재 Gov 에이전트에서는 지원사업 검색, 선택한 공고의 원문 질문과 신청서 준비, 중복 검토 준비와 파트너 모집글 조회를 지원합니다. 외부 기관 제출·제안 발송·모집글 작성·저장·삭제·여러 작업 자동 실행은 지원하지 않습니다.")
             else -> throw AiServiceCallException.invalidResponse("Unknown Gov agent action", null)
-        }
+        }.also { if (sampleProduction) recordQuality(question, it, decision.action) }
     }
 
     /**
@@ -138,6 +176,7 @@ class GovAgentService(
         throw AiServiceCallException.invalidResponse("Invalid Gov agent partner conditions", null)
 
     companion object {
+        private val logger = LoggerFactory.getLogger(GovAgentService::class.java)
         private const val MAX_EVIDENCE_LENGTH = 80
         private const val CAPITAL_AREA = "수도권"
         private val CAPITAL_AREA_REGIONS = RegionDictionary.provincesOf(CAPITAL_AREA).toList()

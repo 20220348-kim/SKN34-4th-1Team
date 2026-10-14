@@ -34,7 +34,7 @@ class SupportProgramSearchPreviewServiceTest {
 
     private fun stub(programs: List<SupportProgram>, query: String = "무역 지원", acceptingOnly: Boolean = false,
                      conditions: SupportProgramCompanyConditions? = this.conditions) {
-        Mockito.`when`(search.search(query, acceptingOnly, conditions)).thenReturn(SupportProgramSearchResult(query.trim(), programs))
+        Mockito.`when`(search.search(query, acceptingOnly, conditions, sampleProduction = true)).thenReturn(SupportProgramSearchResult(query.trim(), programs))
     }
 
     @Test
@@ -55,7 +55,7 @@ class SupportProgramSearchPreviewServiceTest {
         assertEquals(restored, service.restore(preview.resultToken, 10L))
         assertThrows(SupportProgramSearchResultExpiredException::class.java) { service.restore(preview.resultToken, 11L) }
         assertEquals(restored, service.restore(preview.resultToken, 10L))
-        Mockito.verify(search, Mockito.times(1)).search("무역 지원", false, conditions)
+        Mockito.verify(search, Mockito.times(1)).search("무역 지원", false, conditions, sampleProduction = true)
     }
 
     @ParameterizedTest
@@ -91,7 +91,7 @@ class SupportProgramSearchPreviewServiceTest {
         connection.redis.expireAt(key, Instant.EPOCH)
         assertThrows(SupportProgramSearchResultExpiredException::class.java) { service.restore(token, 1L) }
         assertThrows(SupportProgramSearchResultExpiredException::class.java) { service.restore(UUID.randomUUID().toString(), 1L) }
-        Mockito.verify(search, Mockito.times(1)).search("무역 지원", false, conditions)
+        Mockito.verify(search, Mockito.times(1)).search("무역 지원", false, conditions, sampleProduction = true)
     }
 
     @Test

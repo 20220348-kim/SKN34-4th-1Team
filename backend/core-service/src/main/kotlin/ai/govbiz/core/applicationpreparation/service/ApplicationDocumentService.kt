@@ -25,6 +25,10 @@ import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentArchiveResult
 import ai.govbiz.core.planusage.service.PlanUsageService
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.security.MessageDigest
 
@@ -49,6 +53,7 @@ class ApplicationDocumentService(
     private val json: tools.jackson.databind.ObjectMapper,
     @param:org.springframework.beans.factory.annotation.Value("\${app.application-document.unknown-outcome-lock-ttl:PT24H}")
     private val unknownOutcomeLockTtl: java.time.Duration,
+    private val productionQuality: ProductionQualityClient,
 ) {
     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     private fun fingerprint(source: String, revision: Long, pipeline: String, engine: String? = null) =
@@ -179,6 +184,8 @@ class ApplicationDocumentService(
         try {
         acquired = redis.opsForValue().setIfAbsent(lockKey, lockToken, java.time.Duration.ofMinutes(15)) == true
         if (!acquired) throw ApplicationPreparationRunConflictException()
+        // 최초 조회 직후 다른 작업이 같은 결과를 저장했을 수 있다. 잠금을 얻은 뒤에도 재사용이면 수집하지 않는다.
+        files.findFingerprint(account.id, id, expectedRevision, fingerprint)?.let { return listOf(it) }
         val manifest = detail.form
         // 비어 있는 질문은 필수 여부와 관계없이 건너뛴다. 초안은 저장된 답변만 기입하고 나머지 칸은 원본 그대로 둔다.
         val facts = manifest.sections.flatMap { section -> section.fields.mapNotNull { field ->
@@ -298,11 +305,14 @@ class ApplicationDocumentService(
         val mediaType = draftMediaType(format)
         val verification = if (format == "hwp") result.verification + mapOf("stage" to "HWPLIB_VERIFIED", "reopened" to true, "outputSha256" to sha256(bytes), "render" to "NOT_RUN") else result.verification
         onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.SAVING)
-        return listOf(files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
+        val saved = files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
             fingerprint = fingerprint,
             evidence = mapOf("documentMap" to result.documentMap, "writePlan" to result.writePlan, "verification" to verification, "pipelineVersion" to result.pipelineVersion),
             filledAnswerCount = writableFacts.size - skipped.size,
-            unfilledAnswers = unfilled, remainingExampleCount = result.remainingExampleCount))
+            unfilledAnswers = unfilled, remainingExampleCount = result.remainingExampleCount)
+        recordDocumentQuality(manifest, format, facts, writableFacts, result.placements, result.writePlan, unfilled,
+            writableFacts.size - skipped.size, result.remainingExampleCount, verification)
+        return listOf(saved)
         } catch (error: ApplicationDocumentException) {
             if (error.code == "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN") {
                 // 결과를 확인하지 못한 실행은 사람이 확인할 시간만 잠그고, 영구 잠금으로 남기지 않는다.
@@ -318,6 +328,70 @@ class ApplicationDocumentService(
             running.remove(id)
         }
     }
+
+    /** 실제 파일 저장 뒤 기입에 사용한 답변·위치·검증 상태만 복사한다. 원본 파일과 전체 문서 map은 보내지 않는다. */
+    private fun recordDocumentQuality(
+        manifest: ApplicationFormManifest,
+        format: String,
+        facts: List<ApplicationDocumentFact>,
+        writableFacts: List<ApplicationDocumentFact>,
+        placements: List<ApplicationDocumentPlacement>,
+        writePlan: Map<String, Any?>,
+        unfilled: List<ApplicationDocumentUnfilledAnswer>,
+        filledCount: Int,
+        remainingExampleCount: Int,
+        verification: Map<String, Any?>,
+    ) {
+        runCatching {
+            // 문항 초안과 같은 정책이다. 실제 입력에 개인 식별 필드가 있으면 생성 결과 표본 전체를 제외한다.
+            if (facts.any { ApplicationPreparationService.PRIVATE_FIELD.containsMatchIn("${it.id} ${it.label}") }) return
+            // HWPX·DOCX·XLSX는 placements 대신 검증된 편집 계획에 기입 위치를 담는다. 위치와 답변 참조만 뽑는다.
+            val writtenLocations = placements + (writePlan["operations"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val operation = raw as? Map<*, *> ?: return@mapNotNull null
+                val factId = operation["valueRef"] as? String ?: return@mapNotNull null
+                val targetId = operation["targetId"] as? String ?: return@mapNotNull null
+                if (writableFacts.none { it.id == factId } || targetId.isBlank()) null
+                else ApplicationDocumentPlacement(factId, targetId)
+            }
+            val contexts = facts.mapIndexed { index, fact ->
+                val section = manifest.sections.first { it.key == fact.id.substringBefore(':') }
+                val field = section.fields.first { it.key == fact.id.substringAfter(':') }
+                ProductionQualityContextRequest("field-${index + 1}", fact.label, buildString {
+                    appendLine("문항 요구: ${section.description}")
+                    appendLine("작성 안내: ${field.guidance}")
+                    appendLine("필수 항목: ${field.required}")
+                    append("사용자가 저장한 답변: ${fact.value}")
+                })
+            }
+            val output = buildString {
+                appendLine("문서 기입·검증 결과 (${format.uppercase()})")
+                appendLine("기입 ${filledCount}건 / 미기입 ${unfilled.size}건 / 남은 예시 ${remainingExampleCount}칸")
+                appendLine("아래 값은 기입에 사용한 답변과 저장 시 확인한 처리 결과이며, 파일에서 다시 추출한 본문이 아닙니다.")
+                appendLine("문서 전체 레이아웃·시각적 품질을 검증한 결과가 아닙니다. 모델 호출 없이 저장된 매핑으로 기입한 경우도 포함됩니다.")
+                facts.forEach { fact ->
+                    appendLine("항목: ${fact.label}")
+                    val skipped = unfilled.find { it.fieldId == fact.id }
+                    if (skipped != null) {
+                        appendLine("미기입: ${skipped.reason}${skipped.capacity?.let { " / 수용 글자 수: $it" }.orEmpty()}")
+                    } else {
+                        appendLine("기입에 사용한 답변: ${writableFacts.first { it.id == fact.id }.value}")
+                        appendLine("기입 위치: ${writtenLocations.filter { it.factId == fact.id }.map { it.targetId }.distinct().joinToString().ifBlank { "위치 정보 없음" }}")
+                    }
+                }
+                // 상세 검증 객체에는 문서 내용이 섞일 수 있어 고정 상태·boolean만 허용한다.
+                for (key in listOf("stage", "reopened", "xml", "styleStructure", "formulas", "dataValidation", "unchangedParts", "render")) {
+                    val value = verification[key]
+                    if (value is Boolean || value in setOf("PASSED", "FAILED", "NOT_RUN", "PENDING", "SKIPPED",
+                            "HWPLIB_VERIFIED", "PDFBOX_REQUIRED", "HWPLIB_REQUIRED")) {
+                        appendLine("검증 $key: $value")
+                    }
+                }
+            }
+            productionQuality.recordOperation("application-document-generation",
+                "저장된 답변을 공식 신청 양식의 확인된 위치에 기입하고 미기입 항목을 안내해 주세요.\n문서 기입 결과와 검증 상태를 확인합니다.",
+                contexts, output, sourceDocumentId = "${manifest.sourceCode}:${manifest.sourceProgramId}")
+        }.onFailure { logger.warn("production_quality_sample_skipped scope=application-document-generation reason=document_snapshot") }
+    }
     private fun draftFileName(attachmentFileName: String, revision: Long, format: String) =
         attachmentFileName.replace(Regex("(?i)\\.(hwp|hwpx|pdf|docx|xlsx).*$"), "").replace(Regex("[\\\\/:*?\"<>|]"), "_").take(430) + "_초안_v$revision.$format"
     private fun draftMediaType(format: String) = when (format) { "pdf" -> "application/pdf"; "hwpx" -> "application/hwp+zip";
@@ -329,6 +403,7 @@ class ApplicationDocumentService(
     }
 
     private companion object {
+        val logger = LoggerFactory.getLogger(ApplicationDocumentService::class.java)
         const val UNSUPPORTED_CHARACTER_MESSAGE = "답변에 이 문서 형식에 쓸 수 없는 문자(이모지·한자·일부 기호)가 있어 초안을 생성하지 않았습니다. " +
             "해당 문자를 바꾸거나 원본 문서에서 직접 작성해 주세요."
     }
