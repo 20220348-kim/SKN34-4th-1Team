@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { StyleSheet, View } from 'react-native'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
@@ -15,12 +15,13 @@ import { useAuth } from '../auth/session'
 
 export type SearchMode = 'ai' | 'filter'
 
-export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, assistantDraft, onDraftConsumed }: {
+export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, assistantDraft, onDraftConsumed, renderHeaderActions }: {
   mode: SearchMode; headerHeight?: number; onModeChange(mode: SearchMode): void
   onOpenProgram(identity: SupportProgramIdentity, options?: { ask?: boolean }): void; onLogin(request?: LoginRequest): void
   assistantDraft?: AssistantDraft | null; onDraftConsumed?(id: string): void
   onOpenApplication?(application: GovAgentApplication): void; onOpenReview?(review: GovAgentReview): void; onOpenPartners?(): void
   onOpenRecruitment?(id: number): void
+  renderHeaderActions?(actions: ReactNode): ReactNode
 }) {
   const { status, session } = useAuth()
   const isGovAgent = status === 'signedIn' && session?.account?.role === 'ADMIN'
@@ -33,6 +34,7 @@ export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgr
   // Mount a search only on first visit, then keep its input, results and scroll view alive.
   // Hidden search panels must not be reachable by touch or screen readers.
   return <View style={local.page}>
+    {mode === 'filter' && renderHeaderActions?.(null)}
     <View testID="search-mode-header" style={local.header} onLayout={(event) => setControlHeight(event.nativeEvent.layout.height)}><View style={local.control}>
       <SegmentedControl label="검색 방식" options={modes} value={mode} onChange={onModeChange} />
     </View></View>
@@ -43,6 +45,7 @@ export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgr
       accessibilityElementsHidden={mode !== value} importantForAccessibility={mode === value ? 'auto' : 'no-hide-descendants'}
       pointerEvents={mode === value ? 'auto' : 'none'} style={[local.panel, mode !== value && local.hidden]}>
       {value === 'ai' ? <ChatScreen interests={interests} onOpenProgram={onOpenProgram} onLogin={onLogin} keyboardOffset={headerHeight + controlHeight} active={mode === 'ai'}
+        renderHeaderActions={renderHeaderActions}
         onOpenApplication={onOpenApplication} onOpenReview={onOpenReview} onOpenPartners={onOpenPartners} onOpenRecruitment={onOpenRecruitment}
         assistantDraft={assistantDraft} onDraftConsumed={onDraftConsumed} />
         : <CatalogScreen interests={interests} onLogin={() => onLogin()} onOpenProgram={onOpenProgram} keyboardOffset={controlHeight} />}

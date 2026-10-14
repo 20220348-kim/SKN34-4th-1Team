@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native'
 import { randomUUID } from 'expo-crypto'
 import type { ChatConversationSnapshot, ChatConversationSummary, ChatMessage } from '@govbiz/shared/domain/entities/ChatConversation'
@@ -35,7 +35,7 @@ import { chatSearchOptions, chatSnapshot, contextFromSearch, emptyChatContext as
 
 type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice'
 
-export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, keyboardOffset = 0, active = true, interests, assistantDraft, onDraftConsumed }: {
+export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, keyboardOffset = 0, active = true, interests, assistantDraft, onDraftConsumed, renderHeaderActions }: {
   /** `ask`이면 공고 화면에서 원문 질문 시트를 엽니다. */
   onOpenProgram: (identity: SupportProgramIdentity, options?: { ask?: boolean }) => void
   onLogin: (request?: LoginRequest) => void; keyboardOffset?: number; active?: boolean
@@ -43,6 +43,7 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
   assistantDraft?: AssistantDraft | null; onDraftConsumed?(id: string): void
   onOpenApplication?(application: GovAgentApplication): void; onOpenReview?(review: GovAgentReview): void; onOpenPartners?(): void
   onOpenRecruitment?(id: number): void
+  renderHeaderActions?(actions: ReactNode): ReactNode
 }) {
   const { session, status, invalidateSession } = useAuth()
   const composerInput = useRef<TextInput>(null)
@@ -583,13 +584,14 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
     setMessage(reply)
     void interpret(reply)
   }
+  const conversationActions = (token || history.length > 0) && <View style={local.historyToolbar}>
+      {savingHistory && <ActivityIndicator accessibilityLabel="대화 기록 저장 중" color={colors.primary} />}
+      {token && <Button label="대화 기록" variant="ghost" size="small" style={local.headerAction} disabled={blocked} onPress={() => void readRecords()} />}
+      <Button label="새 대화" variant="ghost" size="small" style={local.headerAction} disabled={blocked} onPress={() => confirmDiscard(newConversation)} />
+    </View>
   return <KeyboardAvoidingView testID="ai-search-keyboard-container" style={local.page}
     behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardOffset} enabled={active}>
-    {(token || history.length > 0) && <View style={local.historyToolbar}>
-      {savingHistory && <ActivityIndicator accessibilityLabel="대화 기록 저장 중" color={colors.primary} />}
-      {token && <Button label="대화 기록" variant="ghost" size="small" disabled={blocked} onPress={() => void readRecords()} />}
-      <Button label="새 대화" variant="ghost" size="small" disabled={blocked} onPress={() => confirmDiscard(newConversation)} />
-    </View>}
+    {renderHeaderActions ? active && renderHeaderActions(conversationActions) : conversationActions}
     <ScrollView ref={timeline} testID="ai-search-timeline" bounces={false} overScrollMode="never" style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
       onLayout={event => { timelineSize.current.viewport = event.nativeEvent.layout.height; scrollPendingTimeline() }}
       onContentSizeChange={(_width, height) => { timelineSize.current.content = height; scrollPendingTimeline() }}
@@ -703,8 +705,6 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
           <Button label="중복 검토" size="small" style={local.govAction} disabled={blocked || Boolean(message.trim()) || history.length >= 197} onPress={() => startGovTool('COMBINATION_REVIEW')} />
         </View>
       </View>}
-      {/* 아직 한도를 정하지 않은 요금제는 이용량 줄을 두지 않습니다. */}
-      {usage && searchUsage && hasPlanLimit(searchUsage) && <View testID="ai-search-usage" style={local.usage}><PlanUsageLine item={searchUsage} plan={usage.plan} /></View>}
       <View style={local.composer}>
         <TextInput ref={composerInput} accessibilityLabel="회사 상황이나 궁금한 점" placeholder={isGovAgent ? '검색, 공고 질문, 신청 준비를 요청해 주세요.' : introductory
           ? '예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?'
@@ -717,7 +717,8 @@ export function ChatScreen({ onOpenProgram, onLogin, onOpenApplication, onOpenRe
           {busy ? <View style={local.stop} /> : <AppIcon name="arrowUp" color={message.trim() ? colors.surface : colors.placeholder} size={22} />}
         </Pressable>
       </View>
-      <Text style={local.disclaimer}>AI 답변은 참고용입니다. 최종 신청 조건은 공고 원문에서 확인하세요.</Text>
+      {/* 아직 한도를 정하지 않은 요금제는 이용량 줄을 두지 않습니다. */}
+      {usage && searchUsage && hasPlanLimit(searchUsage) && <View testID="ai-search-usage" style={local.usage}><PlanUsageLine item={searchUsage} plan={usage.plan} /></View>}
     </View>
     <PartnerSheet visible={recordsOpen} title="대화 기록" compact bottomSafeArea={false} onClose={closeRecords}
       actions={<Button label="닫기" accessibilityLabel="대화 기록 닫기" variant="secondary" disabled={deletingRecord !== null} style={{ flex: 1 }} onPress={closeRecords} />}>
@@ -746,7 +747,8 @@ const local = StyleSheet.create({
   govProgramHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   govActions: { flexDirection: 'row', gap: 6 }, govAction: { flex: 1, minWidth: 0, paddingHorizontal: 6 },
   page: { flex: 1, backgroundColor: colors.surface }, scroll: { flex: 1 },
-  historyToolbar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, gap: 8 },
+  historyToolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
+  headerAction: { paddingHorizontal: 6 },
   historyRow: { flex: 1, minHeight: 56, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 12, gap: 4 },
   recordRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   deleteRecord: { width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
@@ -774,13 +776,12 @@ const local = StyleSheet.create({
   lockPreview: { backgroundColor: colors.track, borderRadius: 12, padding: 14, gap: 12 },
   lockLine: { width: '70%', height: 14, borderRadius: 4, backgroundColor: colors.fieldBorder },
   composerDock: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, backgroundColor: colors.surface },
-  usage: { maxWidth: 720, alignSelf: 'center', width: '100%', paddingHorizontal: 4, marginBottom: 8 },
+  usage: { maxWidth: 720, alignSelf: 'center', width: '100%', paddingHorizontal: 4, marginTop: 8 },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, maxWidth: 720, alignSelf: 'center', width: '100%' },
   input: { flex: 1, minWidth: 0, minHeight: 64, maxHeight: 140, borderWidth: 1, borderColor: colors.fieldBorder,
     borderRadius: 24, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, lineHeight: 25, color: colors.text, backgroundColor: colors.surface },
   send: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.text, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
   stop: { width: 14, height: 14, backgroundColor: colors.surface, borderRadius: 3 },
-  disclaimer: { color: colors.muted, fontSize: 12, lineHeight: 19, textAlign: 'center', marginTop: 8 },
 })
 
 const govQuestions = [
