@@ -30,7 +30,7 @@ for (const source of manifest) {
 const W = 3000, H = 5170;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
-const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E', external:'#67548E', scaling:'#247B64'};
+const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570', access:'#67548E', external:'#67548E', scaling:'#247B64', image:'#2673A5'};
 const parts = [];
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;'}[c]));
 function text(x, y, value, {size=23, weight=400, fill=ink, anchor='start', max=2600}={}) {
@@ -446,26 +446,35 @@ card(60,3040,2880,466,'#FDF9F2','#E3D0AC',26);
 text(90,3086,'03   main 변경 → CI 검증 → AWS / Vercel 자동 배포',{size:28,weight:700,fill:'#98631F'});
 text(2905,3086,'같은 최신 SHA 검증 · 백엔드 갱신 후 웹 전환',{size:22,fill:'#98631F',anchor:'end',max:1050});
 const delivery = [
-  [90,410,'githubactions','GitHub Actions',['개인 main · 필수 CI 5개','같은 최신 SHA 통과 확인','배포 순서·조건 조율']],
-  [545,445,'aws','CodeBuild · ECR',['CodeConnections · IAM 인증','서비스 이미지 5개 빌드·발행','git-SHA 고정 → digest']],
-  [1035,445,'helm','Helm 배포 설정',['검증된 Chart · EKS 설정','이미지 digest로 YAML 생성','DB · PVC · Secret 제외']],
-  [1525,415,'github','⑤ Git 불변 태그',['govbiz-eks/v1.RUN.ATTEMPT','배포 YAML · CI 근거 보관','EKS 내부 repo-server가 조회']],
-  [1985,465,'argocd','Argo CD · EKS 내부 Pod',['위 argocd 영역과 같은 구성','PreSync → 앱 동기화·연결 검증','PostSync: 접수 상태 복구']],
-  [2495,410,'vercel','Vercel 웹 전환',['정확한 Argo revision 확인','같은 SHA의 웹·shared 빌드','CI 재확인 → promote']],
+  [90,360,'githubactions','GitHub Actions',['개인 main · 필수 CI 5개','같은 최신 SHA 통과 확인','배포 순서·조건 조율']],
+  [490,400,'aws','CodeBuild',['CI 통과한 소스로 빌드','이미지 5개 빌드 · ECR 저장','Helm·배포 스크립트 실행']],
+  [930,400,'helm','Helm · YAML 생성',['Chart · EKS 설정 · 이미지 버전','Kubernetes 배포 파일 생성','생성한 YAML을 스크립트로 전달']],
+  [1370,450,'github','⑤ 배포 스크립트',['① release/에 YAML 저장','② Git 커밋 생성','③ 커밋을 가리키는 태그 발행']],
+  [1860,470,'argocd','Argo CD · 자동 감지',['규칙에 맞는 최신 태그 감지','커밋의 release/ YAML 읽기','EKS에 배포 설정 반영']],
+  [2370,535,'kubernetes','EKS · Pod 실행',['배포 파일의 이미지 버전 사용','ECR에서 이미지를 가져와 실행','배포 hook · 앱 상태 확인']],
 ];
 for (const [x,w,brand,title,lines] of delivery) {
-  card(x,3123,w,220,'#FFFFFF','#E1D3BC',20);
+  const automaticRelease = ['github','argocd','kubernetes'].includes(brand);
+  card(x,3123,w,208,automaticRelease?'#EEF8F2':'#FFFFFF',automaticRelease?'#86B99E':'#E1D3BC',20);
   icon(brand,x+22,3145,39);
   text(x+80,3180,title,{size:25,weight:700,max:w-100});
-  lines.forEach((line,i)=>text(x+22,3226+i*38,line,{size:21,fill:i===2?muted:ink,max:w-44}));
+  lines.forEach((line,i)=>text(x+22,3221+i*35,line,{size:21,fill:i===2?muted:ink,max:w-44}));
 }
 for (let i=0;i<delivery.length-1;i++) edge(`M${delivery[i][0]+delivery[i][1]} 3230H${delivery[i+1][0]}`,'deploy');
-text(90,3396,'배포 조건: 개인 main의 최신 SHA · 필수 CI 통과 · 정확한 Git revision / hook / 앱 이미지 확인 후 Vercel 전환',{size:24,fill:'#98631F',max:2800});
-text(90,3438,'자동 교체 범위: 애플리케이션·평가 실행기·결과 서버 · DB / PVC / 네트워크 / Langfuse는 별도 관리',{size:23,fill:muted,max:2800});
-text(90,3479,'권한 분리: CodeBuild는 빌드·ECR·Git 발행과 EKS 상태 조회 · Argo CD가 Git 설정으로 운영 앱 갱신',{size:23,fill:muted,max:2800});
+// Git carries deployment files; ECR carries executable images. Only EKS pulls images.
+edge('M690 3331V3370','image');
+card(490,3370,540,82,'#EEF6FC','#A7C9E0',14);
+icon('ecr',510,3387,34);
+text(563,3402,'④ ECR · 이미지 저장소',{size:25,weight:700,fill:colors.image,max:447});
+text(563,3434,'실행 이미지 보관 · digest로 버전 고정',{size:21,fill:muted,max:447});
+edge('M1030 3411H2637V3331','image');
+text(1775,3394,'EKS 노드가 배포 파일에 지정된 이미지를 가져옴',{size:25,weight:700,fill:colors.image,anchor:'middle',max:1450});
+icon('vercel',1502,3423,27);
+text(1545,3446,'EKS 배포 성공 확인 후 → 같은 SHA의 Vercel 웹 전환',{size:23,fill:'#98631F',max:1350});
+text(90,3488,'자동 교체 범위: 애플리케이션·평가 실행기·결과 서버 · DB / PVC / 네트워크 / Langfuse는 별도 관리',{size:22,fill:muted,max:2800});
 
 parts.push('<path d="M70 3520H2930" stroke="#E4EBF0" stroke-width="2"/>');
-for(const [x,kind,name] of [[80,'runtime','요청 · 데이터'],[620,'scaling','자동확장 제어'],[1190,'config','조건부 연결'],[1760,'external','외부 API 호출'],[2330,'deploy','CI 후 자동 배포']]) {
+for(const [x,kind,name] of [[80,'runtime','요청 · 데이터'],[550,'scaling','자동확장 제어'],[1030,'config','조건부 연결'],[1490,'external','외부 API 호출'],[1980,'deploy','배포 파일 반영'],[2450,'image','이미지 저장·가져오기']]) {
   edge(`M${x} 3564H${x+62}`,kind);
   text(x+82,3572,name,{size:24,max:740});
 }
