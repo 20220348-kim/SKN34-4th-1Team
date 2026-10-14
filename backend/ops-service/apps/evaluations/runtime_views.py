@@ -13,9 +13,9 @@ from rest_framework.response import Response
 
 from .budget import BudgetUnavailable, operation_plan
 from .budget_reporting import budget_summary
-from .catalog import DATASETS, RAG_SCOPE, allowed_models, evaluation_scope, live_config
+from .catalog import RAG_SCOPE, allowed_models, evaluation_scope, get_dataset, live_config
 from .execution_spec import digest, profile, read_release
-from .models import EvaluationAdmission, EvaluationBudget
+from .models import EvaluationAdmission, EvaluationBudget, EvaluationDatasetRevision
 from .runtime_checks import inspect_runtime
 
 
@@ -34,7 +34,15 @@ def runtime_status(request):
 
 
 class LiveReadinessQuery(serializers.Serializer):
-    dataset_id = serializers.ChoiceField(choices=tuple(DATASETS))
+    dataset_id = serializers.CharField(max_length=100)
+
+    def validate_dataset_id(self, value):
+        try:
+            get_dataset(value)
+        except KeyError:
+            raise serializers.ValidationError("등록된 평가 자료를 선택하세요.") from None
+        return value
+
     execution_profile = serializers.RegexField(r"^[a-f0-9]{64}$")
     model = serializers.CharField(max_length=200, required=False, trim_whitespace=False)
 
@@ -65,7 +73,7 @@ def live_readiness(request):
         config = live_config(dataset_id, model=query.validated_data.get("model"))
         if config is None:
             return Response({"detail": "등록된 새 모델 호출 계획이 없습니다."}, status=400)
-        spec = profile(read_release(), dataset_id, "live", config)
+        spec = profile(read_release(dataset_id), dataset_id, "live", config)
         stamp = digest(spec)
         plan = operation_plan(SimpleNamespace(execution_spec=spec, live_config=config))
         if not plan or any(item.get("max_input_tokens") is None for item in plan):
@@ -96,6 +104,16 @@ def live_readiness(request):
         accepting = admission is None or admission.accepting
         as_of = timezone.now().isoformat()
     blockers, warnings = [], []
+    if (
+        dataset_id.startswith("managed-")
+        and EvaluationDatasetRevision.objects.filter(pk=dataset_id, dataset__archived=True).exists()
+    ):
+        blockers.append(
+            {
+                "code": "DATASET_ARCHIVED",
+                "message": "보관된 평가 자료입니다. 자료를 복원한 뒤 새 평가를 실행하세요.",
+            }
+        )
     if not settings.LLMOPS_LIVE_ENABLED or (
         scope == RAG_SCOPE and not settings.LLMOPS_RAG_LIVE_ENABLED
     ):

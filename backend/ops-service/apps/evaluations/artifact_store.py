@@ -91,12 +91,16 @@ def read_usage_receipt(run_id, sequence):
 
 def read_evidence(name):
     try:
+        if name.startswith("managed/"):
+            from .catalog import read_managed_evidence
+
+            return read_managed_evidence(name)
         if name not in EVIDENCE_FILES:
             raise ValueError("Unknown evidence")
         if settings.LLMOPS_ARTIFACT_URL:
             return remote_read("/v1/evidence/" + quote(name, safe="/"))
         return read_file(settings.LLMOPS_EVIDENCE_DIR, name)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, KeyError) as exc:
         raise ResultsUnavailable from exc
 
 

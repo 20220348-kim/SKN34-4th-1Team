@@ -19,6 +19,7 @@ from .catalog import (
     LEGACY_DATASET_ID,
     RAG_SCOPE,
     evaluation_scope,
+    get_dataset,
     reference_run_id,
     selection,
     validate_execution,
@@ -75,7 +76,10 @@ def submit_run(
     prepared_baseline = None
     capture_hash = None
     prepared_rag = None
-    rag = evaluation_scope(dataset_id) == RAG_SCOPE if dataset_id in DATASETS else False
+    try:
+        rag = evaluation_scope(dataset_id) == RAG_SCOPE
+    except KeyError:
+        raise ValueError("등록된 평가 자료를 선택하세요.") from None
     if reference_capture_id.startswith("run:") and rag:
         from .rag_reviews import review_state
 
@@ -119,6 +123,10 @@ def submit_run(
                     "execution_profile": execution_profile,
                 },
             )
+        if dataset_id.startswith("managed-"):
+            from .dataset_management import lock_for_submission
+
+            lock_for_submission(dataset_id)
         baseline = lock_baseline(dataset_id)
         existing = EvaluationRun.objects.filter(pk=request_id).first()
         if existing:
@@ -179,13 +187,13 @@ def submit_run(
                 reference_config = {
                     "run_id": str(prepared_baseline.review.run_id),
                     "capture_sha256": capture_hash,
-                    "fixture_sha256": DATASETS[dataset_id]["fixture_sha256"],
+                    "fixture_sha256": get_dataset(dataset_id)["fixture_sha256"],
                 }
             elif baseline_version is not None:
                 raise ValueError("저장 캡처에는 검토 기준 버전을 지정할 수 없습니다.")
             validate_reference_config(dataset_id, reference_capture_id, reference_config)
             spec = make_spec(
-                read_release(),
+                read_release(dataset_id),
                 dataset_id,
                 execution_mode,
                 config,
@@ -357,7 +365,7 @@ def read_live_capture(run):
         )
         or capture["fixtureSha256"] != config["fixture_sha256"]
         or capture["caseIds"]
-        != run.execution_spec.get("dataset", DATASETS[run.dataset_id])["case_ids"]
+        != (run.execution_spec.get("dataset") or get_dataset(run.dataset_id))["case_ids"]
         or capture["maxModelCalls"] != config["max_model_calls"]
         or capture["maxOutputTokens"] != config["max_output_tokens"]
         or type(calls) is not int
@@ -553,7 +561,11 @@ def read_candidate(run):
         if (
             capture_hash != comparison["candidate_execution"]["capture_sha256"]
             or capture.get("schemaVersion")
-            not in {"support-program-evidence-capture-v1", "support-program-evidence-capture-v2"}
+            not in {
+                "support-program-evidence-capture-v1",
+                "support-program-evidence-capture-v2",
+                "support-program-evidence-capture-v3",
+            }
             or capture.get("scope", EVALUATION_SCOPE) != EVALUATION_SCOPE
             or capture["completed"] is not True
             or capture["fixtureSha256"] != dataset["fixture_sha256"]

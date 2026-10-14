@@ -121,6 +121,12 @@ class LiveModelCatalogTests(SimpleTestCase):
 
 
 class DatasetSelectionGuideTests(SimpleTestCase):
+    def setUp(self):
+        # 이 테스트는 기존 파일 카탈로그 계약만 확인한다. DB 자료는 별도 통합 테스트 대상이다.
+        managed = patch("apps.evaluations.catalog.managed_datasets", return_value=[])
+        managed.start()
+        self.addCleanup(managed.stop)
+
     def catalog(self, *, authenticated=True):
         request = APIRequestFactory().get("/api/v1/ops/evaluation-catalog")
         if authenticated:

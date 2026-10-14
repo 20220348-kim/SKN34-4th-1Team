@@ -17,7 +17,7 @@ from rest_framework.response import Response
 
 from .admission import AdmissionUnavailable
 from .budget import BudgetUnavailable
-from .catalog import DATASETS, public_datasets, selection
+from .catalog import DATASETS, get_dataset, public_datasets, selection
 from .models import EvaluationRun
 from .prefect_client import PrefectUnavailable, read_logs
 from .quality import assess, save_fixture_review
@@ -102,7 +102,7 @@ def api_session(request):
 def api_evaluation_catalog(request):
     try:
         baselines = baseline_choices()
-        datasets = public_datasets()
+        datasets = public_datasets(include_managed=True)
     except (ResultsUnavailable, OSError, ValueError):
         return Response(
             {
@@ -116,7 +116,11 @@ def api_evaluation_catalog(request):
             "datasets": [
                 {
                     **item,
-                    "selection_guide": DATASETS.get(item["id"], {}).get("selection_guide"),
+                    "selection_guide": (
+                        get_dataset(item["id"])
+                        if item["id"].startswith("managed-")
+                        else DATASETS.get(item["id"], {})
+                    ).get("selection_guide"),
                     "baseline": baselines.get(item["id"]),
                 }
                 for item in datasets
@@ -134,7 +138,15 @@ def web_redirect(request, run_id=None):
 
 class RunRequestSerializer(serializers.Serializer):
     request_id = serializers.UUIDField()
-    dataset_id = serializers.ChoiceField(choices=list(DATASETS))
+    dataset_id = serializers.CharField(max_length=100)
+
+    def validate_dataset_id(self, value):
+        try:
+            get_dataset(value)
+        except KeyError:
+            raise serializers.ValidationError("등록된 평가 자료를 선택하세요.") from None
+        return value
+
     candidate_capture_id = serializers.CharField(max_length=100, default=DATASET_ID)
     reference_capture_id = serializers.CharField(max_length=100, default=DATASET_ID)
     execution_mode = serializers.ChoiceField(choices=["replay", "live"], default="replay")
@@ -157,7 +169,7 @@ def run_data(run, viewer_id=None):
     return {
         "id": str(run.id),
         "dataset_id": run.dataset_id,
-        "dataset_label": DATASETS[run.dataset_id]["label"],
+        "dataset_label": get_dataset(run.dataset_id)["label"],
         "candidate_capture_id": run.candidate_capture_id,
         "reference_capture_id": run.reference_capture_id,
         "baseline_version": run.baseline_version,

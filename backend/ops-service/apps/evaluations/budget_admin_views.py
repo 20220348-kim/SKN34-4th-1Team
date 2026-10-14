@@ -20,7 +20,7 @@ from .budget_reporting import (
     legacy_usage_data,
     reservation_data,
 )
-from .catalog import DATASETS
+from .catalog import dataset_label
 from .daily_budget import change_daily_limits
 from .daily_budget import change_data as daily_change_data
 from .legacy_usage import LegacyUsageUnavailable, reconcile_legacy_usage
@@ -176,7 +176,7 @@ def api_unaccounted_runs(request):
             {
                 "run_id": str(run.pk),
                 "dataset_id": run.dataset_id,
-                "dataset_label": DATASETS.get(run.dataset_id, {}).get("label", run.dataset_id),
+                "dataset_label": dataset_label(run.dataset_id),
                 "status": run.status,
                 "status_label": run.get_status_display(),
                 "created_at": run.created_at.isoformat(),

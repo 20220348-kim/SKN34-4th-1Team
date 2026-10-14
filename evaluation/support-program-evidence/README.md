@@ -558,6 +558,10 @@ AI Service와 같은 Python 3.12를 사용하며, 평가 의존성은
 명시적인 파일 목록으로 생성·평가 경로를 구분합니다. `execution_release.json`은 빌드 입력이고
 실행 중 실제 파일 재검증을 대신하지 않습니다.
 
+관리자 게시 자료는 명세의 `dataset.managed_snapshot`을 재검증한 뒤 실행별 `inputs/managed/`에
+고정 파일로 씁니다. 기본 자료의 파일·해시 검증은 그대로 유지하고, 관리자 자료도 현재 실행기의
+평가·파이프라인 코드 해시와 정확히 일치해야 실행합니다. 자세한 계약은 [관리자 게시 자료 실행](#관리자-게시-자료-실행)을 따릅니다.
+
 새 유료 응답은 명세 없이는 시작할 수 없습니다. 호출 전 실패는 `preflight.json`에 남기고
 `execute()` 이후 오류는 이 기록으로 0회 처리하지 않습니다. 기존 CLI `evaluate.py --execute`는
 별도의 수동 실행 경로이며 Ops 접수 명세를 대신하지 않습니다.
@@ -609,11 +613,43 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 - `work/`는 기존 임시 출력 제외 경로입니다. 도구·질문·참조·문서는 모두 Git 공유 대상입니다.
   실제 실행 기록을 팀에 공유할 때는 민감정보를 확인한 뒤 별도 버전 폴더에 보존해야 합니다.
 
+## 관리자 게시 자료 실행
+
+관리자는 React의 **평가 자료 관리**(`/ops/datasets`)에서 원문·질문·채점 조건·저장 답변을 작성하고
+초안 저장 후 버전을 게시합니다. UI 순서와 보관·복원은 [Ops 자료 관리 안내](../../backend/ops-service/README.md#관리자-평가-자료-등록관리)를 따릅니다.
+이 경로는 `fixed-answer-context-only` 범위이며, URL 자동 수집이나 전체 RAG 자료 등록은 수행하지 않습니다.
+
+- 게시 버전은 `managed-<UUID hex>-vN` ID를 가진 불변 DB 스냅샷입니다. 초안을 수정해 다시 게시하면
+  새 버전이 생깁니다. 새 평가 선택지에는 보관되지 않은 자료의 최신 게시 버전을 추가하고,
+  이전 실행·검토·비교 기준은 원래 버전으로 보존합니다. 새 버전은 사람 승인을 승계하지 않습니다.
+- `managed_materials.py`가 입력 계약을 검증하고 fixture v3(`dataType=admin-provided`,
+  `referenceSource=admin-authored`)와 capture v3(`measurementKind=admin-entered-answer`)를 생성합니다.
+  수동 답변의 `model`은 `not-recorded`, 호출 수는 0이며 프롬프트·실행기 해시, 지연·토큰은 미기록입니다.
+  실제 모델 사용량·trace를 수동 답변에 넣어 실측으로 표시하지 않습니다.
+- 접수 시 자료 전체와 해시를 `execution_spec.dataset.managed_snapshot`에 고정합니다.
+  실행기는 DB 없이 스냅샷을 재구성·대조하고 `inputs/managed/<자료 ID>/fixture.json`, `capture.json`을
+  만든 뒤 기존 Pandera·Evidently 평가 경로를 사용합니다. 임의 파일 경로나 실행 코드는 받지 않습니다.
+  JSON 객체 키 순서가 DB에서 바뀌어도 파일 해시는 같도록 정렬된 직렬화를 사용하며,
+  요청 해시는 기존 Pydantic 요청 계약과 대조합니다.
+- 관리자 입력 답변도 상태·인용 지표를 재계산할 수 있지만, 현재 모델의 성능 측정이나 사람 검토 합격은
+  아닙니다. 미기록 지연·토큰은 `null`이고 의미 충실도는 미측정입니다. 검토된 기준 응답 재사용과
+  실패 후처리 복구도 같은 버전·입력 해시를 확인합니다.
+- 자료 보관은 새 평가 접수를 차단하며, 이미 접수한 실행과 기록을 삭제하지 않습니다. 복원 후 다시
+  사용할 수 있습니다. 자료 등록·게시 기능은 **유료 실행을 활성화하지 않으며**, 새 모델 호출에는 기존
+  자료 승인·실행 허용·누적/일별 예산·최종 확인이 필요합니다.
+
+등록 자료는 Ops DB에 보관하므로 `capture_catalog.json`이나 `execution_release.json`을 자료마다
+수정하지 않습니다. 실행 명세는 검증된 게시 버전을 기존 코드 release에 합쳐 고정합니다.
+이 기능의 코드·입력 계약을 바꾼 경우에는 기존 절차대로 release를 다시 생성해야 합니다.
+무료 회귀 테스트는 `test_managed_evaluation.py`에서 출처·입력 변조 차단·보고서 생성·기준 재사용·복구·
+유료 비활성화와 JSON 키 순서 변경을 확인합니다. 실제 모델 품질 측정이나 배포 검증을 대신하지 않습니다.
+
 ## Ops에서 저장 캡처 비교
 
 [React 운영 화면](../../infrastructure/llmops/README.md#django-운영-화면)에서 자료·기준·후보를 선택하면
 `Django → Prefect → 원본 검증 → pandas/Pandera → 지표 재계산 → Evidently/Langfuse`로 진행합니다.
-허용 자료는 Ops의 `capture_catalog.json` 한 곳에서 관리하며 임의 경로나 코드를 API로 받지 않습니다.
+기본 허용 자료는 Ops의 `capture_catalog.json`, 관리자 등록 자료는 검증된 불변 게시 버전에서
+읽습니다. 임의 경로나 코드를 API로 받지 않습니다.
 
 - `target-coverage-20260907-v1`: 가상 6건의 동일 캡처 재현
 - `fixed-context-e01-v1`: 9월 6일 청크 ID 프롬프트와 9월 7일 청크 순번 프롬프트의 공통 E01 비교

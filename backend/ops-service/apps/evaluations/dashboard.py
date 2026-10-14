@@ -9,7 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .catalog import DATASETS, allowed_models
+from .catalog import allowed_models, dataset_label
 from .execution_spec import digest
 from .models import EvaluationRun
 
@@ -166,7 +166,7 @@ def measurement(run):
         return None
     group = {
         "dataset_id": run.dataset_id,
-        "dataset_label": DATASETS.get(run.dataset_id, {}).get("label", run.dataset_id),
+        "dataset_label": dataset_label(run.dataset_id),
         "model": model,
         "scope": scope,
         "fixture_sha256": fixture,

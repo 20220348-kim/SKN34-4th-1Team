@@ -5,6 +5,7 @@ from . import (
     budget_views,
     dashboard,
     dashboard_reviews,
+    dataset_views,
     production_views,
     runtime_views,
     schedule_views,
@@ -13,6 +14,10 @@ from . import (
 )
 
 urlpatterns = [
+    path("api/v1/ops/datasets", dataset_views.api_datasets),
+    path("api/v1/ops/datasets/<uuid:dataset_id>", dataset_views.api_dataset),
+    path("api/v1/ops/datasets/<uuid:dataset_id>/publish", dataset_views.api_dataset_publish),
+    path("api/v1/ops/datasets/<uuid:dataset_id>/archive", dataset_views.api_dataset_archive),
     path("api/v1/ops/traces", trace_views.api_traces),
     path("api/v1/ops/traces/<str:trace_id>", trace_views.api_trace_detail),
     path("internal/llmops/production-samples", production_views.api_ingest),

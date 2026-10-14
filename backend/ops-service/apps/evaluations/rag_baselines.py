@@ -3,7 +3,7 @@
 from django.db import transaction
 
 from .baselines import change_baseline, lock_baseline
-from .catalog import DATASETS
+from .catalog import get_dataset
 from .models import EvaluationBaseline
 from .rag_reviews import locked_run, review_state, state_for_material
 from .services import RequestConflict, ResultsUnavailable
@@ -58,7 +58,7 @@ def require_pass(run, state, assessment_id, input_sha256):
         not quality["baseline_eligible"]
         or quality["current_id"] != assessment_id
         or quality["input_sha256"] != input_sha256
-        or state["material"]["fixture_sha256"] != DATASETS[run.dataset_id]["fixture_sha256"]
+        or state["material"]["fixture_sha256"] != get_dataset(run.dataset_id)["fixture_sha256"]
     ):
         raise RequestConflict
 

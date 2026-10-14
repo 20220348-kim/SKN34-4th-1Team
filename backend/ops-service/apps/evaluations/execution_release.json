@@ -13,39 +13,40 @@
     "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
   },
   "evaluation": {
-    "sha256": "efdd5f45689dada97ce581ccaa2b1e8215fcbb3a75e490b578834f5203523ab0",
+    "sha256": "4062d6db38d6819ab082d7e50b135ef533dca322710570103a14b6d829d1b132",
     "files": {
-      "evaluation/support-program-evidence/evaluate.py": "0430f08ad1f51c9a8fd22119e0b4d0badac9f89ab8e254e963a4944bd79ed514",
+      "evaluation/support-program-evidence/evaluate.py": "7cf30a24ade715bd0d167ea5719a9d506ef4eed22b6afd8b3dc52083e01cb3ba",
       "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
       "evaluation/support-program-evidence/verify_flow.py": "828ff0faa4c2871dd6a880742184e5700a754a5d5307f7fc95a3c45212ade0ed",
-      "evaluation/support-program-evidence/llmops.py": "b3aa0bb235b4aaaa1dc17a1dbd69e315d3bdbf40cd423b0f43722f5374b60839",
+      "evaluation/support-program-evidence/llmops.py": "2b04b29960c9c404ae04d8b2badd43261cc6511a7346933249391ba9c2abe1f8",
+      "backend/ops-service/apps/evaluations/managed_materials.py": "5c732b7c319f9706d1c0244db695ae1e48f53874ac5374926c4ffc730e2604e1",
       "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
       "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
     },
-    "version": "efdd5f45689dada97ce581ccaa2b1e8215fcbb3a75e490b578834f5203523ab0",
+    "version": "4062d6db38d6819ab082d7e50b135ef533dca322710570103a14b6d829d1b132",
     "scope": "fixed-answer-context-only"
   },
   "rag_evaluation": {
-    "sha256": "50e4eea50f5ef32f354fb2055f42e65a8fbeeb431a9e5431fb09376b9d93635b",
+    "sha256": "562645105ec530383a6f83e7ad9a864ca355a6957b82e9c65523837655c35331",
     "files": {
       "evaluation/support-program-evidence/rag_evaluate.py": "4426b8cc927e2e95e945c1785c3470d1e366281e4c0380f4da85e482991a8b44",
       "evaluation/support-program-evidence/rag_replay_flow.py": "6f6f790516ebc132c88877db78f0ae2d1736c85b4ac372c2cd255ce5399befa3",
-      "evaluation/support-program-evidence/llmops.py": "b3aa0bb235b4aaaa1dc17a1dbd69e315d3bdbf40cd423b0f43722f5374b60839",
+      "evaluation/support-program-evidence/llmops.py": "2b04b29960c9c404ae04d8b2badd43261cc6511a7346933249391ba9c2abe1f8",
       "backend/ops-service/apps/evaluations/rag_replay.py": "6cd2f97303a4465930db736e8e82092cd9c2ed5763bda42f365ac527efff1333",
       "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
       "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
     },
-    "version": "50e4eea50f5ef32f354fb2055f42e65a8fbeeb431a9e5431fb09376b9d93635b",
+    "version": "562645105ec530383a6f83e7ad9a864ca355a6957b82e9c65523837655c35331",
     "scope": "source-chunks-retrieval-answer"
   },
   "generation": {
-    "sha256": "fd453d76c474d12578ba345a47bc47d80e88bde962ed82c17c8e7fce25e5a9b2",
+    "sha256": "a401c8ec174a9e86adc009e5d27990c99ba384cd22c20aa430f556f10943d597",
     "files": {
-      "evaluation/support-program-evidence/evaluate.py": "0430f08ad1f51c9a8fd22119e0b4d0badac9f89ab8e254e963a4944bd79ed514",
+      "evaluation/support-program-evidence/evaluate.py": "7cf30a24ade715bd0d167ea5719a9d506ef4eed22b6afd8b3dc52083e01cb3ba",
       "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
       "evaluation/support-program-evidence/verify_flow.py": "828ff0faa4c2871dd6a880742184e5700a754a5d5307f7fc95a3c45212ade0ed",
       "backend/ai-service/app/config.py": "7fc38debcdfb14249e64a195373072d14fc124406f0753d421118f197b16918d",
@@ -75,9 +76,9 @@
     }
   },
   "rag_generation": {
-    "sha256": "12426aa535ece382e8f9519f2f57ecb9c7ed9285e7a67e149d9bb64928a774a7",
+    "sha256": "5a83bd5317fff4f6fd6528b3dbe9681fc801882aeff300834f1ac3d3f99a5d7f",
     "files": {
-      "evaluation/support-program-evidence/evaluate.py": "0430f08ad1f51c9a8fd22119e0b4d0badac9f89ab8e254e963a4944bd79ed514",
+      "evaluation/support-program-evidence/evaluate.py": "7cf30a24ade715bd0d167ea5719a9d506ef4eed22b6afd8b3dc52083e01cb3ba",
       "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
       "evaluation/support-program-evidence/verify_flow.py": "828ff0faa4c2871dd6a880742184e5700a754a5d5307f7fc95a3c45212ade0ed",
       "backend/ai-service/app/config.py": "7fc38debcdfb14249e64a195373072d14fc124406f0753d421118f197b16918d",
@@ -122,16 +123,17 @@
     "document_vectors": "content-addressed-evaluation-cache-v1"
   },
   "pipeline": {
-    "sha256": "cb7d2e29e80a567ecc7cc546d4141db7326316d7f45a0fd7c50eff42c66c640d",
+    "sha256": "4b34e02d1580c0c73c9ad7d24d1dc05fb47712f19f8878b5121c51380b806b40",
     "files": {
-      "evaluation/support-program-evidence/ops_flow.py": "f1381e5de9362797ea75c70529f60230e75e06f38bb5ca5d9312753f9cbd9840",
+      "evaluation/support-program-evidence/ops_flow.py": "72003a1648e36256f4c6c4585c011187a413ace04c9ea3ef533d9c00ebce6fc0",
       "evaluation/support-program-evidence/budget_client.py": "5fb2ba03088467201693f94ec2c2b074ab15998f4e2ea6724c0c67cdef6613f9",
-      "backend/ops-service/apps/evaluations/catalog.py": "e1af8bb2da1a8acd509d72deef81fdf6c753ebfb1eab68ecfb0bd7fb9c2a04ad",
+      "backend/ops-service/apps/evaluations/catalog.py": "96bc435bd592573ebd70079722d459a9f1bd1c965a0f73d16ddd46a2fb500f29",
       "backend/ops-service/apps/evaluations/recovery_inputs.py": "0070dfdda076bf3cda0eb2202f6a175a5eef02c02b6e02a6d21c4d434250a3bb",
-      "backend/ops-service/apps/evaluations/execution_spec.py": "59c0f4a381cb19f35dd8653258826b9d5c60f89a0675abdc961ba57067e39ab9",
+      "backend/ops-service/apps/evaluations/execution_spec.py": "a6535d7a203c28491b8ff8f481419e70f012a7593e5cb196e126f536c09e3487",
       "backend/ops-service/apps/evaluations/quality_policy.py": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84",
       "backend/ops-service/apps/evaluations/vector_cache.py": "177707a4d9f60b28daeab7460e69d02b3dbf61323e58a3e47a7e69ffa10f830e",
-      "backend/ops-service/apps/evaluations/artifact_files.py": "68ccee925969e3eba852658013d6f67789b524f971212b8a4c00aaa0e289799a"
+      "backend/ops-service/apps/evaluations/artifact_files.py": "68ccee925969e3eba852658013d6f67789b524f971212b8a4c00aaa0e289799a",
+      "backend/ops-service/apps/evaluations/managed_materials.py": "5c732b7c319f9706d1c0244db695ae1e48f53874ac5374926c4ffc730e2604e1"
     }
   },
   "datasets": {

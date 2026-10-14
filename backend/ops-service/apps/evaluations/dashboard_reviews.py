@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import rag_baselines, rag_reviews, reviews
-from .catalog import DATASETS
+from .catalog import get_dataset
 from .dashboard import FIXED_SCOPE, RAG_SCOPE
 from .models import EvaluationBaseline, EvaluationRun
 from .review_eligibility import current_approval
@@ -16,7 +16,11 @@ from .services import RequestConflict, ResultsUnavailable
 
 
 def read_state(run, user):
-    if run.status != "COMPLETED" or run.dataset_id not in DATASETS:
+    try:
+        get_dataset(run.dataset_id)
+    except KeyError:
+        raise ResultsUnavailable from None
+    if run.status != "COMPLETED":
         raise ResultsUnavailable
     scope = run.comparison.get("scope")
     if scope == RAG_SCOPE:

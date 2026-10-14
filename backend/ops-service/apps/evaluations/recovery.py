@@ -94,7 +94,7 @@ def submit_recovery(user, source, request_id):
         raise RequestConflict
     config = recovery_config(source)
     spec = make_spec(
-        read_release(),
+        read_release(source.dataset_id),
         source.dataset_id,
         "recovery",
         {},

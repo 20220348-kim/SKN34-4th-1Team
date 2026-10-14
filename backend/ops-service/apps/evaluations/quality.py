@@ -8,7 +8,7 @@ from django.db import transaction
 from . import quality_policy
 from .artifact_store import read_artifact
 from .baselines import change_baseline, lock_baseline
-from .catalog import DATASETS
+from .catalog import get_dataset
 from .execution_spec import digest, read_release
 from .models import EvaluationRun, FixtureReview, QualityAssessment
 from .review_eligibility import RUBRIC_VERSION, latest_case_reviews
@@ -203,7 +203,7 @@ def save_fixture_review(
     material = review_material(run)
     if (
         fixture_sha256 != material["fixture_sha256"]
-        or case_ids != DATASETS[run.dataset_id]["case_ids"]
+        or case_ids != get_dataset(run.dataset_id)["case_ids"]
         or rubric_version != quality_policy.FIXTURE_RUBRIC
     ):
         raise RequestConflict

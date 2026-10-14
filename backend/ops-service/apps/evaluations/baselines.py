@@ -1,6 +1,6 @@
 """데이터셋별 비교 기준의 잠금과 변경 이력을 소유한다."""
 
-from .catalog import DATASETS
+from .catalog import get_dataset
 from .models import EvaluationBaseline, EvaluationBaselineChange
 
 
@@ -29,5 +29,5 @@ def change_baseline(baseline, review, user, reason, *, rag_assessment=None):
         rag_assessment=rag_assessment,
         changed_by=user,
         reason=reason,
-        fixture_sha256=DATASETS[baseline.dataset_id]["fixture_sha256"],
+        fixture_sha256=get_dataset(baseline.dataset_id)["fixture_sha256"],
     )

@@ -1,6 +1,6 @@
 """사례별 검토와 전체 승인이 현재 비교 기준으로 사용할 수 있는지 판단한다."""
 
-from .catalog import DATASETS
+from .catalog import get_dataset
 from .models import EvaluationCaseReview, EvaluationReview
 
 RUBRIC_VERSION = "evidence-review-v1"
@@ -19,7 +19,7 @@ def latest_case_reviews(run):
 
 
 def suitable_case_reviews(run, capture_sha256):
-    dataset = DATASETS[run.dataset_id]
+    dataset = get_dataset(run.dataset_id)
     latest = latest_case_reviews(run)
     if set(latest) != set(dataset["case_ids"]):
         return None
@@ -41,7 +41,7 @@ def current_approval(review, run):
         or review.version != run.review_version
         or review.run_id != run.pk
         or review.decision != EvaluationReview.Decision.APPROVED
-        or review.fixture_sha256 != DATASETS[run.dataset_id]["fixture_sha256"]
+        or review.fixture_sha256 != get_dataset(run.dataset_id)["fixture_sha256"]
         or review.rubric_version != RUBRIC_VERSION
     ):
         return False
