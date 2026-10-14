@@ -1,3 +1,4 @@
+import type { PartnerRecruitmentConditions } from '@govbiz/shared/domain/entities/PartnerRecruitmentRecommendation'
 import { useEffect, useState, type ReactNode } from 'react'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { StyleSheet, View } from 'react-native'
@@ -15,11 +16,12 @@ import { useAuth } from '../auth/session'
 
 export type SearchMode = 'ai' | 'filter'
 
-export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, assistantDraft, onDraftConsumed, renderHeaderActions }: {
+export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin, onOpenApplication, onOpenReview, onOpenPartners, onOpenRecruitment, onCompany, onCreateRecruitment, assistantDraft, onDraftConsumed, renderHeaderActions }: {
   mode: SearchMode; headerHeight?: number; onModeChange(mode: SearchMode): void
   onOpenProgram(identity: SupportProgramIdentity, options?: { ask?: boolean }): void; onLogin(request?: LoginRequest): void
   assistantDraft?: AssistantDraft | null; onDraftConsumed?(id: string): void
-  onOpenApplication?(application: GovAgentApplication): void; onOpenReview?(review: GovAgentReview): void; onOpenPartners?(): void
+  onOpenApplication?(application: GovAgentApplication): void; onOpenReview?(review: GovAgentReview): void; onOpenPartners?(conditions: PartnerRecruitmentConditions): void
+  onCompany?(): void; onCreateRecruitment?(program: SupportProgramIdentity): void
   onOpenRecruitment?(id: number): void
   renderHeaderActions?(actions: ReactNode): ReactNode
 }) {
@@ -46,7 +48,7 @@ export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgr
       pointerEvents={mode === value ? 'auto' : 'none'} style={[local.panel, mode !== value && local.hidden]}>
       {value === 'ai' ? <ChatScreen interests={interests} onOpenProgram={onOpenProgram} onLogin={onLogin} keyboardOffset={headerHeight + controlHeight} active={mode === 'ai'}
         renderHeaderActions={renderHeaderActions}
-        onOpenApplication={onOpenApplication} onOpenReview={onOpenReview} onOpenPartners={onOpenPartners} onOpenRecruitment={onOpenRecruitment}
+        onOpenApplication={onOpenApplication} onOpenReview={onOpenReview} onOpenPartners={onOpenPartners} onOpenRecruitment={onOpenRecruitment} onCompany={onCompany} onCreateRecruitment={onCreateRecruitment}
         assistantDraft={assistantDraft} onDraftConsumed={onDraftConsumed} />
         : <CatalogScreen interests={interests} onLogin={() => onLogin()} onOpenProgram={onOpenProgram} keyboardOffset={controlHeight} />}
     </View>)}

@@ -62,6 +62,21 @@ test('an untouched draft cancels without a discard confirmation', () => {
   expect(alert).not.toHaveBeenCalled()
 })
 
+test('agent creation validates and selects the saved program using both identity fields', async () => {
+  jest.mocked(listSavedPrograms).mockResolvedValue([{ savedAt: '', program: { ...program, sourceCode: 'KSTARTUP', title: '다른 제공처' } }, { savedAt: '', program }])
+  render(<RecruitmentCreateScreen {...callbacks} initialProgram={{ sourceCode: program.sourceCode, sourceProgramId: program.id }} />)
+  await screen.findByText(program.title)
+  expect(screen.queryByLabelText('공고 선택: 기업마당 공동 제조 과제')).toBeNull()
+  expect(screen.queryByText('다른 제공처')).toBeNull()
+})
+
+test('an expired suggested program is not replaced by another saved program', async () => {
+  jest.mocked(listSavedPrograms).mockResolvedValue([{ savedAt: '', program: { ...program, status: 'CLOSED' } }])
+  render(<RecruitmentCreateScreen {...callbacks} initialProgram={{ sourceCode: program.sourceCode, sourceProgramId: program.id }} />)
+  await screen.findByText('이 공고를 선택할 수 없어요. 관심 공고함과 접수 기간을 확인해 주세요.')
+  expect(createRecruitment).not.toHaveBeenCalled()
+})
+
 async function chooseProgram(label = '공고 선택: 기업마당 공동 제조 과제') {
   fireEvent.press(screen.getByLabelText('관심 공고함에서 선택'))
   await screen.findByLabelText(label)

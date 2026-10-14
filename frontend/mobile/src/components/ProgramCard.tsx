@@ -18,9 +18,11 @@ export function ProgramCard({ program, onOpen, selection, interests, onLogin }: 
       <Text style={styles.muted}>{program.organization}</Text>
       <Text style={styles.body} numberOfLines={2}>{program.summary}</Text>
       <Text style={styles.muted}>{program.applicationPeriod}</Text>
-      {program.regions.length > 0 && <Text style={styles.muted}>{program.regions.join(' · ')}</Text>}
       {program.matchedReasons.map((reason) => <Text key={reason} style={styles.muted}>• {reason}</Text>)}
-      <Text style={[styles.label, { textAlign: 'right' }]}>공고 상세 →</Text>
+      <View style={local.footer}>
+        <Text style={[styles.muted, local.regions]}>{program.regions.join(' · ')}</Text>
+        <Text style={styles.label}>공고 상세 →</Text>
+      </View>
     </>
   if (!selection) return <Card>
     <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open} style={{ gap: 9 }}>{body}</Pressable>
@@ -40,6 +42,8 @@ export function ProgramCard({ program, onOpen, selection, interests, onLogin }: 
 }
 
 const local = StyleSheet.create({
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 32 },
+  regions: { flex: 1 },
   metaWithInterest: { minHeight: 32, marginRight: 40 },
   interest: { position: 'absolute', top: 8, right: 8 },
   selectable: { borderWidth: 1, borderColor: 'transparent' },

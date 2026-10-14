@@ -166,8 +166,8 @@ test('the partner button preserves the selected composite identity without anoth
   expect(client.interpretConversation).not.toHaveBeenCalled()
   const snapshot = jest.mocked(saveChatConversation).mock.calls.at(-1)![4]
   expect(chatConversationSnapshotSchema.parse(snapshot).messages.at(-1)!.govPartners?.conditions).toEqual(conditions)
-  fireEvent.press(screen.getByLabelText('파트너 모집글 보기'))
-  expect(props.onOpenPartners).toHaveBeenCalledTimes(1)
+  fireEvent.press(screen.getByLabelText('같은 조건으로 파트너 관리에서 보기'))
+  expect(props.onOpenPartners).toHaveBeenCalledWith(conditions)
 })
 
 test('selecting a program does not repeat evidence usage beside the three actions', async () => {
@@ -210,7 +210,7 @@ test.each(['NEEDS_PROGRAM', 'UNSUPPORTED', 'PARTNERS'] as const)('%s remains exp
   if (outcome === 'PARTNERS') {
     expect(recommendRecruitments).toHaveBeenCalledWith(emptyPartnerRecruitmentConditions, 'admin-session', expect.any(AbortSignal))
     expect(jest.mocked(saveChatConversation).mock.calls.at(-1)![4].messages.at(-1)!.govPartners?.conditions).toEqual(emptyPartnerRecruitmentConditions)
-    fireEvent.press(screen.getByLabelText('파트너 모집글 보기')); expect(props.onOpenPartners).toHaveBeenCalledTimes(1)
+    fireEvent.press(screen.getByLabelText('파트너 관리에서 전체 보기')); expect(props.onOpenPartners).toHaveBeenCalledTimes(1)
   }
 })
 

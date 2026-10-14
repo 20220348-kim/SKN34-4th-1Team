@@ -50,6 +50,15 @@ test('guests browse the real recruitment list without opening a private proposal
   expect(onOpenRecruitment).toHaveBeenCalledWith(9)
 })
 
+test('conditions from the agent populate the list request and editable search field', async () => {
+  const initialQuery = { keyword: '배터리', seekingRoles: ['DEMAND' as const], regions: ['경기', '대전'] }
+  render(<CollaborationScreen view="recruitments" initialQuery={initialQuery} onViewChange={jest.fn()}
+    onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await screen.findByText(recruitment.title)
+  expect(browseRecruitments).toHaveBeenCalledWith(expect.objectContaining(initialQuery), undefined, expect.any(AbortSignal))
+  expect(screen.getByLabelText('역량·공고명 검색').props.value).toBe('배터리')
+})
+
 test('received proposal defaults to pending, hides unshared company data, and reveals contact after accept', async () => {
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'my-token' },
     invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)

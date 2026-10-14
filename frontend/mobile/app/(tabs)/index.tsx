@@ -28,7 +28,10 @@ export default function SearchRoute() {
       ? router.push({ pathname: '/all/reviews/[id]', params: { id: String(review.reviewId), step: 'analysis' } })
       : router.push({ pathname: '/all/reviews/new', params: review.program
         ? { sourceCode: review.program.sourceCode, sourceProgramId: review.program.sourceProgramId } : {} })}
-    onOpenPartners={() => router.push({ pathname: '/all/collab', params: { view: 'recruitments', mine: '0' } })}
+    onOpenPartners={conditions => router.push({ pathname: '/all/collab', params: { view: 'recruitments', mine: '0',
+      keyword: conditions.keywords[0] ?? '', seekingRole: conditions.seekingRoles.join(','), region: conditions.regions.join(',') } })}
+    onCompany={() => router.push('/all/company')}
+    onCreateRecruitment={program => router.push({ pathname: '/partner/new', params: { sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId } })}
     onOpenRecruitment={id => router.push({ pathname: '/partner/[id]', params: { id: String(id) } })}
     onLogin={requestLogin} />
 }

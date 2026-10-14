@@ -1,3 +1,5 @@
+import { seekingPartnerRoles, type PartnerRole } from '@govbiz/shared/domain/entities/PartnerRecruitment'
+import { regionNamesWithoutNationwide } from '@govbiz/shared/domain/entities/Region'
 import { useLoginFlow } from '../../../src/auth/loginFlow'
 import { screenTitles } from '@govbiz/shared/design/screenTitles'
 import { Pressable } from 'react-native'
@@ -10,11 +12,14 @@ import { colors } from '../../../src/ui'
 export default function CollaborationRoute() {
   const router = useRouter()
   const requestLogin = useLoginFlow()
-  const { view, box, mine, management } = useLocalSearchParams<{ view?: string; box?: string; mine?: string; management?: string }>()
+  const { view, box, mine, management, keyword, seekingRole, region } = useLocalSearchParams<{ view?: string; box?: string; mine?: string; management?: string; keyword?: string; seekingRole?: string | string[]; region?: string | string[] }>()
+  const values = (value: string | string[] | undefined) => value === undefined ? [] : (Array.isArray(value) ? value : [value]).flatMap(item => item.split(','))
+  const initialQuery = { keyword: keyword ?? '', seekingRoles: values(seekingRole).filter((role): role is PartnerRole => seekingPartnerRoles.some(known => known === role)),
+    regions: values(region).filter(value => regionNamesWithoutNationwide.some(known => known === value)) }
   const managing = management === '1'
   return <>
     <Stack.Screen options={{ title: managing ? screenTitles.partnerManagement : screenTitles.publicPartners, headerRight: managing ? () => null : () => <CollaborationHeaderAction /> }} />
-    <CollaborationScreen management={managing} onManagementTabChange={tab => router.setParams({
+    <CollaborationScreen key={JSON.stringify(initialQuery)} initialQuery={initialQuery} management={managing} onManagementTabChange={tab => router.setParams({
       view: tab === 'mine' ? 'recruitments' : 'box', box: tab === 'mine' ? box ?? 'received' : tab, mine: tab === 'mine' ? '1' : '0',
     })} view={managing ? mine === '1' ? 'recruitments' : 'box' : view === 'box' ? 'box' : 'recruitments'}
       initialBox={box === 'sent' ? 'sent' : 'received'} mineOnly={mine === '1'}

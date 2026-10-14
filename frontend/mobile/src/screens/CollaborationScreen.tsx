@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Alert, FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { partnerRoleLabels, seekingPartnerRoles, type PartnerRecruitmentSummary } from '@govbiz/shared/domain/entities/PartnerRecruitment'
@@ -22,7 +22,8 @@ type BoxState = { owner: string | null; page: PartnerProposalBoxPage | null; loa
 const emptyRecruitments = (owner: string | null, mineOnly = false): RecruitmentState => ({ owner, mineOnly, items: [], total: 0, totalPages: 0, loading: true, error: null })
 const emptyBox = (owner: string | null): BoxState => ({ owner, page: null, loading: true, error: null })
 
-export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpenRecruitment, onLogin, initialBox = 'received', mineOnly = false, management = false, onManagementTabChange }: {
+export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpenRecruitment, onLogin, initialQuery, initialBox = 'received', mineOnly = false, management = false, onManagementTabChange }: {
+  initialQuery?: Pick<PartnerRecruitmentQuery, 'keyword' | 'seekingRoles' | 'regions'>
   initialBox?: PartnerProposalBox; mineOnly?: boolean; management?: boolean; onManagementTabChange?(tab: 'received' | 'sent' | 'mine'): void
   view: ViewMode; onViewChange(value: ViewMode): void; onPendingCount?(count: number): void
   onOpenRecruitment(id: number): void; onLogin(): void
@@ -30,8 +31,8 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
   const { session, status, invalidateSession } = useAuth()
   const scrollBoundary = useScrollBoundary(true)
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
-  const [query, setQuery] = useState<PartnerRecruitmentQuery>({ ...defaultPartnerRecruitmentQuery, mineOnly })
-  const [keyword, setKeyword] = useState('')
+  const [query, setQuery] = useState<PartnerRecruitmentQuery>({ ...defaultPartnerRecruitmentQuery, ...initialQuery, mineOnly })
+  const [keyword, setKeyword] = useState(initialQuery?.keyword ?? '')
   const [box, setBox] = useState<PartnerProposalBox>(initialBox)
   const [filter, setFilter] = useState<ProposalFilter>('all')
   const [recruitmentState, setRecruitmentState] = useState<RecruitmentState>(() => emptyRecruitments(token, mineOnly))
@@ -252,11 +253,11 @@ function FilterChip({ label, selected, onPress }: { label: string; selected: boo
     onPress={onPress} style={[local.chip, selected && local.selectedChip]}><Text style={[styles.muted, selected && { color: colors.primary }]}>{label}</Text></Pressable>
 }
 
-function RecruitmentCard({ item, onOpen }: { item: PartnerRecruitmentSummary; onOpen(): void }) {
+export function RecruitmentCard({ item, onOpen, disabled = false, children }: { item: PartnerRecruitmentSummary; onOpen(): void; disabled?: boolean; children?: ReactNode }) {
   return <Card>
     <View style={local.cardTop}><StatusBadge label={item.status === 'OPEN' ? '모집 중' : '모집 마감'} tone={item.status === 'OPEN' ? 'info' : 'neutral'} />
       <RecruitmentDeadline date={item.recruitmentDeadline} />
-      <View style={{ flex: 1 }} /><Button label="상세 보기" size="small" variant="secondary" onPress={onOpen} /></View>
+      <View style={{ flex: 1 }} /><Button label="상세 보기" size="small" variant="secondary" disabled={disabled} onPress={onOpen} /></View>
     <Text style={styles.heading}>{item.title}</Text>
     <Text style={styles.muted}>{item.program.title}</Text>
     <View style={local.author}><Text style={local.avatar}>{item.company.companyName.slice(0, 1)}</Text>
@@ -266,6 +267,7 @@ function RecruitmentCard({ item, onOpen }: { item: PartnerRecruitmentSummary; on
       <Text style={styles.muted}>{partnerRoleLabels[item.seekingRole]} {item.seekingCount}곳</Text></View>
       <View style={local.footItem}><AppIcon name="message" color={colors.muted} size={16} />
         <Text style={styles.muted}>제안 {item.proposalCount}건</Text></View></View>
+    {children}
   </Card>
 }
 

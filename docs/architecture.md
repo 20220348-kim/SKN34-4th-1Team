@@ -383,7 +383,11 @@ AI Service는 호스트에 포트를 게시하지 않습니다. MySQL·Qdrant·C
 실행·미확인 요청 복구는 기존 모바일 API·유스케이스가 소유하며 카드를 접으면 입력을 보존하고 조회·폴링을 멈춥니다.
 최신 카드·선택 공고·현재 계정 권한을 확인하고 선택 공고·Gov 메시지·저장 검토 ID를 기존 대화 스냅샷에 보관합니다.
 파트너 조건은 대화 기록에 보존하고 `GovAgentMessage → 모바일 partners API → shared 추천 유스케이스·DTO → Core 추천 GET API`로
-모집글 세 건을 조회합니다. 상세·전체 목록은 기존 협업 화면으로 연결하며 일반 회원의 대화와 웹의 기존 UI는 유지합니다.
+모집글 세 건을 조회합니다. 모바일 `GovPartnerBrief`는 웹과 같은 기업·협업 설정 안내, 대화 조건 해제·재조회,
+추천 이유·확인사항, 조건 완화와 모집글 없는 관심 공고의 작성 진입을 제공합니다. 상세는 기존 협업 상세로,
+전체 목록은 웹과 같이 역할·지역·첫 분야 검색어를 전달합니다(선택 공고와 나머지 분야 말은 목록 필터가 아닙니다).
+`/partner/new`의 공고 복합 식별자는 기존 관심 공고 조회에서 접수 상태를 확인한 뒤 선택하며 임의 공고나 마감 공고를 대신 고르지 않습니다.
+HTTP·DB·공통 DTO 계약과 일반 회원 대화는 유지합니다.
 `ChatPage → 기존 chat Redux 요청 수명 관리 → shared GovAgent API → Core AdminPrincipal → GovAgentService →
 AiGovAgentClient → AI GovAgentSupervisor → OpenAI`가 한 턴의 위임 경로를 정합니다.
 Core는 `SEARCH`이면 기존 조건 해석 Service로 제안을 준비하고 사용자의 확인 후 기존 검색 API가 실행되게 합니다.
