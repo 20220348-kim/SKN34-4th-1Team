@@ -505,6 +505,7 @@ describe('계정 화면', () => {
     expect(within(sidebar).getByRole('button', { name: '로그아웃' })).toBeTruthy()
     expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
     expect(within(sidebar).queryByRole('link', { name: '감사 기록' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: 'LLMOps' })).toBeNull()
   })
 })
 
@@ -561,6 +562,10 @@ describe('작업 화면 사이드바', () => {
     const accountMenu = document.getElementById(accountButton.getAttribute('aria-controls')!)!
     expect(within(accountMenu).getByRole('link', { name: '내 프로필' })).toBeTruthy()
     expect(within(accountMenu).getByRole('button', { name: '로그아웃' })).toBeTruthy()
+    expect(within(accountMenu).getAllByRole('link').map((link) => link.textContent)).toEqual(['내 프로필', '회원 관리', '감사 기록', 'LLMOps'])
+    const opsLink = within(accountMenu).getByRole('link', { name: 'LLMOps' })
+    expect(opsLink.getAttribute('href')).toBe('/ops/evaluations')
+    expect(opsLink.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
     const adminLink = within(accountMenu).getByRole('link', { name: '회원 관리' })
     expect(adminLink.getAttribute('href')).toBe('/app/admin/accounts')
     expect(adminLink.getAttribute('aria-current')).toBeNull()
@@ -568,6 +573,7 @@ describe('작업 화면 사이드바', () => {
     fireEvent.click(adminLink)
     // 사이드바 메뉴 이름과 화면 제목이 같습니다.
     expect(screen.getByRole('heading', { level: 1, name: '회원 관리' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'LLMOps 운영' })).toBeNull()
     expect(accountButton.getAttribute('aria-expanded')).toBe('false')
     expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
 
@@ -584,6 +590,9 @@ describe('작업 화면 사이드바', () => {
     fireEvent.click(accountButton)
     expect(within(sidebar).getByRole('link', { name: '감사 기록' }).getAttribute('aria-current')).toBe('page')
     expect(within(sidebar).getByRole('link', { name: '회원 관리' }).getAttribute('aria-current')).toBeNull()
+    fireEvent.click(within(sidebar).getByRole('link', { name: 'LLMOps' }))
+    expect(screen.getByRole('navigation', { name: '운영 메뉴' })).toBeTruthy()
+    expect(screen.queryByRole('complementary', { name: '작업 사이드바' })).toBeNull()
   })
 
   it('관리자 계정 메뉴를 Escape나 바깥 클릭으로 닫으면 회원 관리 링크도 숨긴다', () => {

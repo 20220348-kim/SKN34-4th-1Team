@@ -18,7 +18,7 @@ import { appSidebarStyles, sidebarMenuItemClassName } from './AppSidebar.styles'
 import { sidebarMenuState } from './useWorkspaceLayoutViewModel'
 import type { ChatHistoryViewModel } from '../../features/chat/hooks/useChatHistory'
 
-type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'contact' | 'inbox' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash'
+type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'contact' | 'inbox' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash' | 'llmops'
 
 /** 사이드바 메뉴 한 줄입니다. `to`가 없으면 아직 화면이 없는 메뉴이므로 링크로 만들지 않습니다. */
 type MenuItem = {
@@ -58,6 +58,7 @@ const iconPaths: Record<MenuIcon, ReactNode> = {
   search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
   newChat: <><path d="M12 4H6a3 3 0 0 0-3 3v11a3 3 0 0 0 3 3h11a3 3 0 0 0 3-3v-6" /><path d="m16 3 5 5-9 9H7v-5Z" /></>,
   panel: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></>,
+  llmops: <><rect x="3" y="3" width="18" height="14" rx="2" /><path d="M6 10h3l2-4 2 8 2-4h3M12 17v4M8 21h8" /></>,
   pricing: (
     <>
       <rect x="3" y="5" width="18" height="14" rx="3" />
@@ -148,7 +149,7 @@ function tierLabel(account: Account): string {
 /**
  * 로그인 뒤 작업 화면의 사이드바입니다. 공용 헤더를 대신해 화면 이동과 계정 진입점을 담당합니다.
  * 계정 정보는 세션에서 읽고, 관리자 메뉴는 관리자에게만 그리며, 화면이 없는 메뉴는 링크로 만들지 않습니다.
- * 로그인한 사용자는 `/app` 아래에만 머무르므로 공개 화면으로 가는 링크는 두지 않습니다.
+ * 업무 메뉴는 `/app` 내부로 연결하고, 관리자는 계정 메뉴에서 `/ops` 운영 화면도 열 수 있습니다.
  */
 export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history, onOpenHistory, onDeleteHistory }: {
   onClose: () => void
@@ -175,7 +176,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
   const detailFromPreparations = detailReturnTo !== null && isApplicationPreparationsReturnTo(detailReturnTo)
   const detailFromReports = detailReturnTo !== null && isReportsReturnTo(detailReturnTo)
   const isSearchPage = pathname === appPaths.chat || (isDetailPage && !detailFromSavedPrograms && !detailFromPreparations && !detailFromReports)
-  // 계정 카드를 누르면 내 프로필·로그아웃과 관리자 전용 회원 관리 메뉴가 열립니다.
+  // 계정 카드를 누르면 내 프로필·로그아웃과 관리자 전용 회원 관리·감사 기록·LLMOps 메뉴가 열립니다.
   // 화면을 옮기거나 Esc·바깥 클릭이면 닫힙니다.
   const accountMenuId = useId()
   const accountRef = useRef<HTMLDivElement>(null)
@@ -346,6 +347,10 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                   >
                     <MenuIconGraphic name="document" />
                     <span>{screenTitles.adminAuditLogs}</span>
+                  </Link>
+                  <Link className={sidebarMenuItemClassName('inactive')} to="/ops/evaluations">
+                    <MenuIconGraphic name="llmops" />
+                    <span>LLMOps</span>
                   </Link>
                   {/* AI 비용 메뉴는 잠시 숨깁니다. 화면은 /app/admin/ai-costs 주소로 그대로 열립니다. 다시 보이려면 아래 주석만 풉니다.
                   <Link
