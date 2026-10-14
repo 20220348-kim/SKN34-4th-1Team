@@ -42,6 +42,12 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 describe('정기 접수 관리자 설정', () => {
   it('꺼진 상태에도 설정과 별도 유료 차단을 보여주며 선택·확인만으로 저장하지 않는다', async () => {
     const fetch = setup(); mount()
+    const state = await screen.findByRole('combobox', { name: '변경할 정기 접수 상태', description: /준비 중에는 비활성을 유지/ })
+    expect((state as HTMLSelectElement).value).toBe('disabled')
+    expect(screen.getByRole('textbox', { name: '정기 접수 변경 사유', description: /500자 이내/ })).toBeTruthy()
+    expect(screen.getByText(/실제 모델 API 호출을 허용하는 서버 설정/)).toBeTruthy()
+    expect(screen.getByText(/RAG 경로의 추가 서버 설정/)).toBeTruthy()
+    expect(posts(fetch)).toHaveLength(0)
     await choose()
     expect(screen.getAllByText('서버에서 차단됨')).toHaveLength(2)
     expect(screen.getByText(/서버 초기 설정/)).toBeTruthy()
