@@ -69,6 +69,29 @@ const dashboardReviewStatusSchema = z.object({
     .refine((value) => value.status === 'none' ? value.run_id === null : value.run_id !== null),
 })
 export type DashboardReviewStatus = z.infer<typeof dashboardReviewStatusSchema>
+const scheduleRuntimeSchema = z.object({
+  scope: z.literal('deployment_configuration'), storage_transport: z.enum(['http', 'filesystem']),
+  status: z.enum(['PASS', 'FAIL']),
+  checks: z.object({
+    evidence: z.enum(['PASS', 'FAIL']), results_directory: z.enum(['PASS', 'FAIL']),
+    prefect_deployment: z.enum(['PASS', 'FAIL']), result_artifact: z.enum(['NOT_CHECKED', 'PASS', 'FAIL']),
+  }),
+  evaluation_executed: z.literal(false), runner_liveness_verified: z.literal(false),
+  shared_volume_identity_verified: z.literal(false), result_artifact_verified: z.boolean(),
+}).refine((value) => value.status === (Object.values(value.checks).includes('FAIL') ? 'FAIL' : 'PASS')
+  && value.result_artifact_verified === (value.checks.result_artifact === 'PASS'))
+export type ScheduleRuntime = z.infer<typeof scheduleRuntimeSchema>
+const scheduleSettingsChangeSchema = z.object({
+  request_id: z.uuid(), revision: z.number().int().positive(), enabled: z.boolean(), previous_enabled: z.boolean(),
+  actor: z.string().min(1), reason: z.string().min(1), created_at: z.iso.datetime({ offset: true }),
+})
+const scheduleSettingsSchema = z.object({
+  enabled: z.boolean(), revision: z.number().int().nonnegative(), source: z.enum(['environment', 'admin']),
+  live_enabled: z.boolean(), rag_live_enabled: z.boolean(), changes: z.array(scheduleSettingsChangeSchema),
+}).refine((value) => (value.source === 'environment' ? value.revision === 0 : value.revision > 0)
+  && value.changes.every((change) => change.revision <= value.revision))
+export type ScheduleSettings = z.infer<typeof scheduleSettingsSchema>
+export type ScheduleSettingsInput = { request_id: string; expected_revision: number; enabled: boolean; reason: string }
 const scheduleUsageSchema = z.object({ calls: z.number().int().positive(), input_tokens: z.number().int().positive(), output_tokens: z.number().int().positive() })
 const liveConfigSchema = z.object({
   document_vectors: z.record(z.string(), z.object({
@@ -622,12 +645,20 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     ? '평가 접수 상태를 확인할 수 없어 접수하지 않았습니다. 운영자에게 확인해 주세요.'
     : null
   if (admissionMessage) throw new OpsApiError(admissionMessage, response.status)
+  // 연결 점검은 정상적인 진단 실패도 HTTP 503으로 반환한다. 다른 503 오류와 구분한다.
+  if (path === '/runtime' && [200, 503].includes(response.status)) {
+    const parsed = schema.safeParse(body)
+    if (!parsed.success || body?.status !== (response.status === 200 ? 'PASS' : 'FAIL')) {
+      throw new OpsApiError('연결 설정 점검 응답을 확인할 수 없습니다. 다시 점검해 주세요.', response.status)
+    }
+    return parsed.data
+  }
   // 접수가 불확실한 503에는 저장된 요청이 담긴다. 요청 ID를 보존해 재확인한다.
   if (!response.ok && !(dispatch && response.status === 503)) {
     const error = body
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
-      : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT', 'SCHEDULE_DISABLED', 'SCHEDULE_BUDGET_UNAVAILABLE', 'EXECUTION_PROFILE_CHANGED', 'REVIEWED_BASELINE_REQUIRED', 'ACTIVE_SCHEDULE_EXISTS'].includes(error?.code) && typeof error?.detail === 'string'
+      : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT', 'SCHEDULE_SETTINGS_CONFLICT', 'SCHEDULE_DISABLED', 'SCHEDULE_BUDGET_UNAVAILABLE', 'EXECUTION_PROFILE_CHANGED', 'REVIEWED_BASELINE_REQUIRED', 'ACTIVE_SCHEDULE_EXISTS'].includes(error?.code) && typeof error?.detail === 'string'
         ? error.detail
       : path === '/evaluation-catalog' && error?.code === 'VECTOR_CACHE_UNAVAILABLE' ? '평가 자료에 연결된 저장 벡터를 확인할 수 없습니다. 잠시 후 다시 조회하세요.'
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
@@ -662,6 +693,13 @@ export const saveProductionReview = (id: string, data: ProductionReviewInput, ow
 export const saveProductionRegressionCandidate = (id: string, data: { request_id: string; version: number; material_sha256: string }, owner: string) => post(`/production-quality/${encodeURIComponent(id)}/regression-candidate`, data, productionDetailSchema.refine((value) => value.id === id && value.regression_candidate_id !== null), false, owner)
 export const getProductionRegressionCandidate = (id: string, signal?: AbortSignal) => request(`/production-quality/${encodeURIComponent(id)}/regression-candidate`, z.object({ schemaVersion: z.literal('production-regression-candidate-v1'), sample_id: z.uuid(), fixture_registered: z.literal(false), baseline_eligible: z.literal(false) }).passthrough().refine((value) => value.sample_id === id), { signal })
 export const getEvaluationSchedules = (page = 1, signal?: AbortSignal) => request(`/schedules?page=${page}`, schedulesPageSchema, { signal })
+export const getScheduleRuntime = (signal?: AbortSignal) => request('/runtime', scheduleRuntimeSchema, { signal, method: 'GET' })
+export const getScheduleSettings = (signal?: AbortSignal) => request('/schedules/settings', scheduleSettingsSchema, { signal })
+export const setScheduleSettings = (data: ScheduleSettingsInput, owner: string, signal?: AbortSignal) => post('/schedules/settings', data,
+  scheduleSettingsSchema.safeExtend({ change: scheduleSettingsChangeSchema }).refine(({ change, revision, enabled }) =>
+    change.request_id === data.request_id && change.actor === owner && change.reason === data.reason
+    && change.enabled === data.enabled && change.revision === data.expected_revision + 1
+    && revision >= change.revision && (revision !== change.revision || enabled === change.enabled)), false, owner, 'POST', signal)
 export const createEvaluationSchedule = (data: ScheduleInput, owner: string) => post('/schedules', data,
   scheduleSchema.refine((value) => value.id === data.request_id && value.requested_by === owner
     && value.daily_at === data.daily_at && value.starts_on === data.starts_on && value.ends_on === data.ends_on
@@ -701,13 +739,14 @@ export const applyLegacyUsage = (runId: string, data: LegacyUsageInput, owner: s
     && record.request_id === data.request_id && record.reason === data.reason
     && record.evidence_sha256 === data.evidence_sha256), false, owner)
 
-async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false, owner?: string, method = 'POST') {
+async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false, owner?: string, method = 'POST', signal?: AbortSignal) {
   // 쓰기 전 Core 관리자 세션과 최신 CSRF 토큰을 확인한다. 토큰·비밀번호는 저장하지 않는다.
-  const session = await getOpsSession()
+  const session = await getOpsSession(signal)
+  signal?.throwIfAborted()
   if (!session.user) throw new OpsApiError('로그인이 만료되었습니다.', 401)
   if (owner && session.user.id !== owner) throw new OpsApiError('로그인 계정이 변경되었습니다. 요청 계정을 다시 확인하세요.', 403)
   return request(path, schema, {
-    method, headers: { 'Content-Type': 'application/json', 'X-CSRFToken': session.csrf_token },
+    method, ...(signal ? { signal } : {}), headers: { 'Content-Type': 'application/json', 'X-CSRFToken': session.csrf_token },
     body: JSON.stringify(data),
   }, dispatch)
 }

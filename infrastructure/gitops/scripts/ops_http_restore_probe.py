@@ -13,6 +13,7 @@ import time
 from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 BROWSER_ORIGIN = "http://127.0.0.1:5173"
@@ -329,6 +330,44 @@ def check_management(expected, principal, token, member_token, total_runs):
         schedules.get("results"), list
     ):
         raise ValueError("Restored management schedules must remain disabled")
+    schedule_settings = get("/api/v1/ops/schedules/settings")
+    if (
+        schedule_settings.get("enabled") is not schedules["enabled"]
+        or schedule_settings.get("live_enabled") is not False
+        or schedule_settings.get("rag_live_enabled") is not False
+    ):
+        raise ValueError(
+            "Restored schedule settings must preserve disabled paid guards"
+        )
+    # The disabled schedule form still reads its first eligible dataset's readiness.
+    # Capture that exact GET for browser replay; no plan or model call is submitted.
+    selected = next(
+        (
+            item
+            for item in catalog["datasets"]
+            if item.get("live_config")
+            and item.get("execution_profiles", {}).get("live")
+        ),
+        None,
+    )
+    if selected is not None:
+        params = {
+            "dataset_id": selected["id"],
+            "execution_profile": selected["execution_profiles"]["live"],
+            "model": selected["live_config"]["model"],
+        }
+        readiness = get("/api/v1/ops/evaluations/live-readiness?" + urlencode(params))
+        if (
+            any(readiness.get(key) != value for key, value in params.items())
+            or readiness.get("state") != "blocked"
+            or not any(
+                item.get("code") == "LIVE_DISABLED"
+                for item in readiness.get("blockers", [])
+            )
+        ):
+            raise ValueError(
+                "Restored schedule readiness must retain disabled paid evaluation"
+            )
     if (
         not isinstance(budget.get("results"), list)
         or budget.get("summary", {}).get("state") != "consistent"

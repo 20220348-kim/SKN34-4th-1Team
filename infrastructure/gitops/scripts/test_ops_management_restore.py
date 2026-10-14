@@ -55,6 +55,14 @@ class ManagementTests(unittest.TestCase):
                 "total": 0,
                 "results": [],
             },
+            "/api/v1/ops/schedules/settings": {
+                "enabled": False,
+                "revision": 0,
+                "source": "environment",
+                "live_enabled": False,
+                "rag_live_enabled": False,
+                "changes": [],
+            },
             "/api/v1/ops/session": {
                 "user": {"id": "core:1", "username": self.principal["email"]},
                 "csrf_token": "live-test-csrf",
@@ -136,11 +144,96 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["matched_details"], 3)
         self.assertFalse(result["evidence"]["browser_rendered"])
         self.assertNotIn("live-test-csrf", json.dumps(result))
-        self.assertEqual(len(result["responses"]), 14)
+        self.assertEqual(len(result["responses"]), 15)
+        settings_route = "/api/v1/ops/schedules/settings"
+        self.assertEqual(
+            result["responses"][settings_route], self.routes[settings_route]
+        )
+        for token in (None, "member-token", "invalid-fixture", "admin-token"):
+            self.assertIn((settings_route, token), self.calls)
         for row in self.rows[:3]:
             route = "/api/v1/ops/evaluations/" + row["id"] + "/review"
             self.assertIn((route, "member-token"), self.calls)
             self.assertIn(route, result["responses"])
+
+    def test_schedule_settings_cannot_enable_or_disagree_with_disabled_schedule_listing(
+        self,
+    ):
+        route = "/api/v1/ops/schedules/settings"
+        original = copy.deepcopy(self.routes[route])
+        for key in ("enabled", "live_enabled", "rag_live_enabled"):
+            for value in (True, None, 0, "false"):
+                self.routes[route] = {**original, key: value}
+                with (
+                    self.subTest(key=key, value=value),
+                    self.assertRaisesRegex(ValueError, "schedule settings"),
+                ):
+                    self.verify()
+
+    def schedule_readiness(self):
+        dataset = {
+            "id": "test",
+            "live_config": {"model": "gpt-6-luna"},
+            "execution_profiles": {"live": "a" * 64},
+        }
+        self.routes["/api/v1/ops/evaluation-catalog"]["datasets"] = [
+            {"id": "replay-only", "live_config": None},
+            dataset,
+        ]
+        params = {
+            "dataset_id": dataset["id"],
+            "execution_profile": dataset["execution_profiles"]["live"],
+            "model": dataset["live_config"]["model"],
+        }
+        route = "/api/v1/ops/evaluations/live-readiness?" + probe.urlencode(params)
+        self.routes[route] = {
+            **params,
+            "state": "blocked",
+            "blockers": [{"code": "LIVE_DISABLED", "message": "유료 평가 비활성"}],
+        }
+        return route
+
+    def test_disabled_form_readiness_is_captured_with_exact_selection_and_auth_checks(
+        self,
+    ):
+        route = self.schedule_readiness()
+        result = self.verify()
+        self.assertEqual(result["responses"][route], self.routes[route])
+        self.assertEqual(len(result["responses"]), 16)
+        for token in (None, "member-token", "invalid-fixture", "admin-token"):
+            self.assertIn((route, token), self.calls)
+
+    def test_disabled_form_readiness_cannot_claim_paid_execution_is_ready(self):
+        route = self.schedule_readiness()
+        original = copy.deepcopy(self.routes[route])
+        for key, value in (
+            ("dataset_id", "other"),
+            ("execution_profile", "b" * 64),
+            ("model", "different-model"),
+            ("state", "checked"),
+            ("blockers", []),
+        ):
+            self.routes[route] = {**original, key: value}
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, "schedule readiness"),
+            ):
+                self.verify()
+
+    def test_schedule_settings_http_failure_and_member_bypass_cannot_pass(self):
+        route = "/api/v1/ops/schedules/settings"
+        for defect in ("unavailable", "member"):
+
+            def broken(path, token=None, defect=defect):
+                if path == route:
+                    if defect == "unavailable" and token == "admin-token":
+                        return 503, {}, b"{}"
+                    if defect == "member" and token == "member-token":
+                        token = "admin-token"
+                return self.response(path, token)
+
+            with self.subTest(defect=defect), self.assertRaises(ValueError):
+                self.verify(broken)
 
     def rag_review(self):
         row = self.rows[0]
@@ -322,7 +415,10 @@ class ManagementTests(unittest.TestCase):
         self.assertNotIn("datasets", result["responses"]["/api/v1/ops/session"])
         for value in ({}, {"datasets": []}, {"datasets": None}):
             self.routes[route] = value
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "catalog"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "catalog"),
+            ):
                 self.verify()
 
     def test_api_failure_cacheable_json_and_paid_budget_cannot_pass(self):

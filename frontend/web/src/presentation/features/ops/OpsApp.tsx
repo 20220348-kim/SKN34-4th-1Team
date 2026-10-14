@@ -15,6 +15,7 @@ import { EvaluationDatasetPicker } from './EvaluationDatasetPicker'
 import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { LiveReadinessPanel } from './LiveReadinessPanel'
 import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
+import { ScheduleSettingsPanel } from './ScheduleSettingsPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 import { PerformanceDashboard } from './PerformanceDashboard'
 import { EvaluationReport } from './EvaluationReport'
@@ -154,7 +155,7 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
         <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
         <Route path="/ops/evaluations/:runId/report" element={<EvaluationReport key={location.pathname} onExpired={onExpired} />} />
         <Route path="/ops/budget" element={<><WorkspacePageHeader title="예산 관리" /><div className={styles.content}><p className="text-sm text-ink-muted">누적·일별 한도와 예약·사용 내역을 확인하고 관리합니다.</p><BudgetOverview onExpired={onExpired} refreshKey={0} operatorId={session.user!.id} /></div></>} />
-        <Route path="/ops/schedules" element={<EvaluationCatalogContent key="schedules" title="정기 실행" onExpired={onExpired}>{(datasets) => <><WorkspacePageHeader title="정기 실행" /><div className={styles.content}><EvaluationSchedulesPanel owner={session.user!.id} datasets={datasets} onExpired={onExpired} refreshKey={0} /></div></>}</EvaluationCatalogContent>} />
+        <Route path="/ops/schedules" element={<EvaluationSchedulesPage owner={session.user!.id} onExpired={onExpired} />} />
         <Route path="*" element={<Navigate replace to={dashboardPath} />} />
       </Routes>}
     </main>
@@ -162,8 +163,8 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
 }
 
 // 자료가 필요한 화면에 진입할 때만 조회한다. 경로·계정이 바뀌면 진행 중인 조회를 취소한다.
-function EvaluationCatalogContent({ title, onExpired, children }: {
-  title: string; onExpired: () => void; children: (datasets: EvaluationCatalog['datasets']) => ReactNode;
+function EvaluationCatalogContent({ title, onExpired, children, embedded = false }: {
+  title: string; onExpired: () => void; children: (datasets: EvaluationCatalog['datasets']) => ReactNode; embedded?: boolean;
 }) {
   const [catalog, setCatalog] = useState<EvaluationCatalog | null>(null)
   const [error, setError] = useState('')
@@ -182,11 +183,20 @@ function EvaluationCatalogContent({ title, onExpired, children }: {
     return () => controller.abort()
   }, [revision])
   if (catalog) return children(catalog.datasets)
-  return <><WorkspacePageHeader title={title} /><div className={styles.content}>
-    {error ? <section className={styles.card} aria-label="평가 자료 조회 오류">
+  const fallback = error ? <section className={styles.card} aria-label="평가 자료 조회 오류">
       <p role="alert">평가 자료를 불러오지 못했습니다. {error}</p>
       <button className={`${styles.secondaryButton} mt-3`} onClick={() => setRevision((value) => value + 1)}>평가 자료 다시 불러오기</button>
-    </section> : <p role="status">평가 자료와 실행 조건을 불러오고 있습니다. 다른 운영 메뉴는 이용할 수 있습니다.</p>}
+    </section> : <p role="status">평가 자료와 실행 조건을 불러오고 있습니다. 다른 운영 메뉴는 이용할 수 있습니다.</p>
+  return embedded ? fallback : <><WorkspacePageHeader title={title} /><div className={styles.content}>{fallback}</div></>
+}
+
+function EvaluationSchedulesPage({ owner, onExpired }: { owner: string; onExpired: () => void }) {
+  const [revision, setRevision] = useState(0)
+  return <><WorkspacePageHeader title="정기 실행" /><div className={styles.content}>
+    <ScheduleSettingsPanel owner={owner} onExpired={onExpired} onSaved={() => setRevision((value) => value + 1)} />
+    <EvaluationCatalogContent title="정기 실행" onExpired={onExpired} embedded>{(datasets) =>
+      <EvaluationSchedulesPanel owner={owner} datasets={datasets} onExpired={onExpired} refreshKey={revision} />
+    }</EvaluationCatalogContent>
   </div></>
 }
 

@@ -1,6 +1,5 @@
 """기존 Core 관리자 세션과 CSRF로 승인하는 일별 평가 계획 API."""
 
-from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
@@ -13,6 +12,7 @@ from .artifact_store import ResultsUnavailable
 from .budget import BudgetUnavailable
 from .catalog import DATASETS
 from .models import EvaluationSchedule
+from .schedule_settings import change_settings, enabled, status
 from .schedules import SEOUL, ScheduleBlocked, create_schedule, pause_schedule
 from .services import RequestConflict
 
@@ -37,6 +37,39 @@ class ScheduleSerializer(ScheduleReasonSerializer):
     daily_at = serializers.TimeField(input_formats=["%H:%M"])
     starts_on = serializers.DateField()
     ends_on = serializers.DateField()
+
+
+class ScheduleSettingsSerializer(ScheduleReasonSerializer):
+    expected_revision = serializers.IntegerField(min_value=0, max_value=2**53 - 2)
+    enabled = serializers.BooleanField()
+
+
+@never_cache
+@api_view(["GET", "POST"])
+def api_schedule_settings(request):
+    if request.method == "GET":
+        return Response(status())
+    data = ScheduleSettingsSerializer(data=request.data)
+    if (
+        not isinstance(request.data, dict)
+        or set(request.data) - set(data.fields)
+        or type(request.data.get("enabled")) is not bool
+        or type(request.data.get("expected_revision")) is not int
+        or not isinstance(request.data.get("reason"), str)
+    ):
+        raise serializers.ValidationError("정기 접수 설정의 허용된 항목과 형식을 확인하세요.")
+    data.is_valid(raise_exception=True)
+    try:
+        result = change_settings(user=request.user, **data.validated_data)
+    except RequestConflict:
+        return Response(
+            {
+                "code": "SCHEDULE_SETTINGS_CONFLICT",
+                "detail": "설정 또는 요청 내용이 변경됐습니다. 현재 상태를 다시 확인하세요.",
+            },
+            status=409,
+        )
+    return Response(result)
 
 
 def schedule_data(schedule):
@@ -98,7 +131,7 @@ def api_schedules(request):
         )
         return Response(
             {
-                "enabled": settings.LLMOPS_SCHEDULES_ENABLED,
+                "enabled": enabled(),
                 "timezone": "Asia/Seoul",
                 "page": page,
                 "total": rows.count(),

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { EvaluationSchedule, ScheduleInput } from '../../../data/ops/opsApi'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { EvaluationCatalog, EvaluationSchedule, ScheduleInput } from '../../../data/ops/opsApi'
 import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
 
 const owner = 'core:81'
@@ -26,15 +26,15 @@ const initial = { request_id: id, dataset_id: dataset.id, reference_capture_id: 
   live_config: config, confirm_paid_run: true as const, daily_at: '09:00', starts_on: '2026-10-03', ends_on: '2026-10-05', reason: '3일 승인' }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const session = { user: { id: owner, username: '관리자' }, csrf_token: 'schedule-csrf', live_enabled: true, datasets: [dataset] }
-const mount = () => {
+const mount = (datasets: EvaluationCatalog['datasets'] = [dataset]) => {
   const onExpired = vi.fn()
-  render(<MemoryRouter><EvaluationSchedulesPanel owner={owner} datasets={[dataset]} onExpired={onExpired} refreshKey={0} /></MemoryRouter>)
+  render(<MemoryRouter><EvaluationSchedulesPanel owner={owner} datasets={datasets} onExpired={onExpired} refreshKey={0} /></MemoryRouter>)
   return onExpired
 }
-const setup = ({ enabled = true, rows = [] as EvaluationSchedule[], write = async (input: ScheduleInput) => json(result(input)) } = {}) => {
+const setup = ({ enabled = true, rows = [] as EvaluationSchedule[], readinessResult = readiness as unknown, write = async (input: ScheduleInput) => json(result(input)) } = {}) => {
   const fetch = vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith('/session')) return json(session)
-    if (url.includes('/live-readiness?')) return json(readiness)
+    if (url.includes('/live-readiness?')) return json(readinessResult)
     if (url.includes('/schedules?page=')) return json({ enabled, timezone: 'Asia/Seoul', page: 1, total: rows.length, results: rows })
     return write(JSON.parse(options!.body as string))
   })
@@ -46,18 +46,141 @@ const fill = async () => {
   fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-03' } })
   fireEvent.change(screen.getByLabelText('종료일'), { target: { value: '2026-10-05' } })
   fireEvent.change(screen.getByLabelText('정기 계획 승인 사유'), { target: { value: '3일 승인' } })
+  await waitFor(() => expect(screen.getByRole('checkbox')).toHaveProperty('disabled', false))
   fireEvent.click(screen.getByRole('checkbox'))
   await waitFor(() => expect((screen.getByRole('button', { name: '정기 계획 내용 확인' }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: '정기 계획 내용 확인' }))
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(at)) })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('일별 정기 평가 계획', () => {
-  it('비활성 상태에서는 유료 승인 폼을 열지 않고 기존 계획을 표시한다', async () => {
-    const fetch = setup({ enabled: false }); mount()
-    await screen.findByText(/정기 접수가 비활성화/)
-    expect(screen.queryByLabelText('정기 계획 승인 사유')).toBeNull()
+  it('비활성 상태에도 설정 항목과 기존 계획·읽기 전용 점검을 표시하고 유료 승인은 막는다', async () => {
+    const fetch = setup({ enabled: false, rows: [result(initial)] }); mount()
+    await screen.findByText(/정기 접수: 비활성화/)
+    await screen.findByRole('table', { name: '회당 최대량과 누적·일별 예산' })
+    expect(screen.getByLabelText('정기 계획 승인 사유').closest('fieldset')).toHaveProperty('disabled', false)
+    fireEvent.change(screen.getByLabelText('정기 계획 승인 사유'), { target: { value: '나중에 승인할 설정' } })
+    expect(screen.getByLabelText('정기 계획 승인 사유')).toHaveProperty('value', '나중에 승인할 설정')
+    expect(screen.getByLabelText('고정 모델')).toHaveProperty('readOnly', true)
+    expect(screen.getByLabelText('고정 비교 기준')).toHaveProperty('readOnly', true)
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '정기 계획 내용 확인' })).toHaveProperty('disabled', true)
+    expect(screen.getByText('공통 E01 · 승인된 계획')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '예산 관리에서 한도 확인' }).getAttribute('href')).toBe('/ops/budget')
+    expect(screen.getByRole('link', { name: '평가 이력에서 비교 기준 확인' }).getAttribute('href')).toBe('/ops/evaluations')
+    expect(fetch.mock.calls.some(([url]) => url.includes('/live-readiness?'))).toBe(true)
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true)
+  })
+  it('비교 기준이 없는 자료도 선택해 부족 조건을 확인하며 등록하지 않는다', async () => {
+    const missingBaseline = { ...dataset, id: 'fixed-context-e02-v1', label: '기준 미지정 자료', baseline: null }
+    const fetch = vi.fn(async (url: string) => url.includes('/live-readiness?')
+      ? json({ ...readiness, dataset_id: new URL(url, 'https://govbiz.test').searchParams.get('dataset_id') })
+      : json({ enabled: true, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] }))
+    vi.stubGlobal('fetch', fetch)
+    mount([dataset, missingBaseline])
+    await waitFor(() => expect(screen.getByRole('checkbox')).toHaveProperty('disabled', false))
+    fireEvent.change(screen.getByLabelText('정기 평가 자료'), { target: { value: missingBaseline.id } })
+    await screen.findByText('설정·예산 점검: 조회 완료')
+    expect(screen.getByText(/비교 기준: 미지정/)).toBeTruthy()
+    expect(screen.getByLabelText('고정 비교 기준')).toHaveProperty('value', '미지정')
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(fetch.mock.calls.every(([url]) => !url.endsWith('/schedules'))).toBe(true)
+  })
+  it('자료가 없어도 입력 항목을 보여주고 이후 들어온 자료를 자동 선택한다', async () => {
+    const fetch = setup({ enabled: false })
+    const view = render(<MemoryRouter><EvaluationSchedulesPanel owner={owner} datasets={[]} onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    expect(screen.getByLabelText('정기 평가 자료')).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText('정기 계획 승인 사유')).toBeTruthy()
+    expect(screen.getByText(/새 모델 평가 설정이 있는 자료가 없습니다/)).toBeTruthy()
+    expect(fetch.mock.calls.some(([url]) => url.includes('/live-readiness?'))).toBe(false)
+    view.rerender(<MemoryRouter><EvaluationSchedulesPanel owner={owner} datasets={[dataset]} onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    await screen.findByRole('table', { name: '회당 최대량과 누적·일별 예산' })
+    expect(screen.getByLabelText('정기 평가 자료')).toHaveProperty('value', dataset.id)
+  })
+  it.each(['input', 'daily-disabled', 'daily-missing'] as const)('점검이 checked여도 정기 계획 필수 조건 %s가 없으면 승인을 차단한다', async (missing) => {
+    const value = missing === 'input'
+      ? { ...readiness, remaining: { ...remaining, input_tokens: null }, warnings: [{ code: 'INPUT_BUDGET_UNCONFIGURED', message: '누적 입력 토큰 한도가 설정되지 않았습니다.' }] }
+      : { ...readiness, daily: missing === 'daily-missing' ? undefined : { ...readiness.daily, state: 'disabled', remaining: null, allocated: null, current_day: null, carried: null } }
+    setup({ readinessResult: value }); mount()
+    await screen.findByText('설정·예산 점검: 조회 완료')
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '정기 계획 내용 확인' })).toHaveProperty('disabled', true)
+    if (missing === 'input') {
+      expect(screen.getByText(/정기 계획에는 누적 입력 토큰 한도가 필수/)).toBeTruthy()
+      expect(within(screen.getByRole('list', { name: '정기 계획 주의 사항' })).getByText('누적 입력 토큰 한도가 설정되지 않았습니다.')).toBeTruthy()
+    } else expect(screen.getByText(/일별 예산:.*정기 계획에는 일별 한도/)).toBeTruthy()
+  })
+  it('누적·일별 부족량과 차단 사유를 분리하고 실제 0과 미설정을 구분한다', async () => {
+    const dailyLeft = { calls: 0, input_tokens: 0, output_tokens: 0 }
+    setup({ enabled: false, readinessResult: { ...readiness, state: 'blocked', remaining: { ...dailyLeft, input_tokens: null },
+      daily: { ...readiness.daily, limits: dailyLeft, remaining: dailyLeft },
+      blockers: [{ code: 'LIVE_DISABLED', message: '선택한 새 모델 평가가 비활성화되어 있습니다.' }],
+      warnings: [{ code: 'INPUT_BUDGET_UNKNOWN', message: '미확인 과거 입력 사용량을 먼저 검토하세요.' }] } }); mount()
+    const table = await screen.findByRole('table', { name: '회당 최대량과 누적·일별 예산' })
+    const inputRow = within(table).getByRole('row', { name: '입력 토큰 32,768 확인 불가·미설정 0 0' })
+    expect(within(inputRow).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['32,768', '확인 불가·미설정', '0', '0'])
+    expect(screen.getByText('누적 호출 부족량: 1 · 회당 최대량 기준')).toBeTruthy()
+    expect(screen.getByText('오늘 일별 입력 토큰 부족량: 32,768 · 회당 최대량 기준')).toBeTruthy()
+    expect(within(screen.getByRole('list', { name: '정기 계획 차단 사유' })).getByText(/새 모델 평가가 비활성화/)).toBeTruthy()
+    expect(within(screen.getByRole('list', { name: '정기 계획 주의 사항' })).getByText(/미확인 과거 입력/)).toBeTruthy()
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+  })
+  it('새로고침 중·실패 후에는 이전 점검으로 승인하지 않고 GET 재조회만 수행한다', async () => {
+    let finish!: (value: Response) => void
+    const read = vi.fn().mockResolvedValueOnce(json(readiness)).mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve }))
+    const fetch = vi.fn(async (url: string) => url.includes('/live-readiness?') ? read() : json({ enabled: true, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] }))
+    vi.stubGlobal('fetch', fetch); mount()
+    await waitFor(() => expect(screen.getByRole('checkbox')).toHaveProperty('disabled', false))
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: '정기 계획 새로고침' }))
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
+    expect(screen.queryByRole('table', { name: '회당 최대량과 누적·일별 예산' })).toBeNull()
+    await act(async () => finish(json({ detail: '점검 서버 연결 실패' }, 503)))
+    await screen.findByText('설정·예산 점검: 조회 실패')
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '정기 계획 내용 확인' })).toHaveProperty('disabled', true)
+    expect(fetch.mock.calls.every(([url]) => url.includes('/live-readiness?') || url.includes('/schedules?page='))).toBe(true)
+  })
+  it.each(['dataset', 'profile'] as const)('%s 변경 뒤 늦게 도착한 이전 준비 상태를 폐기한다', async (changed) => {
+    let finish!: (value: Response) => void
+    let checks = 0
+    const next = { ...dataset, id: changed === 'dataset' ? 'fixed-context-e02-v1' : dataset.id,
+      execution_profiles: { ...dataset.execution_profiles, live: changed === 'profile' ? 'f'.repeat(64) : dataset.execution_profiles.live } }
+    const fetch = vi.fn(async (url: string) => {
+      if (!url.includes('/live-readiness?')) return json({ enabled: true, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
+      checks += 1
+      if (checks === 1) return new Promise<Response>((resolve) => { finish = resolve })
+      return json({ ...readiness, dataset_id: next.id, execution_profile: next.execution_profiles.live, state: 'blocked', blockers: [{ code: 'LIVE_DISABLED', message: '변경된 설정은 평가 비활성 상태입니다.' }] })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const view = render(<MemoryRouter><EvaluationSchedulesPanel owner={owner} datasets={[dataset]} onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    await waitFor(() => expect(checks).toBe(1))
+    view.rerender(<MemoryRouter><EvaluationSchedulesPanel owner={owner} datasets={[next]} onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    await screen.findByText('변경된 설정은 평가 비활성 상태입니다.')
+    await act(async () => finish(json(readiness)))
+    expect(screen.getByText('변경된 설정은 평가 비활성 상태입니다.')).toBeTruthy()
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText('정기 평가 자료')).toHaveProperty('value', next.id)
+  })
+  it('정기 접수 상태 조회가 실패하면 예산 점검이 통과해도 승인하지 않는다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/live-readiness?') ? json(readiness) : json({ detail: '조회 실패' }, 503)))
+    mount()
+    await screen.findByText(/정기 접수 상태 조회 실패:/)
+    await screen.findByText('설정·예산 점검: 조회 완료')
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+  })
+  it.each([['2026-10-02', '2026-10-03'], ['2026-11-03', '2026-11-03'], ['2026-10-03', '2026-11-03']])('잘못된 승인 기간 %s ~ %s는 확인을 막는다', async (start, end) => {
+    setup(); mount()
+    await waitFor(() => expect(screen.getByRole('checkbox')).toHaveProperty('disabled', false))
+    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: start } })
+    fireEvent.change(screen.getByLabelText('종료일'), { target: { value: end } })
+    fireEvent.change(screen.getByLabelText('정기 계획 승인 사유'), { target: { value: '일정 준비' } })
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: '정기 계획 내용 확인' })).toHaveProperty('disabled', true)
+    expect(screen.getByText(/오늘부터 30일 안에 시작하는 1~31일 기간/)).toBeTruthy()
   })
   it('기간 전체 상한을 확인한 뒤 관리자·CSRF·고정 기준으로만 저장한다', async () => {
     const fetch = setup(); mount(); await fill()
@@ -78,6 +201,39 @@ describe('일별 정기 평가 계획', () => {
     await screen.findByRole('alert')
     expect(screen.queryByRole('button', { name: '정기 계획 수정' })).toBeNull()
     expect(screen.getByLabelText('정기 계획 승인 사유').closest('fieldset')!.disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '확인한 정기 계획 저장' }))
+    await screen.findByText(/정기 계획을 저장했습니다/)
+    expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1])
+  })
+  it('처음 전송하기 전 준비 조건이 바뀌면 최종 저장을 차단한다', async () => {
+    const value = { ...readiness, blockers: [] as { code: string; message: string }[] }
+    const fetch = setup({ readinessResult: value }); mount(); await fill()
+    value.state = 'blocked'; value.blockers = [{ code: 'LIVE_DISABLED', message: '새 모델 평가 비활성화' }]
+    fireEvent.click(screen.getByRole('button', { name: '정기 계획 새로고침' }))
+    await screen.findByText('새 모델 평가 비활성화')
+    expect(screen.getByRole('button', { name: '확인한 정기 계획 저장' })).toHaveProperty('disabled', true)
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0)
+  })
+  it('이미 전송한 승인 응답이 유실되면 이후 비활성화되어도 같은 UUID로 저장 여부를 재확인한다', async () => {
+    const writes: ScheduleInput[] = []
+    let enabled = true
+    const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/session')) return json(session)
+      if (url.includes('/live-readiness?')) return json(readiness)
+      if (url.includes('/schedules?page=')) return json({ enabled, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
+      const input = JSON.parse(options!.body as string) as ScheduleInput
+      writes.push(input)
+      if (writes.length === 1) { enabled = false; throw new TypeError('network') }
+      return json(result(input))
+    })
+    vi.stubGlobal('fetch', fetch); mount(); await fill()
+    fireEvent.click(screen.getByRole('button', { name: '확인한 정기 계획 저장' }))
+    await screen.findByRole('alert')
+    fireEvent.click(screen.getByRole('button', { name: '정기 계획 새로고침' }))
+    await screen.findByText(/정기 접수: 비활성화/)
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '확인한 정기 계획 저장' })).toHaveProperty('disabled', false)
+    expect(screen.queryByRole('button', { name: '정기 계획 수정' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '확인한 정기 계획 저장' }))
     await screen.findByText(/정기 계획을 저장했습니다/)
     expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1])
@@ -129,6 +285,7 @@ describe('일별 정기 평가 계획', () => {
   it('세션 만료는 기존 로그인 경로로 처리한다', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({}, 401)))
     const expired = mount()
-    await waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    await waitFor(() => expect(expired).toHaveBeenCalled())
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
   })
 })

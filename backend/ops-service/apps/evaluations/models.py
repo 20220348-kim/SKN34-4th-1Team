@@ -84,6 +84,47 @@ class EvaluationRun(models.Model):
         ordering = ["-created_at"]
 
 
+class EvaluationScheduleSettings(models.Model):
+    """정기 접수의 관리자 정책과 접수 transaction이 공유하는 잠금."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    # 첫 관리자 저장 전에는 기존 환경설정을 따른다. GET은 행을 만들지 않는다.
+    enabled = models.BooleanField(null=True, default=None)
+    revision = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(id=1), name="single_schedule_settings"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(revision=0, enabled__isnull=True)
+                    | models.Q(revision__gt=0, enabled__isnull=False)
+                ),
+                name="schedule_settings_initialized",
+            ),
+        ]
+
+
+class EvaluationScheduleSettingsChange(models.Model):
+    request_id = models.UUIDField(primary_key=True)
+    policy = models.ForeignKey(EvaluationScheduleSettings, on_delete=models.PROTECT)
+    revision = models.PositiveBigIntegerField(unique=True)
+    enabled = models.BooleanField()
+    previous_enabled = models.BooleanField()
+    authenticated_actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    actor = models.CharField(max_length=150)
+    reason = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(revision__gt=0), name="schedule_settings_change_revision"
+            )
+        ]
+
+
 class EvaluationSchedule(models.Model):
     """관리자가 승인한 유한 기간의 일별 계획. 조건 변경은 새 계획으로 남긴다."""
 

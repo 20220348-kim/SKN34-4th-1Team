@@ -100,6 +100,7 @@ async function fixture(defect, verify, count = 1, rag = null) {
     else if (budget) send(reply, 200, { as_of: at, state: 'not_applicable', reservation: null, calls: [] })
     else if (review) send(reply, defect === 'missing_rag' ? 503 : 200, rag.state)
     else if (request.url === '/api/v1/ops/schedules?page=1') send(reply, 200, { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
+    else if (request.url === '/api/v1/ops/schedules/settings') send(reply, 200, { enabled: false, revision: 0, source: 'environment', live_enabled: false, rag_live_enabled: false, changes: [] })
     else if (request.url === '/api/v1/ops/budget/reservations?page=1') send(reply, 200, { as_of: at, count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null, reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] } })
     else if (report) reply.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "sandbox allow-scripts; default-src 'none'" }).end(body)
@@ -341,7 +342,7 @@ test('restored browser uses the Python request validator over attached stdio', {
     const port = reservation.address().port
     await new Promise((done) => reservation.close(done))
     const source = await readFile(new URL('./ops_http_restore_probe.py', import.meta.url), 'utf8')
-    const routes = ['/api/v1/ops/session', '/api/v1/ops/evaluation-catalog', '/api/v1/ops/evaluations?page=1', '/api/v1/ops/budget/reservations?page=1', '/api/v1/ops/schedules?page=1',
+    const routes = ['/api/v1/ops/session', '/api/v1/ops/evaluation-catalog', '/api/v1/ops/evaluations?page=1', '/api/v1/ops/budget/reservations?page=1', '/api/v1/ops/schedules?page=1', '/api/v1/ops/schedules/settings',
       ...Object.keys(input.expected).flatMap((key) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${key}${suffix}`))]
     const program = source + '\n' + [
       `BROWSER_ORIGIN = ${JSON.stringify('http://127.0.0.1:' + port)}`,
@@ -386,6 +387,7 @@ test('isolated Docker attach carries real Python HTTP and browser sessions', {
     '/api/v1/ops/evaluation-catalog': { datasets: [dataset] },
     '/api/v1/ops/evaluations?page=1': { count: 1, next: null, previous: null, results: [run] },
     '/api/v1/ops/schedules?page=1': { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] },
+    '/api/v1/ops/schedules/settings': { enabled: false, revision: 0, source: 'environment', live_enabled: false, rag_live_enabled: false, changes: [] },
     '/api/v1/ops/budget/reservations?page=1': { as_of: at, count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null, reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] } },
     [path]: run, [path + '/budget']: { as_of: at, state: 'not_applicable', reservation: null, calls: [] },

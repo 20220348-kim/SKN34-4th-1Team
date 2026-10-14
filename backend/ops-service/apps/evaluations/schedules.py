@@ -23,6 +23,7 @@ from .models import (
     EvaluationScheduleOccurrence,
 )
 from .reviews import baseline_choices
+from .schedule_settings import effective_enabled, enabled, lock_settings
 from .services import PENDING_SYNC, RequestConflict, submit_run
 
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -34,9 +35,9 @@ class ScheduleBlocked(Exception):
         super().__init__(code)
 
 
-def require_enabled(dataset_id):
+def require_enabled(dataset_id, *, locked_policy=None):
     if (
-        not settings.LLMOPS_SCHEDULES_ENABLED
+        not (effective_enabled(locked_policy) if locked_policy is not None else enabled())
         or not settings.LLMOPS_LIVE_ENABLED
         or (evaluation_scope(dataset_id) == RAG_SCOPE and not settings.LLMOPS_RAG_LIVE_ENABLED)
     ):
@@ -132,6 +133,7 @@ def create_schedule(user, *, request_id, daily_at, starts_on, ends_on, reason, *
             raise RequestConflict
         if EvaluationSchedule.objects.filter(active_dataset=dataset_id).exists():
             raise ScheduleBlocked("ACTIVE_SCHEDULE_EXISTS")
+        require_enabled(dataset_id, locked_policy=lock_settings())
         require_open(lock_admission())
         require_budget(required)
         return EvaluationSchedule.objects.create(
@@ -185,7 +187,7 @@ def pause_schedule(schedule_id, user, *, request_id, reason):
 
 
 def lock_occurrence(occurrence_id, user, request_id, request):
-    """submit_run의 새 접수 transaction 시작에서 호출. 순서: 일정 → 기준 → 접수 → 예산."""
+    """일정 → 기준·자료 검증 → 정기 정책 → 접수 → 예산 순서로 잠근다."""
     schedule_id = EvaluationScheduleOccurrence.objects.values_list("schedule_id", flat=True).get(
         pk=occurrence_id
     )
@@ -232,7 +234,7 @@ def require_previous_finished(dataset_id):
 
 
 def dispatch_due_schedules():
-    if not settings.LLMOPS_SCHEDULES_ENABLED:
+    if not enabled():
         return 0
     now = timezone.now().astimezone(SEOUL)
     stale_schedules = (

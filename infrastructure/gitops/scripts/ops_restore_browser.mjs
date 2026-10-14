@@ -88,7 +88,15 @@ export async function checkRestoreBrowser(origin, responses, expected, reports, 
     await page.getByRole('heading', { name: '정기 실행', exact: true }).waitFor()
     assert.equal(new URL(page.url()).pathname, '/ops/schedules')
     const schedules = page.getByRole('region', { name: '정기 평가 계획' })
-    await schedules.getByText('정기 접수가 비활성화되어 있습니다.', { exact: false }).waitFor()
+    await schedules.getByText('정기 접수: 비활성화', { exact: false }).waitFor()
+    const scheduleSettings = page.getByRole('region', { name: '정기 접수 활성화 설정', exact: true })
+    await scheduleSettings.getByRole('combobox', { name: '변경할 정기 접수 상태', exact: true }).waitFor()
+    assert.equal(await scheduleSettings.getByRole('combobox', { name: '변경할 정기 접수 상태', exact: true }).inputValue(), 'disabled')
+    assert.equal(await scheduleSettings.getByText('서버에서 차단됨', { exact: true }).count(), 2)
+    assert.equal(await scheduleSettings.getByRole('button', { name: '정기 접수 변경 내용 확인', exact: true }).isDisabled(), true)
+    if (catalog.datasets.some((item) => item.live_config && item.execution_profiles.live)) {
+      await schedules.getByText('설정·예산 점검: 조회 완료 · 부족 조건 있음', { exact: true }).waitFor()
+    }
     assert.equal(await page.getByRole('alert').count(), 0, 'Schedule view contains an error')
     assert.equal(await page.locator('#evaluation-budget').count(), 0, 'Budget must not remain on the schedules page')
     assert.equal((await context.cookies(origin)).find((item) => item.name === 'govbiz_session')?.httpOnly, true)

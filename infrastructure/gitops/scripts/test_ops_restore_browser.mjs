@@ -28,6 +28,7 @@ const runs = Array.from({ length: 26 }, (_, index) => ({
 }))
 const responses = {
   '/api/v1/ops/schedules?page=1': { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] },
+  '/api/v1/ops/schedules/settings': { enabled: false, revision: 0, source: 'environment', live_enabled: false, rag_live_enabled: false, changes: [] },
   '/api/v1/ops/session': {
     user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted',
     live_enabled: false, rag_live_enabled: false,
