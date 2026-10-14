@@ -46,6 +46,27 @@ function Metrics({ item }: { item: TraceSummary }) {
     <div><dt className="text-ink-muted">환경</dt><dd className="mt-1 break-all">{environmentLabel(item.environment)}</dd></div>
   </dl>
 }
+function ListMetrics({ item }: { item: TracePage['results'][number] }) {
+  const summary = item.call_summary
+  const partial = summary.status === 'partial'
+  return <>
+    <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+      <div className="min-w-0"><dt className="text-ink-muted">모델</dt><dd className="mt-1 break-all">{summary.models.length
+        ? <ul className="space-y-1">{summary.models.map((model) => <li key={model}>{model}</li>)}</ul>
+        : summary.call_count ? '모델명 기록 없음' : partial ? '집계 미완료' : '기록된 모델 호출 없음'}</dd></div>
+      <div><dt className="text-ink-muted">소요 시간</dt><dd className="mt-1">{item.latency_seconds === null ? '기록 없음' : `${item.latency_seconds.toLocaleString('ko-KR', { maximumFractionDigits: 3 })}초`}</dd></div>
+      <div><dt className="text-ink-muted">기록된 비용 합계 (USD)</dt><dd className="mt-1">{summary.recorded_cost === null ? '비용 기록 없음' : `$${summary.recorded_cost.toLocaleString('en-US', { maximumFractionDigits: 8 })}`}</dd></div>
+      <div><dt className="text-ink-muted">환경</dt><dd className="mt-1 break-all">{environmentLabel(item.environment)}</dd></div>
+    </dl>
+    <p className="text-xs text-ink-muted">{partial ? '현재 확인된 모델 호출' : '모델 호출'} {summary.call_count.toLocaleString('ko-KR')}건
+      {summary.missing_model_count > 0 && ` · 모델명 미기록 ${summary.missing_model_count.toLocaleString('ko-KR')}건`}
+      {summary.missing_cost_count > 0 && ` · 비용 미기록 ${summary.missing_cost_count.toLocaleString('ko-KR')}건`}
+    </p>
+    {(partial || summary.missing_cost_count > 0) && <p className="rounded-lg bg-surface-muted p-3 text-xs text-ink-muted">{partial
+      ? `집계가 아직 완전하지 않습니다. ${summary.recorded_cost === null ? '확인된 비용 기록이 없습니다.' : '표시된 비용은 현재 확인된 금액입니다.'} 진행 중이거나 아직 조회되지 않은 호출은 반영 후 달라질 수 있습니다.`
+      : '비용이 기록된 호출만 합산한 금액입니다. 비용 미기록 호출은 0원으로 포함하지 않습니다.'}</p>}
+  </>
+}
 
 export function TraceListPage({ onExpired }: { onExpired: () => void }) {
   const [search, setSearch] = useSearchParams()
@@ -105,8 +126,8 @@ export function TraceListPage({ onExpired }: { onExpired: () => void }) {
           {data.results.map((item) => <article key={item.id} className={styles.card}>
             <div className="flex flex-wrap items-center justify-between gap-2"><h2 className={styles.cardTitle}><Link className="text-brand-primary underline underline-offset-4" to={`${path}/${encodeURIComponent(item.trace_id)}?${currentQuery}`}>{nameLabel(item.name)} · {item.id.slice(0, 8)}</Link></h2><Level value={item.level} /></div>
             <p className="text-xs text-ink-muted">{date(item.started_at)} · {item.type}{item.name && ` · ${item.name}`}</p>
-            <Metrics item={item} />
-            {!isModelCall(item) && <Link className={styles.quietLink} to={`${path}/${encodeURIComponent(item.trace_id)}?${currentQuery}`}>모델 호출 단계 확인 →</Link>}
+            <ListMetrics item={item} />
+            <Link className={styles.quietLink} to={`${path}/${encodeURIComponent(item.trace_id)}?${currentQuery}`}>호출 상세 보기 →</Link>
             {item.status_message && <p className="rounded-lg bg-surface-muted p-3 text-sm whitespace-pre-wrap break-words">실행 메시지: {item.status_message}</p>}
           </article>)}
         </section>

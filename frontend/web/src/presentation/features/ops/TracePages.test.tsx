@@ -17,7 +17,9 @@ const child = {
   input: '<img src=x onerror=alert(1)>', output: '<script>alert(2)</script>',
   metadata: { source: '정부지원사업' }, usage_details: { input: 123, output: 42 }, model: 'gpt-6-luna',
 }
-const page = { results: [root], from_time: from, to_time: to, next_cursor: 'page-2' }
+const callSummary = { models: ['gpt-6-luna'], call_count: 1, missing_model_count: 0, recorded_cost: 0.0001952, missing_cost_count: 0, status: 'complete' }
+const listRoot = { ...root, call_summary: callSummary }
+const page = { results: [listRoot], from_time: from, to_time: to, next_cursor: 'page-2' }
 const detail = {
   trace_id: traceId, next_cursor: null,
   observations: [{ ...root, parent_observation_id: null, input: null, output: null, metadata: null, usage_details: null }, child],
@@ -33,7 +35,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 AI 실행 추적', () => {
   it('동일 trace의 루트 단계를 각각 표시하고 다음 페이지에 고정 기간과 필터를 유지한다', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(json({ ...page, results: [root, { ...root, id: 'root-002' }] })).mockResolvedValue(json({ ...page, results: [], next_cursor: null }))
+    const fetch = vi.fn().mockResolvedValueOnce(json({ ...page, results: [listRoot, { ...listRoot, id: 'root-002' }] })).mockResolvedValue(json({ ...page, results: [], next_cursor: null }))
     vi.stubGlobal('fetch', fetch)
     mount('/ops/traces?name=support-program-search')
     expect(await screen.findByRole('link', { name: '공고 검색 · root-001' })).toBeTruthy()
@@ -52,9 +54,9 @@ describe('관리자 AI 실행 추적', () => {
     ['support-program-evidence', '공고 근거 답변', 'evidence.answer'],
   ])('%s 업무·기간을 조회하면 페이지를 초기화하고 해당 업무 결과를 표시한다', async (name, label, observationName) => {
     const results = [
-      root,
-      { ...root, id: 'agent-01', name: 'assistant.agent' },
-      { ...root, id: 'answer-1', name: 'evidence.answer' },
+      listRoot,
+      { ...listRoot, id: 'agent-01', name: 'assistant.agent' },
+      { ...listRoot, id: 'answer-1', name: 'evidence.answer' },
     ]
     const filterNames: Record<string, string> = {
       'support-program-search': 'search.total', 'assistant-agent': 'assistant.agent', 'support-program-evidence': 'evidence.answer',
@@ -114,17 +116,90 @@ describe('관리자 AI 실행 추적', () => {
     expect(back.searchParams.has('detail_cursor')).toBe(false)
   })
 
-  it.each([null, '', '   '])('SPAN의 비어 있는 모델(%s)과 비용은 상세의 모델 호출 단계로 안내한다', async (model) => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...root, model }] })))
+  it.each([null, '', '   ', '상위 단계 모델'])('SPAN의 모델(%s) 대신 하위 호출의 모델과 비용을 목록에서 바로 보여준다', async (model) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, model, total_cost: 99 }] })))
     mount(`/ops/traces?${new URLSearchParams({ name: 'support-program-search', from_time: from, to_time: to, cursor: 'list-2' })}`)
     const article = await screen.findByRole('article')
-    expect(within(article).getAllByText('모델 호출 단계에서 확인')).toHaveLength(2)
+    expect(within(article).getByText('모델').nextElementSibling?.textContent).toBe('gpt-6-luna')
+    expect(within(article).getByText('기록된 비용 합계 (USD)').nextElementSibling?.textContent).toBe('$0.0001952')
+    expect(within(article).getByText('모델 호출 1건')).toBeTruthy()
+    expect(within(article).queryByText('모델 호출 단계에서 확인')).toBeNull()
     expect(within(article).queryByText('$0')).toBeNull()
+    expect(within(article).queryByText('$99')).toBeNull()
     expect(within(article).getByText('운영 (production)')).toBeTruthy()
-    const link = within(article).getByRole('link', { name: '모델 호출 단계 확인 →' })
+    const link = within(article).getByRole('link', { name: '호출 상세 보기 →' })
     const destination = new URL(link.getAttribute('href')!, 'https://govbiz.test')
     expect(destination.pathname).toBe(`/ops/traces/${traceId}`)
     expect(Object.fromEntries(destination.searchParams)).toEqual({ name: 'support-program-search', from_time: from, to_time: to, cursor: 'list-2' })
+  })
+
+  it('복수 모델과 8자리 소액 합계를 표시하고 비용 미기록 호출을 구분한다', async () => {
+    const call_summary = { ...callSummary, models: ['gpt-6-luna', 'text-embedding-3-small'], call_count: 4, missing_model_count: 1, recorded_cost: 0.00000001, missing_cost_count: 2 }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, call_summary }] })))
+    mount()
+    const article = await screen.findByRole('article')
+    expect(within(article).getByText('gpt-6-luna')).toBeTruthy()
+    expect(within(article).getByText('text-embedding-3-small')).toBeTruthy()
+    expect(within(article).getByText('$0.00000001')).toBeTruthy()
+    expect(within(article).getByText('모델 호출 4건 · 모델명 미기록 1건 · 비용 미기록 2건')).toBeTruthy()
+    expect(within(article).getByText(/비용이 기록된 호출만 합산한 금액/)).toBeTruthy()
+  })
+
+  it('모델명과 비용이 전부 미기록인 호출을 미호출이나 0원으로 표시하지 않는다', async () => {
+    const call_summary = { ...callSummary, models: [], call_count: 2, missing_model_count: 2, recorded_cost: null, missing_cost_count: 2 }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, call_summary }] })))
+    mount()
+    const article = await screen.findByRole('article')
+    expect(within(article).getByText('모델명 기록 없음')).toBeTruthy()
+    expect(within(article).getByText('비용 기록 없음')).toBeTruthy()
+    expect(within(article).getByText('모델 호출 2건 · 모델명 미기록 2건 · 비용 미기록 2건')).toBeTruthy()
+    expect(within(article).queryByText('기록된 모델 호출 없음')).toBeNull()
+    expect(within(article).queryByText('$0')).toBeNull()
+  })
+
+  it.each(['complete', 'partial'])('%s 집계의 호출 0건은 조회가 완전할 때만 기록된 호출 없음으로 안내한다', async (status) => {
+    const call_summary = { models: [], call_count: 0, missing_model_count: 0, recorded_cost: null, missing_cost_count: 0, status }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, call_summary }] })))
+    mount()
+    const article = await screen.findByRole('article')
+    expect(within(article).getByText(status === 'partial' ? '집계 미완료' : '기록된 모델 호출 없음')).toBeTruthy()
+    expect(within(article).getByText('비용 기록 없음')).toBeTruthy()
+    expect(within(article).queryByText('$0')).toBeNull()
+    if (status === 'partial') {
+      expect(within(article).getByText('현재 확인된 모델 호출 0건')).toBeTruthy()
+      expect(within(article).getByText(/확인된 비용 기록이 없습니다/)).toBeTruthy()
+      expect(within(article).queryByText('기록된 모델 호출 없음')).toBeNull()
+    }
+  })
+
+  it.each(['complete', 'partial'])('%s 집계에서 실제 기록된 0원과 미기록을 구분한다', async (status) => {
+    const call_summary = { ...callSummary, recorded_cost: 0, status }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, call_summary }] })))
+    mount()
+    const article = await screen.findByRole('article')
+    expect(within(article).getByText('$0')).toBeTruthy()
+    expect(within(article).queryByText('비용 기록 없음')).toBeNull()
+    if (status === 'partial') expect(within(article).getByText(/표시된 비용은 현재 확인된 금액입니다/)).toBeTruthy()
+    else expect(within(article).queryByText(/집계가 아직 완전하지 않습니다/)).toBeNull()
+  })
+
+  it.each([
+    undefined,
+    { ...callSummary, call_count: -1 },
+    { ...callSummary, call_count: 1.5 },
+    { ...callSummary, missing_model_count: 2 },
+    { ...callSummary, missing_cost_count: 2 },
+    { ...callSummary, recorded_cost: -1 },
+    { ...callSummary, recorded_cost: null },
+    { ...callSummary, missing_cost_count: 1 },
+    { ...callSummary, models: [''] },
+    { ...callSummary, models: ['gpt-6-luna', 'gpt-6-luna'], call_count: 2 },
+    { ...callSummary, status: 'unknown' },
+  ])('누락되거나 잘못된 호출 집계 계약 %#은 정상 비용처럼 표시하지 않는다', async (call_summary) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, call_summary }] })))
+    mount()
+    expect((await screen.findByRole('alert')).textContent).toContain('AI 실행 추적 응답을 확인할 수 없습니다.')
+    expect(screen.queryByRole('article')).toBeNull()
   })
 
   it.each([
@@ -147,7 +222,7 @@ describe('관리자 AI 실행 추적', () => {
   })
 
   it.each([null, '', '   ', 'staging'])('환경 값 %s는 누락 또는 원래 환경으로 표시한다', async (environment) => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...root, environment }] })))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, results: [{ ...listRoot, environment }] })))
     mount()
     const article = await screen.findByRole('article')
     expect(within(article).getByText('환경').nextElementSibling?.textContent).toBe(environment === 'staging' ? 'staging' : '기록 없음')

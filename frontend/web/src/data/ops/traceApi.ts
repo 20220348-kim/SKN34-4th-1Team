@@ -7,7 +7,17 @@ const traceSchema = z.object({
   started_at: timestamp, ended_at: timestamp.nullable(), level: z.string(), status_message: z.string().nullable(), model: z.string().nullable(),
   latency_seconds: z.number().nonnegative().nullable(), total_cost: z.number().nonnegative().nullable(), environment: z.string().nullable(),
 })
-const tracePageSchema = z.object({ results: z.array(traceSchema), next_cursor: z.string().nullable(), from_time: timestamp, to_time: timestamp })
+const callSummarySchema = z.object({
+  models: z.array(z.string().trim().min(1)), call_count: z.number().int().nonnegative(),
+  missing_model_count: z.number().int().nonnegative(), recorded_cost: z.number().finite().nonnegative().nullable(),
+  missing_cost_count: z.number().int().nonnegative(), status: z.enum(['complete', 'partial']),
+}).refine((value) => value.missing_model_count <= value.call_count && value.missing_cost_count <= value.call_count
+  && value.models.length <= value.call_count - value.missing_model_count && new Set(value.models).size === value.models.length
+  && (value.call_count === value.missing_cost_count) === (value.recorded_cost === null))
+const tracePageSchema = z.object({
+  results: z.array(traceSchema.extend({ call_summary: callSummarySchema })),
+  next_cursor: z.string().nullable(), from_time: timestamp, to_time: timestamp,
+})
 const traceDetailSchema = z.object({
   trace_id: z.string().min(1), next_cursor: z.string().nullable(),
   observations: z.array(traceSchema.extend({
