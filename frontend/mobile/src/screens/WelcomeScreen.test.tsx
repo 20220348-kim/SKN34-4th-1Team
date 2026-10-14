@@ -1,4 +1,4 @@
-import { AppState, ScrollView, type AppStateStatus } from 'react-native'
+import { AppState, ScrollView, StyleSheet, type AppStateStatus } from 'react-native'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native'
 import { colors } from '../ui'
 import { WelcomeScreen } from './WelcomeScreen'
@@ -12,6 +12,7 @@ const swipe = (x: number) => {
 }
 const layout = (width: number) => fireEvent(screen.getByTestId('welcome-carousel'), 'layout', { nativeEvent: { layout: { width } } })
 const advance = (milliseconds: number) => act(() => { jest.advanceTimersByTime(milliseconds) })
+const progressWidth = (step: number) => Number.parseFloat(StyleSheet.flatten(screen.getByTestId(`welcome-progress-${step}`).props.style).width)
 const actions = () => ({ busy: false, error: null, onSignup: jest.fn(), onLogin: jest.fn(), onBrowse: jest.fn() })
 const previousAppState = AppState.currentState
 
@@ -92,6 +93,68 @@ test('automatically slides after five seconds and waits on the last page without
   expect(props.onBrowse).not.toHaveBeenCalled()
   expect(props.onLogin).not.toHaveBeenCalled()
   expect(props.onSignup).not.toHaveBeenCalled()
+})
+
+test('the current bar fills throughout five seconds before the next slide starts its empty bar', () => {
+  render(<WelcomeScreen {...actions()} />)
+  expect(progressWidth(0)).toBe(0)
+  expect(progressWidth(1)).toBe(0)
+  advance(2500)
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  expect(progressWidth(0)).toBeGreaterThan(40)
+  expect(progressWidth(0)).toBeLessThan(60)
+  advance(2499)
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  advance(1)
+  expect(screen.getByText('2 / 4')).toBeTruthy()
+  expect(progressWidth(0)).toBe(100)
+  expect(progressWidth(1)).toBe(0)
+  expect(progressWidth(2)).toBe(0)
+})
+
+test('the fourth bar also fills then stops without entering the app or looping', () => {
+  const props = actions()
+  render(<WelcomeScreen {...props} />)
+  layout(360)
+  swipe(1080)
+  expect(progressWidth(3)).toBe(0)
+  advance(2500)
+  expect(progressWidth(3)).toBeGreaterThan(40)
+  expect(progressWidth(3)).toBeLessThan(60)
+  advance(2500)
+  expect(progressWidth(3)).toBe(100)
+  advance(10000)
+  expect(screen.getByText('4 / 4')).toBeTruthy()
+  expect(progressWidth(3)).toBe(100)
+  expect(props.onBrowse).not.toHaveBeenCalled()
+})
+
+test('a swipe reaching the last page in the same batch as its timer cannot advance beyond four slides', () => {
+  render(<WelcomeScreen {...actions()} />)
+  layout(360)
+  swipe(720)
+  act(() => {
+    fireEvent(screen.getByTestId('welcome-carousel'), 'momentumScrollEnd', { nativeEvent: { contentOffset: { x: 1080 } } })
+    jest.advanceTimersByTime(5000)
+  })
+  expect(screen.getByText('4 / 4')).toBeTruthy()
+  expect(screen.queryByText('5 / 4')).toBeNull()
+})
+
+test('pausing freezes bar fill and restarting keeps its five-second transition in sync', () => {
+  const props = actions(), view = render(<WelcomeScreen {...props} />)
+  advance(2500)
+  const pausedWidth = progressWidth(0)
+  view.rerender(<WelcomeScreen {...props} autoAdvancePaused />)
+  advance(10000)
+  expect(progressWidth(0)).toBe(pausedWidth)
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  view.rerender(<WelcomeScreen {...props} />)
+  expect(progressWidth(0)).toBe(0)
+  advance(4999)
+  expect(screen.getByText('1 / 4')).toBeTruthy()
+  advance(1)
+  expect(screen.getByText('2 / 4')).toBeTruthy()
 })
 
 test('swiping restarts the full delay and dragging pauses automatic movement', () => {
@@ -183,8 +246,10 @@ test('backgrounding and authentication pause automatic movement and unmount clea
   advance(5000)
   expect(screen.getByText('3 / 4')).toBeTruthy()
   const remove = jest.spyOn(addListener.mock.results[0].value, 'remove')
-  expect(jest.getTimerCount()).toBe(1)
+  expect(jest.getTimerCount()).toBeGreaterThan(0)
   view.unmount()
   expect(remove).toHaveBeenCalledTimes(1)
+  // Animated prop cleanup can be deferred; the five-second transition must already be cancelled.
+  advance(100)
   expect(jest.getTimerCount()).toBe(0)
 })
