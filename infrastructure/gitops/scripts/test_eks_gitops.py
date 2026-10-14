@@ -193,6 +193,71 @@ class EksGitOpsTests(unittest.TestCase):
         path.write_text("invalid dirty configuration")
         self.assertEqual(gitops.bundle(self.root, self.record, TAG), self.files)
 
+    def test_eks_trace_environment_is_production_without_changing_local_defaults(self):
+        for name in ("core-service", "ai-service"):
+            row = next(r for r in self.rows if r["kind"] == "Deployment" and r["metadata"]["name"] == name)
+            self.assertEqual(row["metadata"]["annotations"]["govbiz.io/langfuse-environment"], "production")
+            self.assertEqual(
+                [item for item in row["spec"]["template"]["spec"]["containers"][0]["env"]
+                 if item["name"] == "LANGFUSE_ENVIRONMENT"],
+                [{"name": "LANGFUSE_ENVIRONMENT", "value": "production"}],
+            )
+            local = yaml.safe_load((ROOT / f"infrastructure/gitops/environments/in-cluster/{name}.yaml").read_text())
+            self.assertEqual(local["env"]["LANGFUSE_ENVIRONMENT"], "development")
+
+    def test_public_trace_environment_wins_after_private_patches_without_changing_other_env(self):
+        for missing in (False, True):
+            runtime = self.runtime()
+            for row in runtime["items"]:
+                if row["metadata"]["name"] not in ("core-service", "ai-service"):
+                    continue
+                environment = row["spec"]["template"]["spec"]["containers"][0]["env"]
+                environment[:] = [item for item in environment if item["name"] != "LANGFUSE_ENVIRONMENT"]
+                if not missing:
+                    environment.append({"name": "LANGFUSE_ENVIRONMENT", "value": "development"})
+                environment.extend([
+                    {"name": "PRIVATE_RUNTIME_MARKER", "value": "preserved"},
+                    {"name": "PRIVATE_TOKEN", "valueFrom": {"secretKeyRef": {"name": "runtime", "key": "token"}}},
+                ])
+            before = copy.deepcopy(runtime)
+            app = gitops.application(runtime)[1]
+            gitops.check_application(app)
+            self.assertEqual(runtime, before)
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                for name, contents in self.files.items():
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(contents)
+                path = root / "release/kustomization.yaml"
+                value = yaml.safe_load(path.read_text())
+                # Argo inserts source.kustomize.patches into this same release root.
+                value["patches"] = app["spec"]["source"]["kustomize"]["patches"]
+                path.write_text(yaml.safe_dump(value))
+                rendered = yaml.safe_load_all(subprocess.check_output(
+                    ["kubectl", "kustomize", str(path.parent)], text=True
+                ))
+                for row in rendered:
+                    if row["kind"] != "Deployment":
+                        continue
+                    name = row["metadata"]["name"]
+                    original = next(r for r in before["items"] if r["metadata"]["name"] == name)
+                    for actual, previous in zip(
+                        row["spec"]["template"]["spec"]["containers"],
+                        original["spec"]["template"]["spec"]["containers"], strict=True,
+                    ):
+                        expected = copy.deepcopy(previous.get("env", []))
+                        if name == "core-service":
+                            # The existing adoption path appends the document-jobs flag.
+                            expected = [item for item in expected if item["name"] != gitops.DOCUMENT_JOBS_FLAG]
+                            expected.append({"name": gitops.DOCUMENT_JOBS_FLAG, "value": "true"})
+                        if name in ("core-service", "ai-service"):
+                            if missing:
+                                expected.append({"name": "LANGFUSE_ENVIRONMENT", "value": "production"})
+                            else:
+                                next(item for item in expected if item["name"] == "LANGFUSE_ENVIRONMENT")["value"] = "production"
+                        self.assertEqual(actual.get("env", []), expected)
+
     def test_single_writer_deployments_follow_their_database_nodes(self):
         deployments = {
             row["metadata"]["name"]: row for row in self.rows if row["kind"] == "Deployment"
@@ -477,6 +542,31 @@ class EksGitOpsTests(unittest.TestCase):
             if op["path"] == f"/spec/template/spec/containers/{index}/env"
         )
         return entry, operations, environment
+
+    def test_trace_environment_rejects_private_references_and_duplicate_names(self):
+        invalid = [
+            [{"name": "LANGFUSE_ENVIRONMENT", "valueFrom": {"secretKeyRef": {"name": "runtime", "key": "environment"}}}],
+            [{"name": "LANGFUSE_ENVIRONMENT", "value": "development"}] * 2,
+            [{"name": "LANGFUSE_ENVIRONMENT", "value": None}],
+        ]
+        for name in ("core-service", "ai-service"):
+            for entries in invalid:
+                app, _, _ = self.success()
+                entry, operations, environment = self.ops_environment(app, name, 0)
+                environment["value"] = [item for item in environment["value"] if item["name"] != "LANGFUSE_ENVIRONMENT"] + entries
+                entry["patch"] = json.dumps(operations)
+                with self.subTest(name=name, entries=entries), self.assertRaisesRegex(
+                    ValueError, "Preserved LANGFUSE_ENVIRONMENT"
+                ):
+                    gitops.check_application(app)
+
+    def test_sync_requires_the_public_trace_environment_on_both_services(self):
+        for name in ("core-service", "ai-service"):
+            app, record, deployments = self.success()
+            environment = deployments[name]["spec"]["template"]["spec"]["containers"][0]["env"]
+            next(item for item in environment if item["name"] == "LANGFUSE_ENVIRONMENT")["value"] = "development"
+            with self.subTest(name=name):
+                self.assertFalse(gitops.synced(app, record, deployments))
 
     def test_preserved_ops_trace_configuration_is_required_in_every_execution_path(self):
         for name, index in (

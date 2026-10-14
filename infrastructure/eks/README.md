@@ -24,6 +24,11 @@ Langfuse 전용 CloudFront 호스트의 루트(`/`)를 사용하고 기존 VPC o
 재사용한다. 허용된 관리자 IPv4에서 Langfuse 계정으로 별도 로그인하며, 운영 링크에는
 접속자 PC를 뜻하는 `localhost:13000`을 사용하지 않는다.
 
+Core·AI의 EKS 실행 추적은 `gitops-values.yaml`의 `LANGFUSE_ENVIRONMENT: production`으로
+구분한다. 배포 bundle의 Kustomize replacement는 기존 Argo Application의 비공개 환경 배열
+패치 뒤에 이 값 하나만 다시 적용하며, 다른 환경변수와 Secret 참조는 보존한다.
+일반 로컬 `in-cluster` 설정은 `development`를 유지하고, 이미 수집된 trace의 환경은 바뀌지 않는다.
+
 아래는 **다른 원본 클러스터의 기존 Argo CD 이전 절차와 기록**이다. 아래의 PVC 14개·Argo 앱
 9개·`work/eks-handoff-20261011-final` 기록을 현재 Mac의 백업 완료 증거로 사용하지 않는다.
 

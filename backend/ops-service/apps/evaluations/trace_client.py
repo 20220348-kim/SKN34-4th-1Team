@@ -18,6 +18,13 @@ PAGE_SIZE = 50
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 ID_PATTERN = r"[A-Za-z0-9_-]{1,128}"
 CURSOR_PATTERN = r"[A-Za-z0-9+/=_-]{1,2048}"
+# 화면의 업무 이름과 Langfuse observation 이름은 서로 다른 계약이다.
+# Core 전체 흐름과 AI 서비스의 별도 시작 단계를 같은 업무로 조회한다.
+EXECUTION_PREFIXES = {
+    "support-program-search": "search.",
+    "assistant-agent": "assistant.",
+    "support-program-evidence": "evidence.",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -182,7 +189,29 @@ def read_roots(*, from_time, to_time, name="", cursor=""):
         "fields": "basic,model,usage,metrics",
         "limit": PAGE_SIZE,
     }
-    if name:
+    prefix = EXECUTION_PREFIXES.get(name)
+    if prefix:
+        # v2의 filter는 단순 query 조건보다 우선하므로 기간과 루트 조건도 포함한다.
+        params["filter"] = json.dumps(
+            [
+                {"type": "boolean", "column": "isRootObservation", "operator": "=", "value": True},
+                {
+                    "type": "datetime",
+                    "column": "startTime",
+                    "operator": ">=",
+                    "value": from_time.isoformat(),
+                },
+                {
+                    "type": "datetime",
+                    "column": "startTime",
+                    "operator": "<",
+                    "value": to_time.isoformat(),
+                },
+                {"type": "string", "column": "name", "operator": "starts with", "value": prefix},
+            ],
+            separators=(",", ":"),
+        )
+    elif name:
         params["name"] = name
     if cursor:
         params["cursor"] = cursor
@@ -191,6 +220,8 @@ def read_roots(*, from_time, to_time, name="", cursor=""):
         if any(row.get("isRootObservation") is not True for row in rows):
             raise ValueError("Unexpected non-root observation")
         results = [observation(row) for row in rows]
+        if prefix and any(not row["name"].startswith(prefix) for row in results):
+            raise ValueError("Unexpected execution category")
         if len({row["id"] for row in results}) != len(results):
             raise ValueError("Duplicate observation")
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):

@@ -1503,9 +1503,19 @@ Core·Ops API에서 공유하고, Ops CSRF 쿠키는 `govbiz_ops_csrf`로 구별
 
 목록은 기본 최근 7일, 최대 30일 기간의 **실행 시작 단계(logical root observation)**를 50개씩 읽습니다.
 같은 trace에 서비스별 시작 단계가 여러 개일 수 있으므로 목록 건수를 고유 실행 수로 해석하지 않습니다.
-`name`은 단계 이름의 정확한 일치 필터입니다. 다음 페이지는 응답의 `next_cursor`와 같은
+화면의 `name` 값 `support-program-search`·`assistant-agent`·`support-program-evidence`는 각각
+실제 단계 이름의 `search.`·`assistant.`·`evidence.` 접두사로 조회합니다. Core 전체 흐름뿐 아니라
+AI 서비스가 기록한 별도 시작 단계도 포함합니다. 그 외 `name`은 단계 이름의 정확한 일치 필터입니다.
+Langfuse의 고급 필터에는 접두사와 함께 조회 시작·종료 시각 및 logical root 조건을 넣어,
+단순 query 조건보다 우선하는 필터가 조회 범위를 넓히지 않도록 합니다. 결과는 API의 최신순을 유지합니다.
+다음 페이지는 응답의 `next_cursor`와 같은
 `from_time`·`to_time`·`name`을 사용합니다. 상세는 해당 trace의 단계를 50개씩 조회하며
 `next_cursor`가 있으면 아직 더 읽을 단계가 있습니다. 비용·사용량 미기록은 0으로 채우지 않습니다.
+일반 처리 단계의 빈 모델·비용은 모델 호출 단계에서 확인하도록 안내합니다. 실제 호출인
+`GENERATION`·`EMBEDDING`은 상세에서 펼쳐 모델·기록된 비용·토큰 사용량을 확인하며, 처리 단계에
+하위 비용을 복제하거나 부분 페이지의 비용을 실행 전체 합계로 표시하지 않습니다.
+환경은 기록 당시의 라벨이며 `production`은 운영, `development`는 개발로 표시합니다.
+운영 설정을 고쳐도 이미 저장된 기록의 환경 라벨을 화면에서 임의로 바꾸지 않습니다.
 입출력은 원문 문자열이고 메타데이터는 Langfuse API의 기본 길이 제한이 적용됩니다.
 API 응답은 최대 4 MiB이며 리디렉션·잘못된 응답은 거절합니다. 프로젝트 키로 접근 가능한 데이터만 읽습니다.
 
