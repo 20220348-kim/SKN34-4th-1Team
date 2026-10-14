@@ -13,9 +13,12 @@ from django.core import serializers
 from django.core.management import BaseCommand, CommandError, call_command
 from django.db import connection, transaction
 
+from apps.evaluations.execution_spec import digest
 from apps.evaluations.models import EvaluationBaseline, EvaluationRun
-from apps.evaluations.quality import quality_pass
+from apps.evaluations.quality import assessment_inputs, quality_pass
+from apps.evaluations.quality_policy import judge
 from apps.evaluations.review_eligibility import current_approval
+from apps.evaluations.reviews import review_material
 from apps.evaluations.services import read_result
 from apps.health.schema import schema_is_ready
 
@@ -127,6 +130,33 @@ def copy_artifacts(files):
                 ) from None
 
 
+def has_code_outdated_assessment(run):
+    """코드 해시만 달라진 과거 합격을 보존하되 현재 합격으로 인정하지 않는다."""
+    inputs = assessment_inputs(run, review_material(run))
+    # 현재 입력의 불합격·보류를 과거 합격으로 덮거나, 현재 정책이 실패한 자료를 허용하지 않는다.
+    if run.assessments.filter(input_sha256=digest(inputs)).exists() or judge(inputs) != (
+        "PASS",
+        [],
+    ):
+        return False
+    for assessment in run.assessments.filter(status="PASS"):
+        previous = assessment.inputs
+        code_hash = previous.get("assessment_code_sha256")
+        if (
+            isinstance(code_hash, str)
+            and len(code_hash) == 64
+            and all(char in "0123456789abcdef" for char in code_hash)
+            and code_hash != inputs["assessment_code_sha256"]
+            and previous == {**inputs, "assessment_code_sha256": code_hash}
+            and assessment.input_sha256 == digest(previous)
+            and assessment.policy == inputs["policy"]
+            and assessment.policy_sha256 == digest(assessment.policy)
+            and assessment.reasons == []
+        ):
+            return True
+    return False
+
+
 def import_seed():
     # Presence of any Ops history/configuration makes this an existing environment.
     # In particular, never reinstate a baseline that a teammate has revoked.
@@ -162,9 +192,16 @@ def import_seed():
             baseline.review is None
             or baseline.review.run_id != run.pk
             or not current_approval(baseline.review, run)
-            or not quality_pass(run)
         ):
             raise CommandError("Shared approval is incompatible with current evidence or policy")
+        if not quality_pass(run):
+            if not has_code_outdated_assessment(run):
+                raise CommandError(
+                    "Shared approval is incompatible with current evidence or policy"
+                )
+            # 사람의 승인·판정·기준 지정 이력은 그대로 둔다. 현재 quality_pass는 계속 False여서
+            # 기준 선택·접수·지정은 기존 검증에서 차단되고 화면에는 재판정 필요로 표시된다.
+            return "SHARED_REVIEWS_IMPORTED_REVIEW_REQUIRED"
     return "SHARED_REVIEWS_IMPORTED"
 
 

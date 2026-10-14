@@ -12,17 +12,21 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[2]
 VERIFY_AND_REVOKE = """
 from apps.evaluations.models import EvaluationBaseline, EvaluationCaseReview, EvaluationRun
-from apps.evaluations.quality import quality_pass
+from apps.evaluations.quality import quality_pass, quality_state
+from apps.evaluations.reviews import baseline_choices, review_material
 run = EvaluationRun.objects.get(pk='628ae52a-f417-4b53-b400-d90405e6a7d8')
 assert run.execution_mode == 'live' and run.model_api_calls == 6
 assert EvaluationRun.objects.count() == 2
-assert EvaluationCaseReview.objects.count() == 12 and quality_pass(run)
+assert EvaluationCaseReview.objects.count() == 12
+assert not quality_pass(run)
+assert quality_state(run, review_material(run))['status'] == 'NEEDS_REVIEW'
+assert run.dataset_id not in baseline_choices()
 baseline = EvaluationBaseline.objects.get()
 assert baseline.version == 2 and baseline.review.run_id == run.pk
 baseline.review = None
 baseline.version += 1
 baseline.save()
-print('Shared human review imported; isolated test baseline revoked.')
+print('Shared history imported without current quality approval; isolated baseline revoked.')
 """
 VERIFY_PRESERVED = """
 from apps.evaluations.models import EvaluationBaseline, EvaluationCaseReview, EvaluationRun

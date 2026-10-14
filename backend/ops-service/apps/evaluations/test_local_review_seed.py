@@ -2,9 +2,11 @@
 
 import json
 from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.management import CommandError, call_command
@@ -12,7 +14,9 @@ from django.test import RequestFactory, SimpleTestCase, TestCase, override_setti
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
+from . import quality
 from .authentication import CoreSessionAuthentication
+from .execution_spec import digest
 from .management.commands import bootstrap_local_reviews as seed
 from .models import (
     EvaluationBaseline,
@@ -25,7 +29,7 @@ from .models import (
 )
 from .quality import quality_pass
 from .review_eligibility import current_approval
-from .reviews import review_material
+from .reviews import baseline_choices, review_material
 from .services import ResultsUnavailable, read_result
 
 CURRENT_RUN = "628ae52a-f417-4b53-b400-d90405e6a7d8"
@@ -115,7 +119,7 @@ class LocalReviewSeedTests(TestCase):
         self.document, self.files = seed.load_seed()
 
     def test_import_preserves_human_decisions_hashes_and_timestamps(self):
-        self.assertEqual(seed.import_seed(), "SHARED_REVIEWS_IMPORTED")
+        self.assertEqual(seed.import_seed(), "SHARED_REVIEWS_IMPORTED_REVIEW_REQUIRED")
         run = EvaluationRun.objects.get(pk=CURRENT_RUN)
         self.assertEqual(str(run.pk), self.document["source_run_id"])
         self.assertEqual(EvaluationRun.objects.count(), 2)
@@ -140,7 +144,7 @@ class LocalReviewSeedTests(TestCase):
         self.assertEqual(str(change.previous_review.run_id), PREVIOUS_RUN)
         self.assertEqual(change.review_id, baseline.review_id)
         self.assertTrue(current_approval(baseline.review, run))
-        self.assertTrue(quality_pass(run))
+        self.assertFalse(quality_pass(run))
         self.assertEqual(
             [case["case_id"] for case in review_material(run)["cases"]],
             ["H01", "H02", "H03", "H04", "H05", "H06"],
@@ -155,14 +159,88 @@ class LocalReviewSeedTests(TestCase):
         previous = EvaluationRun.objects.get(pk=PREVIOUS_RUN)
         read_result(previous)
         self.assertTrue(current_approval(previous.reviews.first(), previous))
-        self.assertTrue(quality_pass(previous))
+        self.assertFalse(quality_pass(previous))
+        for record in self.document["records"]:
+            if record["model"] != "evaluations.qualityassessment":
+                continue
+            saved = QualityAssessment.objects.get(pk=record["pk"])
+            for field in ("status", "inputs", "input_sha256", "policy", "policy_sha256"):
+                self.assertEqual(getattr(saved, field), record["fields"][field])
+            self.assertEqual(saved.created_at, parse_datetime(record["fields"]["created_at"]))
         reviewer = get_user_model().objects.get(username=self.document["reviewer"])
         self.assertFalse(reviewer.is_active or reviewer.is_staff or reviewer.has_usable_password())
         self.assertEqual(reviewer.email, "")
         self.assertFalse(EvaluationBudget.objects.exists())
         client = APIClient()
         client.force_authenticate(get_user_model().objects.create_user("core:2", is_staff=True))
-        self.assertEqual(client.get(f"/api/v1/ops/evaluations/{run.id}/review").status_code, 200)
+        response = client.get(f"/api/v1/ops/evaluations/{run.id}/review")
+        self.assertEqual(response.status_code, 200)
+        state = response.json()
+        self.assertEqual(state["quality"]["status"], "NEEDS_REVIEW")
+        self.assertFalse(state["quality"]["is_current"])
+        self.assertTrue(state["approval_current"])
+        self.assertTrue(state["baseline_requires_review"])
+        self.assertFalse(state["can_promote"])
+
+    def current_assessment_document(self):
+        # Test-only current verdict fixture; never rewrite the shared historical seed.
+        document = deepcopy(self.document)
+        for record in document["records"]:
+            if record["model"] == "evaluations.qualityassessment":
+                fields = record["fields"]
+                fields["inputs"]["assessment_code_sha256"] = sha256(
+                    Path(quality.__file__).read_bytes()
+                ).hexdigest()
+                fields["input_sha256"] = digest(fields["inputs"])
+        return document
+
+    def test_current_assessment_remains_usable_without_creating_new_history(self):
+        document = self.current_assessment_document()
+        with patch.object(seed, "load_seed", return_value=(document, self.files)):
+            self.assertEqual(seed.import_seed(), "SHARED_REVIEWS_IMPORTED")
+        run = EvaluationRun.objects.get(pk=CURRENT_RUN)
+        self.assertTrue(quality_pass(run))
+        self.assertIn(run.dataset_id, baseline_choices())
+        self.assertEqual(QualityAssessment.objects.count(), 3)
+        self.assertEqual(EvaluationBaselineChange.objects.count(), 2)
+
+    @patch("apps.evaluations.prefect_client.create_run")
+    def test_code_outdated_history_cannot_be_selected_promoted_or_submitted(self, create):
+        seed.import_seed()
+        run = EvaluationRun.objects.get(pk=CURRENT_RUN)
+        baseline = EvaluationBaseline.objects.get()
+        self.assertNotIn(run.dataset_id, baseline_choices())
+        client = APIClient()
+        client.force_authenticate(get_user_model().objects.create_user("core:2", is_staff=True))
+        self.assertEqual(
+            client.post(
+                f"/api/v1/ops/evaluations/{run.id}/baseline",
+                {"review_id": baseline.review_id, "baseline_version": baseline.version},
+                format="json",
+            ).status_code,
+            409,
+        )
+        datasets = client.get("/api/v1/ops/evaluation-catalog").json()["datasets"]
+        dataset = next(item for item in datasets if item["id"] == run.dataset_id)
+        self.assertIsNone(dataset["baseline"])
+        response = client.post(
+            "/api/v1/ops/evaluations",
+            {
+                "request_id": str(uuid4()),
+                "dataset_id": run.dataset_id,
+                "candidate_capture_id": EvaluationRun.objects.get(
+                    pk=PREVIOUS_RUN
+                ).candidate_capture_id,
+                "reference_capture_id": f"run:{run.id}",
+                "baseline_version": baseline.version,
+                "execution_profile": dataset["execution_profiles"]["replay"],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"code": "INVALID_REFERENCE"})
+        self.assertEqual(EvaluationRun.objects.count(), 2)
+        create.assert_not_called()
 
     def test_restart_keeps_revoked_baseline_and_local_changes(self):
         seed.import_seed()
@@ -208,12 +286,71 @@ class LocalReviewSeedTests(TestCase):
         )
 
     def test_incompatible_policy_rolls_back_all_rows_and_identical_files_can_retry(self):
-        with patch.object(seed, "quality_pass", return_value=False):
+        policy = deepcopy(quality.current_policy())
+        policy["definition"]["version"] = "next-policy"
+        with patch.object(quality, "current_policy", return_value=policy):
             with self.assertRaisesMessage(CommandError, "incompatible"):
                 seed.import_seed()
         self.assertFalse(EvaluationRun.objects.exists())
         self.assertFalse(get_user_model().objects.exists())
-        self.assertEqual(seed.import_seed(), "SHARED_REVIEWS_IMPORTED")
+        self.assertEqual(seed.import_seed(), "SHARED_REVIEWS_IMPORTED_REVIEW_REQUIRED")
+
+    def test_changed_evidence_or_tampered_assessment_cannot_use_code_only_compatibility(self):
+        for field, value in (
+            ("capture_sha256", "0" * 64),
+            ("fixture_review_id", 999),
+            ("comparison_sha256", "0" * 64),
+            ("assessment_code_sha256", "not-a-code-hash"),
+        ):
+            with self.subTest(field=field):
+                document = deepcopy(self.document)
+                assessment = next(
+                    item["fields"]
+                    for item in document["records"]
+                    if item["model"] == "evaluations.qualityassessment"
+                    and item["fields"]["run"] == CURRENT_RUN
+                )
+                assessment["inputs"][field] = value
+                assessment["input_sha256"] = digest(assessment["inputs"])
+                with patch.object(seed, "load_seed", return_value=(document, self.files)):
+                    with self.assertRaisesMessage(CommandError, "incompatible"):
+                        seed.import_seed()
+                self.assertFalse(EvaluationRun.objects.exists())
+        for field, value in (
+            ("input_sha256", "0" * 64),
+            ("policy_sha256", "0" * 64),
+            ("reasons", [{"code": "CASE_UNSUITABLE", "case_id": "H01"}]),
+        ):
+            with self.subTest(field=field):
+                document = deepcopy(self.document)
+                assessment = next(
+                    item["fields"]
+                    for item in document["records"]
+                    if item["model"] == "evaluations.qualityassessment"
+                    and item["fields"]["run"] == CURRENT_RUN
+                )
+                assessment[field] = value
+                with patch.object(seed, "load_seed", return_value=(document, self.files)):
+                    with self.assertRaisesMessage(CommandError, "incompatible"):
+                        seed.import_seed()
+                self.assertFalse(EvaluationRun.objects.exists())
+
+    def test_current_failure_is_not_replaced_with_a_historical_pass(self):
+        document = deepcopy(self.document)
+        current = next(
+            item
+            for item in self.current_assessment_document()["records"]
+            if item["model"] == "evaluations.qualityassessment"
+            and item["fields"]["run"] == CURRENT_RUN
+        )
+        current["pk"] = 100
+        current["fields"]["status"] = "FAIL"
+        current["fields"]["reasons"] = [{"code": "CASE_UNSUITABLE", "case_id": "H01"}]
+        document["records"].append(current)
+        with patch.object(seed, "load_seed", return_value=(document, self.files)):
+            with self.assertRaisesMessage(CommandError, "incompatible"):
+                seed.import_seed()
+        self.assertFalse(EvaluationRun.objects.exists())
 
     def test_existing_different_file_is_not_overwritten(self):
         path = self.root / self.document["source_run_id"] / "request.json"

@@ -433,19 +433,22 @@ def main():
             # Run on the first normal `up`; no manual migration or bootstrap command before it.
             verify_seed = """
 from apps.evaluations.models import EvaluationBaseline, EvaluationCaseReview, EvaluationRun
-from apps.evaluations.quality import quality_pass
+from apps.evaluations.quality import quality_pass, quality_state
 from apps.evaluations.review_eligibility import current_approval
-from apps.evaluations.reviews import review_material
+from apps.evaluations.reviews import baseline_choices, review_material
 baseline = EvaluationBaseline.objects.select_related('review__run').get()
 run = baseline.review.run
 assert str(run.pk) == '628ae52a-f417-4b53-b400-d90405e6a7d8'
 assert EvaluationRun.objects.count() == 2 and EvaluationCaseReview.objects.count() == 12
-assert current_approval(baseline.review, run) and quality_pass(run)
+assert current_approval(baseline.review, run)
+assert not quality_pass(run)
+assert quality_state(run, review_material(run))['status'] == 'NEEDS_REVIEW'
+assert run.dataset_id not in baseline_choices()
 assert len(review_material(run)['cases']) == 6
 baseline.review = None
 baseline.version += 1
 baseline.save()
-print('PASS: ordinary Compose startup imported the current reviewed baseline.')
+print('PASS: Compose imported shared history; current quality reassessment is required.')
 """
             run(base + ["exec", "-T", "ops-service", "python", "manage.py", "shell",
                         "-c", verify_seed], environment)
