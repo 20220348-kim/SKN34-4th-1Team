@@ -282,6 +282,22 @@ class DevTests(unittest.TestCase):
         for service, roots in dev.INPUTS.items():
             dev.check_dockerfile((dev.REPOSITORY_ROOT / "backend" / service / "Dockerfile").read_text(), roots)
 
+    def test_core_compiler_settings_are_copied_and_changes_trigger_rebuild(self):
+        context = self.root / "backend/core-service"
+        context.mkdir(parents=True)
+        actual = dev.REPOSITORY_ROOT / "backend/core-service"
+        for name in ("Dockerfile", ".dockerignore", "gradle.properties"):
+            (context / name).write_bytes((actual / name).read_bytes())
+        (context / "gradle.properties.local").write_text("not-a-build-input\n")
+        destination = self.root / "snapshot"
+        initial = dev.snapshot(self.root, "core-service", destination)
+        self.assertEqual((destination / "gradle.properties").read_bytes(),
+                         (actual / "gradle.properties").read_bytes())
+        self.assertFalse((destination / "gradle.properties.local").exists())
+        with (context / "gradle.properties").open("a") as settings:
+            settings.write("\norg.gradle.parallel=false\n")
+        self.assertNotEqual(initial, dev.snapshot(self.root, "core-service"))
+
     def test_ignore_matching_current_allowlist_and_deep_exclusions(self):
         rules = "**\n!app/\n!app/**\n**/__pycache__\n**/*.py[cod]\n"
         self.assertTrue(dev.included("app/deep/new.py", rules))

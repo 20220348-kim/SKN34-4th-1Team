@@ -58,7 +58,7 @@ class RunnerSourceTests(unittest.TestCase):
 
     def test_every_copy_input_is_archived_and_runtime_manifest_is_verified(self):
         source = (publish.ROOT / publish.RUNNER_DOCKERFILE).read_text(encoding="utf-8")
-        inputs = {publish.RUNNER_DOCKERFILE}
+        inputs = {publish.RUNNER_DOCKERFILE, publish.RUNNER_IGNORE}
         for line in source.splitlines():
             if not line.startswith("COPY "):
                 continue
@@ -78,6 +78,25 @@ class RunnerSourceTests(unittest.TestCase):
         self.assertEqual(
             FORK.image(publish.RUNNER), "ghcr.io/alice/example-evaluation-runner"
         )
+
+    def test_runner_allowlist_explicitly_includes_copy_inputs_and_parent_paths(self):
+        rules = {
+            line.strip()
+            for line in (publish.ROOT / publish.RUNNER_IGNORE).read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        self.assertIn("**", rules)
+        # Dockerfiles and their ignore files are sent by the builder implicitly.
+        for name in set(publish.RUNNER_PATHS) - {
+            publish.RUNNER_DOCKERFILE, publish.RUNNER_IGNORE
+        }:
+            with self.subTest(path=name):
+                path = Path(name)
+                suffix = "/" if (publish.ROOT / path).is_dir() else ""
+                self.assertIn("!" + name + suffix, rules)
+                for parent in path.parents:
+                    if parent != Path("."):
+                        self.assertIn("!" + parent.as_posix() + "/", rules)
 
     def test_each_input_and_publication_policy_changes_the_reuse_key(self):
         inputs = dict.fromkeys(publish.RUNNER_PATHS, "a" * 40)

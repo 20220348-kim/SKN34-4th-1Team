@@ -18,7 +18,7 @@ import uuid
 from fork_cluster import REPOSITORY_ROOT, STATE, commands, load_settings, locked, require_dev, run
 
 INPUTS = {
-    "core-service": ("gradlew", "gradle", "build.gradle", "settings.gradle", "src"),
+    "core-service": ("gradlew", "gradle", "build.gradle", "settings.gradle", "gradle.properties", "src"),
     "catalog-service": ("gradlew", "gradle", "build.gradle", "settings.gradle", "src"),
     "ai-service": ("pyproject.toml", "uv.lock", "app", "document-tools"),
     "ops-service": ("pyproject.toml", "uv.lock", "manage.py", "config", "apps"),
