@@ -108,7 +108,7 @@ describe('관리자 AI 비용', () => {
     const days = within(screen.getByRole('region', { name: '날짜별' }))
     expect(days.queryByText('2026-10-09')).toBeNull()
     expect(days.getByText('이 기간에 함께 가져온 사용량·비용이 없어요.')).toBeTruthy()
-    const member = within(screen.getByRole('region', { name: '많이 쓴 회원' })).getByRole('link', { name: 'member@company.co.kr' })
+    const member = within(screen.getByRole('region', { name: '회원 사용량' })).getByRole('link', { name: 'member@company.co.kr' })
     expect(member.getAttribute('href')).toBe('/app/admin/accounts/detail?accountId=11')
     expect(within(screen.getByRole('region', { name: '가격표' })).getByText('gpt-5.6-luna')).toBeTruthy()
     // 사이드바 메뉴는 잠시 숨겨 주소로만 엽니다.
@@ -216,12 +216,12 @@ describe('관리자 AI 비용', () => {
     expect(stats.getByText('미확정')).toBeTruthy()
     expect(stats.queryByText('$0.000000')).toBeNull()
     expect(within(screen.getByRole('region', { name: '앱 사용량 요약' })).getByText('미확정')).toBeTruthy()
-    for (const name of ['기능별', '모델별', '많이 쓴 회원']) {
+    for (const name of ['기능별', '모델별', '회원 사용량']) {
       const section = within(screen.getByRole('region', { name }))
       expect(section.getByText('미확정 · 비용 미확정 호출 12회 제외')).toBeTruthy()
       expect(section.queryByText('$0.000000')).toBeNull()
     }
-    for (const name of ['모델별', '많이 쓴 회원']) {
+    for (const name of ['모델별', '회원 사용량']) {
       expect(within(screen.getByRole('region', { name })).getByText('$0.012346 · 비용 미확정 호출 1회 제외')).toBeTruthy()
     }
   })
