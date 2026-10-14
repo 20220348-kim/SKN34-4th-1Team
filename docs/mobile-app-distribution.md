@@ -32,8 +32,8 @@ Expo 서버에 업로드해 빌드하는 외부 빌드 서비스다. Firebase �
 | [.gitignore](../frontend/mobile/.gitignore) | 실제 환경파일·서명키·Firebase 인증·APK 제외 |
 | [루트 .easignore](../.easignore) | 기존 제외 규칙과 모바일 생성·인증파일 제외 유지, 다른 서비스·자료·작업용 체크아웃 업로드 제외 |
 
-현재 설정은 `version=0.1.0`, `android.versionCode=3`, 패키지 `ai.govbiz.mobile`, scheme `govbiz`다.
-기존 versionCode 2 APK에서 업데이트할 수 있도록 3으로 올렸다. 기본 아이콘은 최초 선택한 G 모노그램
+현재 설정은 `version=0.1.0`, `android.versionCode=7`, 패키지 `ai.govbiz.mobile`, scheme `govbiz`다.
+기존 versionCode 6 APK에서 업데이트할 수 있도록 7로 올렸다. 기본 아이콘은 최초 선택한 G 모노그램
 원본 `frontend/mobile/assets/icon.png`를 사용한다. Android 전경은 중앙 G를 줄이고 투명 여백을 늘린
 `frontend/mobile/assets/adaptive-icon.png`를 `android.adaptiveIcon.foregroundImage`에 연결했다.
 배경색은 `#E7F6ED`다. 아이콘 변경은 새 APK 빌드·설치 후 실제 런처에서 확인하며, JavaScript

@@ -30,7 +30,7 @@ const config: ExpoConfig = {
   orientation: 'portrait',
   userInterfaceStyle: 'light',
   ios: { supportsTablet: true, bundleIdentifier: 'ai.govbiz.mobile' },
-  android: { package: 'ai.govbiz.mobile', versionCode: 3,
+  android: { package: 'ai.govbiz.mobile', versionCode: 7,
     adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#E7F6ED' },
     ...(process.env.GOOGLE_SERVICES_JSON ? { googleServicesFile: process.env.GOOGLE_SERVICES_JSON } : {}) },
   extra: { eas: { projectId } },

@@ -61,6 +61,7 @@ tools
 .aws
 /.uv-cache*
 /output
+/.chart-data-*
 /.vscode
 /backend
 /infrastructure
