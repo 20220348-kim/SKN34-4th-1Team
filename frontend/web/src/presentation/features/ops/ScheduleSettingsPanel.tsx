@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { getScheduleSettings, OpsApiError, setScheduleSettings, type ScheduleSettings, type ScheduleSettingsInput } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 
@@ -11,6 +11,7 @@ export function ScheduleSettingsPanel(props: Props) {
 }
 
 function ScheduleSettingsForm({ owner, onExpired, onSaved, refreshKey }: Props) {
+  const helpId = useId()
   const [settings, setSettings] = useState<ScheduleSettings | null>(null)
   const [selected, setSelected] = useState(false)
   const [reason, setReason] = useState('')
@@ -87,17 +88,22 @@ function ScheduleSettingsForm({ owner, onExpired, onSaved, refreshKey }: Props) 
     {loading && <p role="status">정기 접수 설정을 불러오는 중…</p>}
     {!loading && settings && <>
       <dl className="grid gap-3 sm:grid-cols-3">
-        <div><dt className="text-ink-muted">정기 접수</dt><dd className="mt-1"><span className={workspaceTagClassName(settings.enabled ? 'ok' : 'muted')}>{label(settings.enabled)}</span></dd></div>
-        <div><dt className="text-ink-muted">실제 유료 모델 호출</dt><dd className="mt-1 font-semibold">{settings.live_enabled ? '서버에서 허용됨' : '서버에서 차단됨'}</dd></div>
-        <div><dt className="text-ink-muted">RAG 유료 평가</dt><dd className="mt-1 font-semibold">{settings.rag_live_enabled ? '서버에서 허용됨' : '서버에서 차단됨'}</dd></div>
+        <div><dt className="text-ink-muted">정기 접수</dt><dd className="mt-1 space-y-2"><span className={workspaceTagClassName(settings.enabled ? 'ok' : 'muted')}>{label(settings.enabled)}</span><p className="text-xs text-ink-muted">승인된 정기 계획을 새 평가로 접수할지 정합니다. 아래에서 관리자가 변경할 수 있습니다.</p></dd></div>
+        <div><dt className="text-ink-muted">실제 유료 모델 호출</dt><dd className="mt-1 space-y-2"><p className="font-semibold">{settings.live_enabled ? '서버에서 허용됨' : '서버에서 차단됨'}</p><p className="text-xs text-ink-muted">실제 모델 API 호출을 허용하는 서버 설정입니다. 정기 접수와 별개이며 이 화면에서는 변경하지 않습니다.</p></dd></div>
+        <div><dt className="text-ink-muted">RAG 유료 평가</dt><dd className="mt-1 space-y-2"><p className="font-semibold">{settings.rag_live_enabled ? '서버에서 허용됨' : '서버에서 차단됨'}</p><p className="text-xs text-ink-muted">검색과 답변 생성을 함께 평가하는 RAG 경로의 추가 서버 설정입니다. 실제 유료 모델 호출 허용도 함께 필요합니다.</p></dd></div>
       </dl>
       <p className="text-xs text-ink-muted">설정 출처: {settings.source === 'environment' ? '서버 초기 설정' : '관리자 저장 설정'} · 변경 버전 {settings.revision}. 실제 유료 실행 허용은 운영 담당자가 서버에서 별도로 관리합니다.</p>
       {!proposal ? <form className="grid gap-3 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); review() }}>
-        <label className="grid gap-1">변경할 정기 접수 상태<select className="rounded border p-2" value={selected ? 'enabled' : 'disabled'} onChange={(event) => setSelected(event.target.value === 'enabled')}>
+        <div className="space-y-1 sm:col-span-2">
+        <label className="grid gap-1">변경할 정기 접수 상태<select className="rounded border p-2" aria-describedby={`${helpId}-state`} value={selected ? 'enabled' : 'disabled'} onChange={(event) => setSelected(event.target.value === 'enabled')}>
           <option value="disabled">비활성 — 새 정기 평가 접수 중지</option><option value="enabled">활성 — 조건을 충족한 정기 평가 접수 허용</option>
         </select></label>
-        <p className="self-center text-xs text-ink-muted">상태를 선택하는 것만으로 저장되지 않습니다. 변경 사유를 입력하고 다음 단계에서 확정하세요.</p>
-        <label className="grid gap-1 sm:col-span-2">정기 접수 변경 사유<textarea className="rounded border p-2" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} required /></label>
+        <p id={`${helpId}-state`} className="text-xs text-ink-muted">준비 중에는 비활성을 유지하세요. 활성으로 저장하면 이미 승인된 계획이 다음 점검부터 접수될 수 있습니다. 비활성은 새 접수만 막으며 실행 중인 평가는 취소하지 않습니다. 선택만으로 저장되지는 않습니다.</p>
+        </div>
+        <div className="space-y-1 sm:col-span-2">
+        <label className="grid gap-1">정기 접수 변경 사유<textarea className="rounded border p-2" aria-describedby={`${helpId}-reason`} value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} required /></label>
+        <p id={`${helpId}-reason`} className="text-xs text-ink-muted">변경 목적을 500자 이내로 적으세요. 예: “비교 기준과 일별 예산 확인을 마쳐 접수 허용”, “점검 기간 동안 새 접수 중지”. 관리자 계정과 함께 변경 이력에 저장됩니다. 내용 확인 후 최종 저장해야 반영됩니다.</p>
+        </div>
         <button type="submit" className={styles.primaryButton} disabled={selected === settings.enabled || !reason.trim()}>정기 접수 변경 내용 확인</button>
       </form> : <div className="space-y-3 rounded-xl bg-surface-muted p-4" aria-label="정기 접수 변경 확인">
         <p className="font-semibold">정기 접수: {label(settings.enabled)} → {label(proposal.enabled)}</p>

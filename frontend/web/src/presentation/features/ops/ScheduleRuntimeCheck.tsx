@@ -5,7 +5,7 @@ import { workspacePageStyles as styles, workspaceTagClassName } from '../../shar
 const checks = [
   ['evidence', '평가 자료', '등록된 평가 자료와 파일의 일치 여부'],
   ['results_directory', '결과 저장소', 'Ops에서 결과 저장소에 접근할 수 있는지'],
-  ['prefect_deployment', 'Prefect 등록', '평가 배포가 등록되어 있고 일시 중지되지 않았는지'],
+  ['prefect_deployment', 'Prefect 등록', '평가 작업을 관리하는 Prefect에 실행할 작업이 등록되어 있고 일시 중지되지 않았는지'],
 ] as const
 
 export function ScheduleRuntimeCheck({ onExpired }: { onExpired: () => void }) {
