@@ -1303,6 +1303,10 @@ Langfuse를 거치는 여섯 사례는 기존 격리 CI에 `--evidence-traces-ou
 ./gradlew clean test --no-daemon
 ```
 
+`settings.gradle`의 플러그인 저장소는 Maven Central을 먼저 조회하고 Gradle Plugin Portal을 이어서 조회합니다.
+Kotlin·Spring Boot 플러그인의 하위 의존성을 Portal의 Maven Central 중계에만 의존하지 않도록 한 설정이며,
+`build.gradle`의 애플리케이션 의존성 저장소와는 별도로 적용됩니다.
+
 `gradle.properties`에서 Kotlin 컴파일 데몬의 최대 힙을 2GiB로, Gradle worker를 최대 2개로 지정합니다.
 로컬·CI·Docker 빌드에 같은 설정을 적용해 전체 컴파일 시 기본 512MiB 힙의 메모리 부족을 방지합니다.
 
