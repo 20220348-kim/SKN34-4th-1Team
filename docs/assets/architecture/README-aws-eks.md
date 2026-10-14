@@ -7,9 +7,9 @@
 현재 저장소의 운영 설정을 표시하고 실제 배포·자동 축소 관찰 결과는 아래 기록과 구분합니다.
 로컬 그림과 과거 EC2·RDS 배포 그림은 그대로 보존합니다.
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=5f371df5397a)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=5a5281882bad)
 
-[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=5f371df5397a) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=ef7f947d2d6e) · [생성 스크립트](build-aws-eks.mjs)
+[PNG 크게 보기](govbiz-aws-eks-architecture.png?v=5a5281882bad) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=b4966f58bd63) · [생성 스크립트](build-aws-eks.mjs)
 
 ## 그림의 기준
 
@@ -184,8 +184,10 @@ DB·PVC·네트워크·Langfuse는 별도로 관리합니다.
 | 도구 | 운영 구성에서의 역할 |
 |---|---|
 | **CodeBuild** | 검증된 소스로 이미지 5개를 빌드·ECR 발행하고 배포 Git 태그를 만듭니다. EKS 권한은 지정한 앱과 Argo Application의 조회로 제한합니다. |
-| **Helm** | Chart·EKS 설정·이미지 digest를 결합해 배포 YAML을 만듭니다. AWS Load Balancer Controller 설치에도 사용합니다. |
-| **Argo CD** | `govbiz-eks/v1.RUN.ATTEMPT` 태그를 자동 추적해 EKS에 반영합니다. 평가 접수 보호·migration·연결 검증을 hook으로 수행하며 데이터 리소스는 소유하지 않습니다. |
+| **Helm** | Chart·EKS 설정·이미지 digest를 결합해 배포 YAML을 만듭니다. 생성한 파일은 배포 스크립트로 전달합니다. AWS Load Balancer Controller 설치에도 사용합니다. |
+| **배포 스크립트** | 생성된 YAML을 `release/` 폴더에 저장해 별도의 Git 배포 커밋을 만들고, 그 커밋을 가리키는 배포 태그를 발행합니다. |
+| **Argo CD** | `govbiz-eks/v1.RUN.ATTEMPT` 규칙에 맞는 최신 배포 태그를 자동 감지하고, 태그가 가리키는 커밋의 `release/` 배포 파일을 읽어 EKS에 적용합니다. 평가 접수 보호·migration·연결 검증을 hook으로 수행하며 데이터 리소스는 소유하지 않습니다. |
+| **ECR / EKS 노드** | ECR은 실행 이미지를 보관합니다. EKS 노드는 Git의 배포 파일에 지정된 ECR 이미지를 가져와 Pod로 실행합니다. |
 
 기존 환경의 최초 관리권 이전과 자동 배포 활성화는 [전환 절차](../../../infrastructure/eks/argo-cd.md)를 따릅니다.
 

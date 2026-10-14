@@ -263,9 +263,9 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 
 **GovBiz 사용자·Ops 화면은 Vercel**, 새로 설치한 **Argo CD 배포 관리 화면은 EKS의 `argocd-server` Pod**에서 제공합니다. Argo 관리자는 CloudFront의 `/argocd/`로 직접 접속하고, 기존 내부 ALB·Gateway를 거쳐 `argocd` Namespace의 Service·Pod에 연결됩니다. 그림의 ⑥이 이 관리 웹 경로입니다.
 
-![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=5f371df5397a)
+![GovBiz 운영 전체 구성도 — Vercel·AWS EKS와 자동 배포](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=5a5281882bad)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=5f371df5397a) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=ef7f947d2d6e)
+[이미지 크게 보기](docs/assets/architecture/govbiz-aws-eks-architecture.png?v=5a5281882bad) · [SVG 원본](docs/assets/architecture/govbiz-aws-eks-architecture.svg?v=b4966f58bd63)
 
 | 구분 | 운영 구성 |
 |---|---|
@@ -412,8 +412,12 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 실제 배포 설정에는 이미지 내용을 고정하는 **digest(`sha256:…`)**를 기록합니다.
 
 Helm은 **Chart(공통 배포 양식) + EKS 설정값 + 이미지 digest**를 합쳐 YAML을 생성합니다.
-이 프로젝트에서는 CodeBuild가 이 작업을 수행하고, 결과를 `govbiz-eks/v1.RUN.ATTEMPT` 형식의 불변 Git 태그로 발행합니다.
-Argo CD는 이 배포 태그를 추적하므로 **소스 코드 병합 → 이미지 발행 → Git 배포 설정 발행**이 모두 이어져야 새 버전을 반영할 수 있습니다.
+CodeBuild 환경에서 Helm과 배포 스크립트를 실행합니다. Helm이 만든 YAML을 배포 스크립트가
+`release/` 폴더에 저장해 별도의 Git 배포 커밋을 만들고, 그 커밋을 가리키는
+`govbiz-eks/v1.RUN.ATTEMPT` 형식의 불변 Git 태그를 발행합니다.
+Argo CD는 규칙에 맞는 가장 높은 버전의 태그를 자동 감지하고, 해당 커밋의 `release/` 배포 파일을 읽어 EKS에 적용합니다.
+EKS 노드는 배포 파일에 지정된 이미지를 ECR에서 가져와 Pod로 실행합니다.
+즉, **Git은 배포 파일을 보관하고, ECR은 실행할 이미지를 보관**합니다.
 
 **② EKS 반영·상태 확인·웹 전환**
 

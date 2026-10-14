@@ -108,9 +108,9 @@ node docs/assets/architecture/build-kubernetes-resources.mjs --render
 
 ## Vercel + AWS EKS 전체 구성 — 2026-10-13
 
-![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=5f371df5397a)
+![GovBiz Vercel·AWS EKS 전체 구성도](govbiz-aws-eks-architecture.png?v=5a5281882bad)
 
-- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=5f371df5397a) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=ef7f947d2d6e)
+- [PNG 크게 보기](govbiz-aws-eks-architecture.png?v=5a5281882bad) · [SVG 원본](govbiz-aws-eks-architecture.svg?v=b4966f58bd63)
 - [요청·저장소·노드·배포 경로와 검증 범위](README-aws-eks.md)
 - [생성 스크립트](build-aws-eks.mjs) · [AWS 로고 출처·해시](aws-logo-sources.json)
 
