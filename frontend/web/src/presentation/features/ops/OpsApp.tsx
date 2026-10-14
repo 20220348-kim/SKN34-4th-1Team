@@ -98,16 +98,21 @@ export function OpsApp() {
 type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string; model: string }
 const liveOptions = (dataset: EvaluationCatalog['datasets'][number] | undefined) => dataset?.live_options
   ?? (dataset?.live_config && dataset.execution_profiles.live ? [{ live_config: dataset.live_config, execution_profile: dataset.execution_profiles.live }] : [])
-const opsPages = [
-  { path: dashboardPath, label: '성능 대시보드', description: '현재 지표와 변화 추이' },
-  { path: '/ops/usage', label: '실사용 모니터링', description: '서비스 AI 사용량과 비용' },
-  { path: '/ops/traces', label: 'AI 실행 추적', description: '실행 단계·입출력·오류' },
-  { path: '/ops/production-quality', label: '운영 표본 품질', description: '저장 표본의 근거·답변 검토' },
-  { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
-  { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
-  { path: '/ops/budget', label: '예산 관리', description: '사용량과 한도 관리' },
-  { path: '/ops/schedules', label: '정기 실행', description: '실행 일정과 중지 관리' },
+const opsPageGroups = [
+  { id: 'production', label: '운영', pages: [
+    { path: '/ops/usage', label: '실사용 모니터링', description: '서비스 AI 사용량과 비용' },
+    { path: '/ops/traces', label: 'AI 실행 추적', description: '실행 단계·입출력·오류' },
+    { path: '/ops/production-quality', label: '운영 표본 품질', description: '저장 표본의 근거·답변 검토' },
+  ] },
+  { id: 'testing', label: '테스트', pages: [
+    { path: dashboardPath, label: '성능 대시보드', description: '평가 지표와 변화 추이' },
+    { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
+    { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
+    { path: '/ops/budget', label: '예산 관리', description: '평가 사용량과 한도 관리' },
+    { path: '/ops/schedules', label: '정기 실행', description: '평가 일정과 중지 관리' },
+  ] },
 ]
+const opsPages = opsPageGroups.flatMap((group) => group.pages)
 
 function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSession; onExpired: () => void; onReviewChanged: () => void }) {
   const location = useLocation()
@@ -127,11 +132,16 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
   }, [location.pathname, title])
   return <div className="mx-auto grid w-full max-w-[1480px] min-w-0 flex-1 content-start lg:grid-cols-[208px_minmax(0,1fr)] lg:content-stretch">
     <aside className="border-b border-line bg-white lg:border-r lg:border-b-0">
-      <nav aria-label="LLMOps 작업 메뉴" className="grid grid-cols-2 gap-1 p-3 lg:sticky lg:top-0 lg:grid-cols-1 lg:gap-2 lg:px-4 lg:py-8">
-        {opsPages.map((page) => <Link key={page.path} to={page.path} aria-label={page.label} aria-current={current.path === page.path ? 'page' : undefined}
-          className={`min-w-0 rounded-lg border-l-[3px] px-3 py-3 text-sm no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary ${current.path === page.path ? 'border-brand-primary bg-brand-soft font-bold text-brand-primary' : 'border-transparent text-ink-muted hover:bg-surface-muted hover:text-ink'}`}>
-          <span className="block">{page.label}</span><span className="mt-1 hidden text-xs font-normal lg:block">{page.description}</span>
-        </Link>)}
+      <nav aria-label="LLMOps 작업 메뉴" className="space-y-5 p-3 lg:sticky lg:top-0 lg:px-4 lg:py-8">
+        {opsPageGroups.map((group) => <section key={group.id} aria-labelledby={`ops-menu-${group.id}`} className="border-t border-line pt-5 first:border-t-0 first:pt-0">
+          <h2 id={`ops-menu-${group.id}`} className="mb-2 px-3 text-xs font-bold tracking-wide text-ink-muted">{group.label}</h2>
+          <div className="grid grid-cols-2 gap-1 lg:grid-cols-1 lg:gap-2">
+            {group.pages.map((page) => <Link key={page.path} to={page.path} aria-label={page.label} aria-current={current.path === page.path ? 'page' : undefined}
+              className={`min-w-0 rounded-lg border-l-[3px] px-3 py-3 text-sm no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary ${current.path === page.path ? 'border-brand-primary bg-brand-soft font-bold text-brand-primary' : 'border-transparent text-ink-muted hover:bg-surface-muted hover:text-ink'}`}>
+              <span className="block">{page.label}</span><span className="mt-1 hidden text-xs font-normal lg:block">{page.description}</span>
+            </Link>)}
+          </div>
+        </section>)}
       </nav>
     </aside>
     <main id="ops-main" tabIndex={-1} className="min-w-0 focus-visible:outline-2 focus-visible:outline-brand-primary">
