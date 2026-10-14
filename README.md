@@ -279,15 +279,26 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 | **자동 배포** | 개인 main의 같은 최신 SHA에 대한 필수 CI 통과 → CodeBuild 빌드·ECR 발행 → Helm 배포 YAML·불변 Git 태그 발행 → Argo CD의 EKS 동기화 → Vercel 웹 전환 순서입니다. |
 | **배포 도구** | Helm은 Chart·EKS 설정·이미지 digest로 YAML을 만듭니다. EKS의 `argocd` Namespace에는 Core 4개와 상시 대시보드 `argocd-server` 1개, 총 Pod 5개를 observability 노드에 배치합니다. Git의 배포 설정을 읽어 Kubernetes API로 앱·배포 hook을 동기화하고 CodeBuild는 결과를 조회합니다. |
 | **배포 대시보드** | [운영 HTTPS 주소](https://d1kn7p1kr532sh.cloudfront.net/argocd/)에서 관리자 IPv4 제한과 `admin` 인증으로 접속합니다. 기존 CloudFront·내부 ALB·API Gateway를 통해 Argo의 ClusterIP `8080`에 연결하며 별도 EC2·ALB·프록시 Pod는 추가하지 않습니다. `govbiz-eks`의 업무·평가 앱 Deployment 6개와 관련 배포 리소스를 조회·관리합니다. [접속 절차](infrastructure/eks/argocd-dashboard.md) |
-| **관리·관측** | 관리자 Ops는 같은 React 웹에서 이용합니다. Prefect·Langfuse UI는 EKS 권한을 가진 사용자가 port-forward로 접근합니다. |
+| **관리·관측** | 관리자 Ops는 같은 React 웹에서 이용합니다. Langfuse는 전용 CloudFront HTTPS 주소에서 접근 제한과 로그인을 거쳐 접속하며, Prefect UI는 EKS 권한을 가진 사용자가 port-forward로 접근합니다. |
 
 [운영 구성·적용 및 검증 기록](docs/assets/architecture/README-aws-eks.md) · [로드밸런싱·API 진입 경로](infrastructure/eks/api-entrypoint.md) · [오토스케일링 설정](infrastructure/eks/autoscaling/README.md) · [자동 배포 상세](infrastructure/eks/continuous-deployment.md) · [서비스 호출 상세](docs/architecture.md)
 
 그림 상단의 **EC2 표는 노드별 역할과 기본 2대·최대 3대의 운영 설정**을 나타냅니다. 아래 `govbiz-msa`·`govbiz-evaluation`·`govbiz-observability`·`argocd` 상자는 **Namespace별 논리 구분**이며, 상자의 좌우 위치가 노드를 뜻하지 않습니다. 평가 서비스와 Argo CD는 각각 `govbiz-evaluation`·`argocd` Namespace를 유지하면서 `observability` 노드에서 실행합니다. 이 노드는 관측·평가·배포 관리용으로 함께 사용하며, Argo CD를 반드시 관측 노드에 설치해야 하는 것은 아닙니다.
 
-<a id="524-kubernetes-내부-리소스-구조"></a>
+<a id="524-kubernetes-적용-아키텍처"></a>
 
-<img src="docs/assets/readme/architecture-resources-caption.svg" alt="5.2.4 Kubernetes 내부 리소스 구조 — 아래 그림은 ① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다." width="820">
+<img src="docs/assets/readme/architecture-application-caption.svg?v=6f5a23098ce0" alt="5.2.4 Kubernetes 적용 아키텍처 — 두 EC2의 Pod 배치와 Service를 통한 요청 경로입니다. Core의 AI·Catalog 호출, Ops의 Prefect·결과 API 연결, Nginx의 Langfuse·Argo CD 접속을 함께 표시했습니다." width="820">
+
+![GovBiz Kubernetes 적용 아키텍처 — EC2별 Pod 배치와 업무·평가·관리 화면의 Service 연결](docs/assets/architecture/govbiz-kubernetes-application.png?v=e22322110015)
+
+[이미지 크게 보기](docs/assets/architecture/govbiz-kubernetes-application.png?v=e22322110015)
+
+Gateway 1개를 application EC2에 둔 배치 예시입니다. **Service는 Pod에 연결하는 논리 주소**이며, 그림에서 Service가 표시된 위치는 실행 서버를 뜻하지 않습니다. **Pod는 실제 컨테이너를 실행하는 단위**로, Ops Pod에는 API와 상태 동기화(`ops-sync`) 컨테이너 2개가 들어 있습니다.
+
+<a id="524-kubernetes-내부-리소스-구조"></a>
+<a id="525-kubernetes-내부-리소스-구조"></a>
+
+<img src="docs/assets/readme/architecture-resources-caption.svg?v=2e490f2cddb0" alt="5.2.5 Kubernetes 내부 리소스 구조 — 아래 그림은 ① 어떤 프로그램을 어디에 묶었는지 → ② 프로그램을 실행하고 연결하는 방법 → ③ 이를 뒷받침하는 기반 구성 순서로 읽으면 됩니다. Kubernetes 공식 아이콘을 사용했으며, 구체적인 이름·포트·설정은 그림 아래의 펼침 표에 정리했습니다." width="820">
 
 로컬과 EKS의 차이는 별도로 표시합니다. 실제 배포·노드 축소 관찰 결과는 [EKS 적용 기록](docs/assets/architecture/README-aws-eks.md#실제-적용검증-기록)을 확인합니다.
 
@@ -398,8 +409,9 @@ Ops MySQL의 Service는 **Headless** 방식입니다. 일반 Service처럼 별�
 </details>
 
 <a id="525-운영-배포-프로세스"></a>
+<a id="526-운영-배포-프로세스"></a>
 
-<img src="docs/assets/readme/architecture-deployment-caption.svg" alt="5.2.5 운영 배포 프로세스 — 운영 배포는 GitHub Actions가 순서를 제어하고, CodeBuild가 이미지를 빌드해 ECR에 저장한 뒤, Argo CD가 Git의 배포 설정을 EKS에 반영하는 흐름입니다. 백엔드 배포가 성공하면 같은 커밋의 웹을 Vercel 운영 주소로 전환합니다." width="820">
+<img src="docs/assets/readme/architecture-deployment-caption.svg?v=1490bf169304" alt="5.2.6 운영 배포 프로세스 — 운영 배포는 GitHub Actions가 순서를 제어하고, CodeBuild가 이미지를 빌드해 ECR에 저장한 뒤, Argo CD가 Git의 배포 설정을 EKS에 반영하는 흐름입니다. 백엔드 배포가 성공하면 같은 커밋의 웹을 Vercel 운영 주소로 전환합니다." width="820">
 
 **① 검증·이미지 빌드·배포 설정 생성**
 
