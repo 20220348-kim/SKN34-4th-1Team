@@ -25,7 +25,7 @@ def row(**changes):
         "id": "b" * 16,
         "traceId": TRACE_ID,
         "projectId": "project-private",
-        "name": "support-program-search",
+        "name": "search.total",
         "type": "SPAN",
         "startTime": "2026-10-14T01:00:00Z",
         "endTime": "2026-10-14T01:00:01Z",
@@ -74,6 +74,7 @@ class TraceClientTests(SimpleTestCase):
         self.assertEqual(urlsplit(request.full_url).path, "/api/public/v2/observations")
         query = parse_qs(urlsplit(request.full_url).query)
         self.assertEqual(query["name"], ["공고&name=other"])
+        self.assertNotIn("filter", query)
         self.assertEqual(query["cursor"], ["YWJj+/=="])
         self.assertEqual(query["isRootObservation"], ["true"])
         self.assertEqual(query["limit"], ["50"])
@@ -91,6 +92,96 @@ class TraceClientTests(SimpleTestCase):
         self.assertEqual(result["results"][0]["status_message"], "검색 서비스 연결 실패")
         for private in ("userId", "projectId", "input", "output", "metadata"):
             self.assertNotIn(private, result["results"][0])
+
+    @patch("apps.evaluations.trace_client.build_opener")
+    def test_business_filters_include_core_and_ai_roots_with_bounded_cursor_query(self, opener):
+        cases = (
+            (
+                "support-program-search",
+                "search.",
+                ["search.total", "search.semantic.request", "search.ranking.request"],
+            ),
+            ("assistant-agent", "assistant.", ["assistant.total", "assistant.agent"]),
+            (
+                "support-program-evidence",
+                "evidence.",
+                ["evidence.total", "evidence.index", "evidence.search", "evidence.answer"],
+            ),
+        )
+        start = NOW - timedelta(days=7)
+        for name, prefix, names in cases:
+            with self.subTest(name=name):
+                opener.return_value.open.return_value = response_bytes(
+                    {
+                        "data": [
+                            row(id=f"root-{index}", name=value) for index, value in enumerate(names)
+                        ],
+                        "meta": {"cursor": "bmV4dA=="},
+                    }
+                )
+                result = trace_client.read_roots(
+                    from_time=start, to_time=NOW, name=name, cursor="YWJj+/=="
+                )
+                request = opener.return_value.open.call_args.args[0]
+                query = parse_qs(urlsplit(request.full_url).query)
+                self.assertNotIn("name", query)
+                self.assertEqual(query["cursor"], ["YWJj+/=="])
+                self.assertEqual(query["limit"], ["50"])
+                self.assertEqual(query["fromStartTime"], [start.isoformat()])
+                self.assertEqual(query["toStartTime"], [NOW.isoformat()])
+                self.assertEqual(
+                    json.loads(query["filter"][0]),
+                    [
+                        {
+                            "type": "boolean",
+                            "column": "isRootObservation",
+                            "operator": "=",
+                            "value": True,
+                        },
+                        {
+                            "type": "datetime",
+                            "column": "startTime",
+                            "operator": ">=",
+                            "value": start.isoformat(),
+                        },
+                        {
+                            "type": "datetime",
+                            "column": "startTime",
+                            "operator": "<",
+                            "value": NOW.isoformat(),
+                        },
+                        {
+                            "type": "string",
+                            "column": "name",
+                            "operator": "starts with",
+                            "value": prefix,
+                        },
+                    ],
+                )
+                self.assertEqual([item["name"] for item in result["results"]], names)
+                self.assertEqual(result["next_cursor"], "bmV4dA==")
+
+    @patch("apps.evaluations.trace_client.read_page")
+    def test_category_mismatch_is_not_displayed_as_matching_execution(self, read_page):
+        read_page.return_value = ([row(name="assistant.total")], None)
+        with self.assertRaises(trace_client.LangfuseUnavailable):
+            trace_client.read_roots(
+                from_time=NOW - timedelta(days=7), to_time=NOW, name="support-program-search"
+            )
+
+    @patch("apps.evaluations.trace_client.build_opener")
+    def test_all_executions_and_exact_stage_keep_existing_query_contract(self, opener):
+        for name in ("", "evidence.answer"):
+            with self.subTest(name=name):
+                opener.return_value.open.return_value = response_bytes(
+                    {"data": [row(name="evidence.answer")], "meta": {"cursor": None}}
+                )
+                trace_client.read_roots(from_time=NOW - timedelta(days=7), to_time=NOW, name=name)
+                request = opener.return_value.open.call_args.args[0]
+                query = parse_qs(urlsplit(request.full_url).query)
+                self.assertNotIn("filter", query)
+                self.assertEqual(query["isRootObservation"], ["true"])
+                self.assertEqual(query.get("name"), [name] if name else None)
 
     @patch("apps.evaluations.trace_client.read_page")
     def test_logical_roots_are_not_deduplicated_by_trace(self, read_page):

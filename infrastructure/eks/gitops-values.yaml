@@ -6,6 +6,7 @@ services:
       requests: {cpu: 100m, memory: 512Mi}
     env:
       APPLICATION_DOCUMENT_JOBS_ENABLED: "true"
+      LANGFUSE_ENVIRONMENT: production
       ACCOUNT_OAUTH_FRONTEND_BASE_URL: https://govbiz.vercel.app
       DAILY_REPORT_FRONTEND_BASE_URL: https://govbiz.vercel.app
       SERVER_SHUTDOWN: graceful
@@ -16,6 +17,8 @@ services:
     resources:
       requests: {cpu: 100m, memory: 512Mi}
       limits: {cpu: "2", memory: 1Gi}
+    env:
+      LANGFUSE_ENVIRONMENT: production
   ops-service:
     env:
       DJANGO_COOKIE_SECURE: "true"

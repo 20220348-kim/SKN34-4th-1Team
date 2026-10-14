@@ -433,6 +433,10 @@ def bundle(root, record, tag, helm="helm"):
                     row["spec"]["template"].setdefault("metadata", {}).setdefault(
                         "annotations", {}
                     )["govbiz.io/source-sha"] = sha
+                    if row["kind"] == "Deployment" and name in ("core-service", "ai-service"):
+                        row["metadata"].setdefault("annotations", {})[
+                            "govbiz.io/langfuse-environment"
+                        ] = settings["services"][name]["env"]["LANGFUSE_ENVIRONMENT"]
                     if row["kind"] == "Deployment" and name in bounds:
                         # EKS keeps one replica of each HTTP service per host. Drop
                         # one old replica before replacing it so a full three-node
@@ -501,6 +505,24 @@ def bundle(root, record, tag, helm="helm"):
             "apiVersion": "kustomize.config.k8s.io/v1beta1",
             "kind": "Kustomization",
             "resources": [name + ".yaml" for name in WORKLOADS],
+            # Replacements run after the Application's preserved environment patches.
+            # Restore only this public label; leave private values and Secret references intact.
+            "replacements": [
+                {
+                    "source": {
+                        "kind": "Deployment", "name": name, "namespace": "govbiz-msa",
+                        "fieldPath": r"metadata.annotations.govbiz\.io/langfuse-environment",
+                    },
+                    "targets": [{
+                        "select": {"kind": "Deployment", "name": name, "namespace": "govbiz-msa"},
+                        "fieldPaths": [
+                            f"spec.template.spec.containers.[name={name}].env.[name=LANGFUSE_ENVIRONMENT].value"
+                        ],
+                        "options": {"create": True},
+                    }],
+                }
+                for name in ("core-service", "ai-service")
+            ],
         }
     ).encode()
     result["release-record.json"] = encoded({**record, "tag": tag})
@@ -684,6 +706,16 @@ def check_application(app, settings=None):
                 "kind": "Deployment", "name": "core-service", "namespace": "govbiz-msa"
             } and op["path"] == "/spec/template/spec/containers/0/env":
                 document_jobs.extend(item for item in op["value"] if item.get("name") == DOCUMENT_JOBS_FLAG)
+            if patch.get("target") in [
+                {"kind": "Deployment", "name": name, "namespace": "govbiz-msa"}
+                for name in ("core-service", "ai-service")
+            ] and op["path"] == "/spec/template/spec/containers/0/env":
+                environments = [item for item in op["value"] if item.get("name") == "LANGFUSE_ENVIRONMENT"]
+                release.require(
+                    len(environments) <= 1
+                    and all(set(item) == {"name", "value"} and isinstance(item["value"], str) for item in environments),
+                    "Preserved LANGFUSE_ENVIRONMENT must be a single literal value or absent",
+                )
             if op["path"] == "/spec/template/spec/nodeSelector":
                 target = patch.get("target", {})
                 name = target.get("name")
@@ -860,6 +892,11 @@ def synced(app, record, deployments, settings=None):
             item for item in pod["spec"]["containers"][0].get("env", [])
             if item.get("name") == DOCUMENT_JOBS_FLAG
         ] != [{"name": DOCUMENT_JOBS_FLAG, "value": "true"}]:
+            return False
+        if name in ("core-service", "ai-service") and [
+            item for item in pod["spec"]["containers"][0].get("env", [])
+            if item.get("name") == "LANGFUSE_ENVIRONMENT"
+        ] != [{"name": "LANGFUSE_ENVIRONMENT", "value": settings["services"][name]["env"]["LANGFUSE_ENVIRONMENT"]}]:
             return False
         if any(images.get(c) != record["images"][image] for c, image in mapping.items()):
             return False
