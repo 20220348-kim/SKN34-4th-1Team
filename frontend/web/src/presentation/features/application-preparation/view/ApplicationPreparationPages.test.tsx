@@ -1536,6 +1536,27 @@ describe('application preparation list', () => {
     expect(screen.queryByText('이전 사용자 신청')).toBeNull()
   })
 
+  // 목록의 answeredRequired는 필수 문항 답변 수라, 선택 문항만 답했거나(0) 섞여 있으면 저장된 답변 수와 다릅니다.
+  it.each([
+    ['선택 문항만 답함', 0, 3],
+    ['필수·선택이 섞임', 2, 4],
+    ['답변 진행을 모름', undefined, undefined],
+  ])('delete confirmation names what is erased without a misleading answer count (%s)', async (_case, answeredRequired, requiredTotal) => {
+    repository.list.mockResolvedValueOnce({
+      items: [{ id: 12, inputRevision: 3, progressStage: 'PREPARING', progressRevision: 1, progressStageUpdatedAt: detail.updatedAt,
+        sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId, answeredRequired, requiredTotal,
+        serviceField: 'TECHNICAL_SUPPORT', programTitle: firstForm.programTitle, formTitle: firstForm.formTitle, updatedAt: detail.updatedAt }],
+      nextBeforeId: null,
+    })
+    mount('/app/application-preparations')
+    await screen.findByText(firstForm.programTitle)
+    fireEvent.click(screen.getByRole('button', { name: `삭제: ${firstForm.programTitle}` }))
+    const text = screen.getByRole('dialog', { name: '신청 문서를 삭제할까요?' }).textContent ?? ''
+    expect(text).toContain(`${firstForm.programTitle}에 저장된 모든 답변과 AI 실행 기록이 지워져요.`)
+    expect(text).not.toMatch(/답변 \d+개/)
+    expect(repository.delete).not.toHaveBeenCalled()
+  })
+
   it('requires confirmation and removes only the selected saved preparation after deletion succeeds', async () => {
     repository.list.mockResolvedValueOnce({
       items: [{ id: 12, inputRevision: 3, progressStage: 'PREPARING', progressRevision: 1, progressStageUpdatedAt: detail.updatedAt,

@@ -184,6 +184,8 @@ it('공고를 고르기 전 작업 칩은 실행하지 않고 [이 공고로 작
   expect(document.activeElement).toBe(input)
 
   fireEvent.change(input, { target: { value: 'AI 창업지원 찾아줘' } })
+  // 입력 중에도 고르기 전 작업 칩을 그대로 둡니다.
+  expect(Array.from(preview().querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청 문서 쓰기', '중복 검토', '파트너 찾기'])
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '검색 전송' })))
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
   const calls = gov.mock.calls.length
@@ -224,9 +226,10 @@ it('관리자는 선택 공고 막대의 작업 칩으로 신청 문서·중복 
   fireEvent.click(screen.getByRole('button', { name: '이 공고로 작업' }))
   const tools = screen.getByRole('group', { name: '이 공고로 작업하기' })
   expect(Array.from(tools.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['신청 문서 쓰기', '중복 검토', '파트너 찾기'])
-  // 입력칸에 글을 쓰는 동안에는 두지 않습니다.
+  // 입력칸에 글을 쓰는 동안에도 작업 칩은 그대로 둡니다.
   fireEvent.change(input, { target: { value: '메모' } })
-  expect(screen.queryByRole('group', { name: '이 공고로 작업하기' })).toBeNull()
+  expect(Array.from(screen.getByRole('group', { name: '이 공고로 작업하기' }).querySelectorAll('button')).map((button) => button.textContent))
+    .toEqual(['신청 문서 쓰기', '중복 검토', '파트너 찾기'])
   fireEvent.change(input, { target: { value: '' } })
   const calls = gov.mock.calls.length
   await act(async () => fireEvent.click(within(screen.getByRole('group', { name: '이 공고로 작업하기' })).getByRole('button', { name: '중복 검토' })))

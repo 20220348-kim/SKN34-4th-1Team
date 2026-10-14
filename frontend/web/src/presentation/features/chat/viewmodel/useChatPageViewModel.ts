@@ -235,10 +235,9 @@ export function useChatPageViewModel() {
     setReturnToGovChat: chat.setReturnToGovChat,
     /**
      * 선택 공고 막대 둘째 줄의 작업 칩(신청 문서 쓰기·중복 검토·파트너 찾기)입니다. 공고를 고르기 전에도 같은 자리에 두고(누르면 고르기 안내),
-     * 원문 질문 한도와 관계없으며 입력 중에는 두지 않습니다.
+     * 원문 질문 한도와 관계없고, 입력칸에 글을 쓰는 동안에도 같은 자리에 둡니다(누를 수 있는 작업이 사라지지 않게).
      */
-    govTools: chat.isGovAgent && chat.draft.trim().length === 0
-      ? (['APPLICATION', 'COMBINATION_REVIEW', 'PARTNERS'] as const) : [],
+    govTools: chat.isGovAgent ? (['APPLICATION', 'COMBINATION_REVIEW', 'PARTNERS'] as const) : [],
     handleStartGovTool: chat.startGovTool,
     isRestoredHistory: chat.isRestoredHistory,
     displayProposal,
