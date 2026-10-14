@@ -1,5 +1,7 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
 import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core.account.repository.AccountRepository
@@ -61,9 +63,14 @@ class ApplicationDocumentGenerationJobServiceTest {
     private val redis = mock(StringRedisTemplate::class.java)
     @Suppress("UNCHECKED_CAST")
     private val values = mock(ValueOperations::class.java) as ValueOperations<String, String>
+    private var saveFails = false
     private val files = mock(ApplicationDocumentRepository::class.java, withSettings().defaultAnswer { invocation ->
-        if (invocation.method.name == "save") file else RETURNS_DEFAULTS.answer(invocation)
+        if (invocation.method.name == "save") {
+            if (saveFails) throw IllegalStateException("file save failed")
+            file
+        } else RETURNS_DEFAULTS.answer(invocation)
     })
+    private val quality = mock(ProductionQualityClient::class.java)
     private val admission = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties())
     private val documents = ApplicationDocumentService(preparations, redis, files, editor,
         ApplicationDocumentMappingService(client, editor, snapshots), mock(ApplicationDocumentMigrationProposalStore::class.java),
@@ -71,7 +78,7 @@ class ApplicationDocumentGenerationJobServiceTest {
         mock(KStartupAttachmentClient::class.java), mock(CnTradeNoticeAttachmentClient::class.java),
         mock(SupportProgramDetailService::class.java), admission, PlanUsageTestHelper.allowAll(),
         mock(ApplicationFormAvailabilityRepository::class.java),
-        jacksonObjectMapper(), Duration.ofHours(24))
+        jacksonObjectMapper(), Duration.ofHours(24), quality)
     private val service = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission,
         PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
     private val mapRequest = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "", fields = emptyList())
@@ -173,6 +180,7 @@ class ApplicationDocumentGenerationJobServiceTest {
         `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)).thenThrow(IllegalStateException("mapping interrupted"))
         assertTrue(service.execute(job.id))
         verify(jobs).beginAi(job.id)
+        verifyNoInteractions(quality)
         verify(jobs).fail(job.id, "RUN_OUTCOME_UNKNOWN", "문서 생성 결과를 확인하지 못했습니다. 저장된 문서 목록을 확인한 뒤 필요하면 다시 만들어 주세요.", null, true)
         verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
     }
@@ -194,6 +202,7 @@ class ApplicationDocumentGenerationJobServiceTest {
             ApplicationDocumentMcpException("APPLICATION_DOCUMENT_MAPPING_FAILED", "safe detail"))
         assertTrue(service.execute(job.id))
         verify(jobs).beginAi(job.id)
+        verifyNoInteractions(quality)
         verify(jobs).fail(job.id, "APPLICATION_DOCUMENT_MAPPING_FAILED", "safe detail", null, false)
     }
 
@@ -221,6 +230,7 @@ class ApplicationDocumentGenerationJobServiceTest {
     fun originalDraftWithoutAnswersDoesNotRecordAPaidAttempt() {
         `when`(preparations.findOwned(owner, job.preparationId)).thenReturn(detail.copy(facts = emptyList()))
         assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality)
         verify(jobs, never()).beginAi(anyLong())
         verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)
         verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
@@ -232,6 +242,7 @@ class ApplicationDocumentGenerationJobServiceTest {
         `when`(preparations.findOwned(owner, job.preparationId)).thenReturn(detail.copy(
             facts = detail.facts.map { it.copy(status = ApplicationFactStatus.UNKNOWN, value = null) }))
         assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality)
         verify(jobs, never()).beginAi(anyLong())
         verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)
         verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
@@ -259,10 +270,11 @@ class ApplicationDocumentGenerationJobServiceTest {
     fun existingGeneratedFileDoesNotRecordAnotherPaidAttempt() {
         `when`(files.findFingerprint(eq(owner.id), eq(job.preparationId), eq(job.expectedRevision), anyString())).thenReturn(file)
         assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality)
         verify(jobs, never()).beginAi(anyLong())
         verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)
         verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
-        verifyNoInteractions(attachments, redis)
+        verifyNoInteractions(attachments, redis, quality)
         verify(jobs).succeed(job.id, listOf(file.id))
     }
 
@@ -270,10 +282,115 @@ class ApplicationDocumentGenerationJobServiceTest {
     fun configurationFailureBeforeAnyPaidRequestDoesNotRecordAiStart() {
         `when`(client.configuration()).thenThrow(IllegalStateException("configuration unavailable"))
         assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality)
         verify(jobs, never()).beginAi(anyLong())
         verify(jobs).fail(job.id, "GENERATION_FAILED", "문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.", null, false)
         verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)
         verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
+    }
+
+    private fun publicAnswers(includeUnmapped: Boolean = false): AiDocumentGenerationPayload {
+        val goal = ApplicationFormFieldDefinition("goal", "사업 목표", "확인된 목표를 입력합니다", true)
+        val fields = listOf(goal) + if (includeUnmapped) listOf(ApplicationFormFieldDefinition("schedule", "수행 일정", "확인된 일정을 입력합니다", false)) else emptyList()
+        val publicForm = form.copy(sections = listOf(form.sections.single().copy(fields = fields)))
+        val facts = fields.mapIndexed { index, field -> ConfirmedApplicationFact(index + 1L, "company", field.key,
+            ApplicationFactStatus.PROVIDED, if (index == 0) "시험 생산 안정화" else "다음 분기", "원본 확인 문구는 수집하지 않음", 2, now) }
+        `when`(preparations.findOwned(owner, job.preparationId)).thenReturn(detail.copy(form = publicForm, facts = facts))
+        val publicBinding = ApplicationDocumentPlacement("company:goal", "goal-cell")
+        `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)).thenReturn(
+            AiDocumentMappingPayload("application-document-mcp-v1", pipeline, hash(source), "test-map", "test-engine",
+                listOf(publicBinding), listOf(publicBinding.targetId), mapOf("targets" to listOf(mapOf("targetId" to publicBinding.targetId)),
+                    "unmappedFieldIds" to if (includeUnmapped) listOf("company:schedule") else emptyList<String>())))
+        val payload = AiDocumentGenerationPayload("application-document-mcp-v1", pipeline, hash(source), 2,
+            Base64.getEncoder().encodeToString(output), hash(output), "c".repeat(64), "test-map", "test-engine",
+            mapOf("reopened" to true, "xml" to "PASSED", "render" to "NOT_RUN", "privateText" to "exclude-private-verification", "stage" to "exclude-arbitrary-stage"),
+            emptyList(), mapOf("privateDocument" to "exclude-full-map"), mapOf("privatePlan" to "exclude-full-plan",
+                "operations" to listOf(mapOf("valueRef" to publicBinding.factId, "targetId" to publicBinding.targetId, "expectedText" to "exclude-raw-source-text"))),
+            remainingExampleCount = 2)
+        `when`(client.generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)).thenReturn(payload)
+        return payload
+    }
+
+    @Test
+    fun samplesActualDocumentJobOnlyAfterFileSaveWithSafeAnswersAndVerificationAllowlist() {
+        publicAnswers(includeUnmapped = true)
+        assertTrue(service.execute(job.id))
+        verify(jobs).succeed(job.id, listOf(file.id))
+        val invocation = mockingDetails(quality).invocations.single { it.method.name == "recordOperation" }
+        assertEquals("application-document-generation", invocation.getArgument<String>(0))
+        val contexts = invocation.getArgument<List<ProductionQualityContextRequest>>(2)
+        assertEquals(listOf("field-1", "field-2"), contexts.map { it.id })
+        assertTrue(contexts[0].text.contains("시험 생산 안정화"))
+        val summary = invocation.getArgument<String>(3)
+        assertTrue(summary.contains("기입 1건 / 미기입 1건 / 남은 예시 2칸"))
+        assertTrue(summary.contains("INPUT_LOCATION_NOT_FOUND"))
+        assertTrue(summary.contains("goal-cell"))
+        assertTrue(summary.contains("검증 reopened: true"))
+        assertTrue(summary.contains("검증 render: NOT_RUN"))
+        assertTrue(summary.contains("시각적 품질을 검증한 결과가 아닙니다"))
+        assertTrue(summary.contains("파일에서 다시 추출한 본문이 아닙니다"))
+        val serialized = contexts.joinToString() + summary
+        listOf("exclude-private-verification", "exclude-arbitrary-stage", "exclude-full-map", "exclude-full-plan", "exclude-raw-source-text",
+            Base64.getEncoder().encodeToString(output), owner.email, form.sourceUrl, form.attachmentFileName,
+            "원본 확인 문구는 수집하지 않음").forEach { assertFalse(serialized.contains(it), it) }
+        assertEquals("BIZINFO:PBLN_1", invocation.getArgument<String>(6))
+        assertTrue(mockingDetails(files).invocations.first { it.method.name == "save" }.sequenceNumber < invocation.sequenceNumber)
+    }
+
+    @Test
+    fun skipsDocumentSampleContainingIdentityFieldsWithoutBlockingGeneration() {
+        assertTrue(service.execute(job.id))
+        verify(jobs).succeed(job.id, listOf(file.id))
+        verifyNoInteractions(quality)
+    }
+
+    @Test
+    fun failedFileSaveDoesNotEmitDocumentSample() {
+        publicAnswers()
+        saveFails = true
+        assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality)
+        verify(jobs, never()).succeed(anyLong(), anyList())
+    }
+
+    @Test
+    fun invalidGenerationResultDoesNotEmitDocumentSample() {
+        val payload = publicAnswers()
+        `when`(client.generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)).thenReturn(payload.copy(outputSha256 = "0".repeat(64)))
+        assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality)
+        verify(jobs, never()).succeed(anyLong(), anyList())
+    }
+
+    @Test
+    fun sampleFailureDoesNotFailSuccessfullySavedDocumentJob() {
+        publicAnswers()
+        doThrow(IllegalStateException("collector unavailable")).`when`(quality).recordOperation(
+            anyString(), anyString(), anyList(), anyString(), anyString(), isNull(), anyString())
+        assertTrue(service.execute(job.id))
+        verify(jobs).succeed(job.id, listOf(file.id))
+        assertFalse(mockingDetails(jobs).invocations.any { it.method.name == "fail" })
+    }
+
+    @Test
+    fun documentReadDownloadAndArchiveDoNotEmitAnotherSample() {
+        publicAnswers()
+        service.execute(job.id)
+        `when`(files.listOwned(owner.id, job.preparationId)).thenReturn(listOf(file))
+        `when`(files.findOwned(owner.id, job.preparationId, file.id)).thenReturn(file)
+        documents.current(owner, job.preparationId)
+        documents.download(owner, job.preparationId, file.id)
+        documents.archive(owner, job.preparationId, file.inputRevision)
+        assertEquals(1, mockingDetails(quality).invocations.count { it.method.name == "recordOperation" })
+    }
+
+    @Test
+    fun resultSavedBetweenInitialLookupAndLockIsReusedWithoutSampling() {
+        `when`(files.findFingerprint(eq(owner.id), eq(job.preparationId), eq(job.expectedRevision), anyString())).thenReturn(null, file)
+        assertTrue(service.execute(job.id))
+        verifyNoInteractions(quality, attachments)
+        verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
+        verify(jobs).succeed(job.id, listOf(file.id))
     }
 
     private fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

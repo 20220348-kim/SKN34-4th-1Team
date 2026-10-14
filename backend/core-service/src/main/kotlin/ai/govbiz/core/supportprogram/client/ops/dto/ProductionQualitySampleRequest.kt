@@ -31,3 +31,29 @@ data class ProductionQualitySampleRequest(
     val material: ProductionQualityMaterialRequest,
     @get:JsonProperty("evidence_redacted") val evidenceRedacted: Boolean = false,
 )
+
+/** 기능별 운영 검토에 필요한 공개 자료만 담는 명시적 사본이다. */
+data class ProductionQualityContextRequest(val id: String, val label: String, val text: String)
+
+data class ProductionQualityOperationMaterialRequest(
+    val question: String,
+    val contexts: List<ProductionQualityContextRequest>,
+    val output: String,
+    @get:JsonProperty("output_status") val outputStatus: String,
+    @get:JsonProperty("context_truncated") val contextTruncated: Boolean,
+    @get:JsonProperty("output_truncated") val outputTruncated: Boolean,
+)
+
+@JsonInclude(JsonInclude.Include.ALWAYS)
+data class ProductionQualityOperationSampleRequest(
+    @get:JsonProperty("schema_version") val schemaVersion: Int = 2,
+    val id: String,
+    @get:JsonProperty("captured_at") val capturedAt: String,
+    val scope: String,
+    @get:JsonProperty("sample_rate_bps") val sampleRateBps: Int,
+    @get:JsonProperty("source_document_id") val sourceDocumentId: String,
+    @get:JsonProperty("trace_id") val traceId: String?,
+    val release: String?,
+    val material: ProductionQualityOperationMaterialRequest,
+    @get:JsonProperty("evidence_redacted") val evidenceRedacted: Boolean,
+)

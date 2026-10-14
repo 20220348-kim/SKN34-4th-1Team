@@ -2,6 +2,8 @@ package ai.govbiz.core.supportprogram.service.search
 
 import ai.govbiz.core._common.domain.RegionDictionary
 import ai.govbiz.core._common.exception.AiServiceCallException
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
@@ -31,12 +33,14 @@ class SupportProgramSearchService(
     private val retrievalFacade: AiSupportProgramRetrievalFacade,
     @param:Qualifier("seoulClock") private val clock: Clock,
     private val tracing: SupportProgramSearchTracingHelper = SupportProgramSearchTracingHelper(),
+    private val productionQualityClient: ProductionQualityClient? = null,
 ) {
     fun search(
         rawQuery: String?,
         acceptingOnly: Boolean,
         companyConditions: SupportProgramCompanyConditions? = null,
-    ): SupportProgramSearchResult = execute(rawQuery, acceptingOnly, companyConditions = companyConditions).result
+        sampleProduction: Boolean = false,
+    ): SupportProgramSearchResult = execute(rawQuery, acceptingOnly, companyConditions = companyConditions, sampleProduction = sampleProduction).result
 
     /**
      * 평가 전용 호출입니다. 공개 검색 응답에는 노출하지 않고, 비어 있지 않은 질문에서 실제 결합 검색 후보와
@@ -74,6 +78,7 @@ class SupportProgramSearchService(
         acceptingOnly: Boolean,
         referenceDate: LocalDate? = null,
         companyConditions: SupportProgramCompanyConditions? = null,
+        sampleProduction: Boolean = false,
     ): SearchExecution = timed("total") {
         val query = rawQuery?.trim().orEmpty()
         val searchReferenceDate = referenceDate ?: companyConditions?.let { LocalDate.now(clock) }
@@ -152,7 +157,39 @@ class SupportProgramSearchService(
             presentProgramCount = presentPrograms.size,
             eligibleProgramCount = eligiblePrograms.size,
             eligiblePrograms = java.util.List.copyOf(eligiblePrograms),
-        )
+        ).also { if (sampleProduction && query.isNotBlank()) recordQuality(it, acceptingOnly, companyConditions) }
+    }
+
+    private fun recordQuality(execution: SearchExecution, acceptingOnly: Boolean, conditions: SupportProgramCompanyConditions?) {
+        val quality = productionQualityClient ?: return
+        runCatching {
+            val contexts = listOf(ProductionQualityContextRequest(
+                "search-conditions", "검색 조건과 범위",
+                "접수 중만: $acceptingOnly\n지역: ${conditions?.region.orEmpty()}\n업종: ${conditions?.industry.orEmpty()}\n지원 목적: ${conditions?.supportPurpose.orEmpty()}\n" +
+                    "전체 후보 수: ${execution.candidates.size}\n기업 설립일 등 개인정보는 수집하지 않음. 저장된 후보만으로 전체 검색 재현율은 판단할 수 없음.",
+            )) + execution.candidates.mapIndexed { index, candidate ->
+                val program = candidate.program
+                ProductionQualityContextRequest("candidate-${index + 1}", program.title,
+                    "공고: ${program.sourceQualifiedId}\n기관: ${program.organization}\n요약: ${program.summary}\n" +
+                        "대상: ${program.targetDescription}\n지역: ${program.regions.joinToString()}\n접수 기간: ${program.applicationPeriod}")
+            }
+            val output = execution.result.programs.mapIndexed { index, program ->
+                "${index + 1}. ${program.sourceQualifiedId} | ${program.title}\n추천 점수: ${program.recommendationScore ?: "없음"}\n" +
+                    "추천 이유: ${program.matchedReasons.joinToString(" / ")}\n지역 태그 불일치: ${program.regionTagMismatch}\n" +
+                    (program.eligibilityReview?.let { review ->
+                        "자격 검토: ${review.status}\n대상: ${review.target.status} / ${review.target.explanation}\n" +
+                            "대상 근거: ${review.target.evidence.joinToString(" / ") { "${it.field}: ${it.quote}" }}\n" +
+                            "지역: ${review.region.status} / ${review.region.explanation}\n" +
+                            "지역 근거: ${review.region.evidence.joinToString(" / ") { "${it.field}: ${it.quote}" }}"
+                    } ?: "자격 검토 없음")
+            }.joinToString("\n\n").ifBlank { "검색 결과 없음" } +
+                (execution.result.exclusionCounts?.let {
+                    "\n제외 집계: 후보=${it.candidateCount}, 관련도=${it.lowRelevance}, 대상=${it.target}, 지역=${it.region}"
+                } ?: "")
+            quality.recordOperation("support-program-search", execution.query, contexts, output,
+                outputStatus = if (execution.result.programs.isEmpty()) "NO_RESULTS" else "COMPLETED",
+                traceId = SupportProgramSearchTracingHelper.currentTraceParent()?.split('-')?.get(1))
+        }.onFailure { logger.warn("production_quality_sample_failed scope=support-program-search reason=snapshot") }
     }
 
     private fun buildRetrievalQuery(

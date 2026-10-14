@@ -1,5 +1,7 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+
 import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
@@ -146,7 +148,7 @@ class ApplicationOnlineInputGuideTest {
         val contents = mock(ApplicationPreparationContentRepository::class.java)
         val saved = mock(SavedSupportProgramRepository::class.java)
         val supportPrograms = mock(SupportProgramRepository::class.java)
-        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mock(ApplicationOnlineFormMcpClient::class.java), supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
+        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mock(ApplicationOnlineFormMcpClient::class.java), supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), mock(ProductionQualityClient::class.java))
         val owner = Account(1, "synthetic@example.test", AccountRole.USER, null, null, now)
         val preparation = StoredApplicationPreparation(10, 1, 3, ApplicationProgressStage.PREPARING, 1, now,
             NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId, manifest.formVersionId, manifest.supportedServiceFields.first()), now, now)
@@ -176,7 +178,7 @@ class ApplicationOnlineInputGuideTest {
         val saved = mock(SavedSupportProgramRepository::class.java)
         val supportPrograms = mock(SupportProgramRepository::class.java)
         val mcp = mock(ApplicationOnlineFormMcpClient::class.java)
-        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mcp, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
+        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mcp, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions(), mock(ProductionQualityClient::class.java))
         val owner = Account(1, "synthetic@example.test", AccountRole.USER, null, null, now)
         val preparation = StoredApplicationPreparation(10, 1, 3, ApplicationProgressStage.PREPARING, 1, now,
             NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId, manifest.formVersionId, manifest.supportedServiceFields.first()), now, now)

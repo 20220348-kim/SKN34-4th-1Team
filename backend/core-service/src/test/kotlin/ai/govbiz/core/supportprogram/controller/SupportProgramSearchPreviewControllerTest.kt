@@ -117,7 +117,7 @@ class SupportProgramSearchPreviewControllerTest {
         cookie(Cookie("govbiz_session", token)).header("Origin", ORIGIN)
 
     private fun stubPost() {
-        Mockito.`when`(search.search("  무역 지원  ", false, conditions)).thenReturn(SupportProgramSearchResult("무역 지원", programs))
+        Mockito.`when`(search.search("  무역 지원  ", false, conditions, sampleProduction = true)).thenReturn(SupportProgramSearchResult("무역 지원", programs))
     }
 
     @ParameterizedTest
@@ -126,7 +126,7 @@ class SupportProgramSearchPreviewControllerTest {
         val request = if (usePost) {
             stubPost(); postSearch()
         } else {
-            Mockito.`when`(search.search("무역 지원", true, null)).thenReturn(SupportProgramSearchResult("무역 지원", programs))
+            Mockito.`when`(search.search("무역 지원", true, null, sampleProduction = true)).thenReturn(SupportProgramSearchResult("무역 지원", programs))
             get(PATH).queryParam("query", "무역 지원")
         }
         val body = mvc().perform(request).andExpect(status().isOk())
@@ -151,7 +151,7 @@ class SupportProgramSearchPreviewControllerTest {
         val request = if (usePost) {
             stubPost(); postSearch()
         } else {
-            Mockito.`when`(search.search("", false, null)).thenReturn(SupportProgramSearchResult("", programs))
+            Mockito.`when`(search.search("", false, null, sampleProduction = true)).thenReturn(SupportProgramSearchResult("", programs))
             get(PATH).queryParam("query", "").queryParam("acceptingOnly", "false")
         }
         mvc().perform(request.member()).andExpect(status().isOk())
@@ -187,7 +187,7 @@ class SupportProgramSearchPreviewControllerTest {
         mvc.perform(restore(token).member("member-two")).andExpect(status().isGone())
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.code").value("SUPPORT_PROGRAM_SEARCH_RESULT_EXPIRED"))
-        Mockito.verify(search, Mockito.times(1)).search("  무역 지원  ", false, conditions)
+        Mockito.verify(search, Mockito.times(1)).search("  무역 지원  ", false, conditions, sampleProduction = true)
         Mockito.verifyNoMoreInteractions(search)
     }
 
@@ -204,7 +204,7 @@ class SupportProgramSearchPreviewControllerTest {
                 .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.code").value("SUPPORT_PROGRAM_SEARCH_RESULT_EXPIRED"))
         }
-        Mockito.verify(search, Mockito.times(1)).search("  무역 지원  ", false, conditions)
+        Mockito.verify(search, Mockito.times(1)).search("  무역 지원  ", false, conditions, sampleProduction = true)
         Mockito.verifyNoMoreInteractions(search)
     }
 
@@ -237,7 +237,7 @@ class SupportProgramSearchPreviewControllerTest {
     @Test
     fun invalidSessionCookiesSearchAsAGuestAndExpireTheCookieWhileRestoreStays401() {
         val mvc = mvc()
-        Mockito.`when`(search.search("무역", true, null)).thenReturn(SupportProgramSearchResult("무역", programs))
+        Mockito.`when`(search.search("무역", true, null, sampleProduction = true)).thenReturn(SupportProgramSearchResult("무역", programs))
         stubPost()
         for (request in listOf(get(PATH).queryParam("query", "무역"), postSearch())) {
             mvc.perform(request.member("expired-session")).andExpect(status().isOk())

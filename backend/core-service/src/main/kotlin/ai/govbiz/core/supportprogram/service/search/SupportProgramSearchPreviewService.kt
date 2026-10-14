@@ -23,8 +23,9 @@ class SupportProgramSearchPreviewService(
         acceptingOnly: Boolean,
         companyConditions: SupportProgramCompanyConditions?,
         accountId: Long?,
+        sampleProduction: Boolean = true,
     ): SupportProgramSearchPreviewResult {
-        val searched = searchService.search(query, acceptingOnly, companyConditions)
+        val searched = searchService.search(query, acceptingOnly, companyConditions, sampleProduction)
         val programs = java.util.List.copyOf(searched.programs.take(SupportProgramRankingFacade.MAX_RESULTS).map(::copyProgram))
         val full = SupportProgramSearchPreviewResult(searched.query, programs, programs.size, exclusionCounts = searched.exclusionCounts)
         if (accountId != null || programs.size <= GUEST_RESULT_LIMIT) return full

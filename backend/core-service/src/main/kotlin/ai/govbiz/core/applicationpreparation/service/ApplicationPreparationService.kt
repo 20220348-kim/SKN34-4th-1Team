@@ -42,6 +42,10 @@ import org.springframework.transaction.support.TransactionTemplate
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDraftInput
 import ai.govbiz.core.applicationpreparation.domain.ApplicationContentVersion
 import ai.govbiz.core.applicationpreparation.repository.ApplicationPreparationContentRepository
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDraftOutput
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
+import org.slf4j.LoggerFactory
 
 /** 세션 계정의 신청 준비와 문항별 질문·사용자 확인 입력 흐름을 담당합니다. */
 @Service
@@ -56,6 +60,7 @@ class ApplicationPreparationService(
     private val supportPrograms: SupportProgramRepository,
     private val planUsage: PlanUsageService,
     transactionManager: PlatformTransactionManager,
+    private val productionQuality: ProductionQualityClient,
 ) {
     private val transactions = TransactionTemplate(transactionManager)
 
@@ -286,7 +291,10 @@ class ApplicationPreparationService(
                 return@consumeDraftProgram true
             }
             try {
-                contents.complete(account.id, reservation.id, input, expectedVersionId, ai.draft(input))
+                val output = ai.draft(input)
+                contents.complete(account.id, reservation.id, input, expectedVersionId, output).also { saved ->
+                    if (saved) recordDraftQuality(input, output, draft.sourceCode, draft.sourceProgramId)
+                }
             } catch (error: RuntimeException) {
                 contents.fail(reservation.id)
                 throw error
@@ -294,6 +302,34 @@ class ApplicationPreparationService(
         }
         if (!applied) throw ApplicationPreparationRevisionConflictException()
         return findOwned(account, preparationId)
+    }
+
+    /** AI 문항 초안이 현재 작성본으로 저장된 경우만 수집한다. 파일 변환·조회·재사용은 대상이 아니다. */
+    private fun recordDraftQuality(input: ApplicationDraftInput, output: ApplicationDraftOutput, sourceCode: String, sourceProgramId: String) {
+        runCatching {
+            // 개인정보 문항은 출력에도 값이 재현될 수 있으므로 일부 값만 지우지 않고 표본 전체를 제외한다.
+            if (input.section.fields.any { PRIVATE_FIELD.containsMatchIn("${it.key} ${it.label}") }) return
+            val contexts = input.section.fields.map { field ->
+                val fact = input.facts.find { it.fieldKey == field.key }
+                ProductionQualityContextRequest(
+                    id = field.key,
+                    label = field.label,
+                    text = buildString {
+                        appendLine("작성 안내: ${field.guidance}")
+                        appendLine("필수: ${field.required}")
+                        appendLine("확인 상태: ${fact?.status ?: "미입력"}")
+                        append("사용자가 확인한 값: ${fact?.value ?: "미정"}")
+                    },
+                )
+            }
+            productionQuality.recordOperation(
+                scope = "application-document-generation",
+                question = "AI 문항 초안: ${input.section.title}\n${input.section.description}\n신청 분야: ${input.serviceField}",
+                contexts = contexts,
+                output = "문항: ${input.section.title}\n${output.content}",
+                sourceDocumentId = "$sourceCode:$sourceProgramId",
+            )
+        }.onFailure { logger.warn("production_quality_sample_skipped scope=application-document-generation reason=snapshot") }
     }
 
     fun saveContent(account: Account, preparationId: Long, sectionKey: String, expectedRevision: Long, expectedVersionId: Long, content: String): ApplicationPreparationDetailResult {
@@ -310,7 +346,13 @@ class ApplicationPreparationService(
         return findOwned(account, preparationId)
     }
 
-    private companion object {
-        val REQUEST_KEY = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+    companion object {
+        private val logger = LoggerFactory.getLogger(ApplicationPreparationService::class.java)
+        internal val PRIVATE_FIELD = Regex(
+            "(?:contact|e-?mail|phone|mobile|address|representative|company-name|registration-number|bank|account-number|" +
+                "담당자|연락처|이메일|메일주소|전화|휴대폰|휴대전화|성명|이름|대표자|업체명|회사명|기업명|주소|주민|사업자번호|사업자등록번호|계좌)",
+            RegexOption.IGNORE_CASE,
+        )
+        private val REQUEST_KEY = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
     }
 }

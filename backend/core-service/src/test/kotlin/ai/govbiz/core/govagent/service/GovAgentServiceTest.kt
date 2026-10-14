@@ -20,6 +20,8 @@ import ai.govbiz.core.partner.domain.PartnerMatchProgram
 import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.service.PlanUsageService
+import ai.govbiz.core.supportprogram.client.ops.ProductionQualityClient
+import ai.govbiz.core.supportprogram.client.ops.dto.ProductionQualityContextRequest
 import ai.govbiz.core.supportprogram.domain.SupportProgramCompanyConditions
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationContext
 import ai.govbiz.core.supportprogram.domain.SupportProgramConversationStatus
@@ -37,13 +39,48 @@ class GovAgentServiceTest {
     private val conversation = mock(SupportProgramConversationService::class.java)
     private val evidence = mock(SupportProgramEvidenceService::class.java)
     private val usage = mock(PlanUsageService::class.java)
-    private val service = GovAgentService(client, conversation, evidence, usage)
+    private val productionQuality = mock(ProductionQualityClient::class.java)
+    private val service = GovAgentService(client, conversation, evidence, usage, productionQuality)
     private val admin = AccountTestHelper.account(id = 7, role = AccountRole.ADMIN)
     private val context = SupportProgramConversationContext(null, true, SupportProgramCompanyConditions(null, null, null, null))
     private val program = GovAgentProgram("BIZINFO", "P001")
     private fun question(selected: GovAgentProgram? = program) = GovAgentQuestion("신청 방법은?", context, null, null, null, selected)
     private fun decide(action: String, selected: Boolean = true) {
         doReturn(AiGovAgentPayload(action)).`when`(client).decide(AiGovAgentRequest("신청 방법은?", selected, null, null))
+    }
+
+    @Test
+    fun collectsTheSelectedBranchAndFinalAnswerWithoutAccountOrClientIp() {
+        decide("APPLICATION")
+        val quality = mock(ProductionQualityClient::class.java)
+        val result = GovAgentService(client, conversation, evidence, usage, quality).answer(admin, "127.0.0.1", question(), sampleProduction = true)
+        val call = mockingDetails(quality).invocations.single()
+        assertEquals("recordOperation", call.method.name)
+        assertEquals("assistant-agent", call.arguments[0])
+        assertEquals(question().message, call.arguments[1])
+        @Suppress("UNCHECKED_CAST") val contexts = call.arguments[2] as List<ProductionQualityContextRequest>
+        assertTrue(contexts.single().text.contains("선택한 업무: APPLICATION"))
+        assertTrue((call.arguments[3] as String).contains(result.message!!))
+        assertEquals("BIZINFO:P001", call.arguments[6])
+        assertFalse(call.arguments.contentDeepToString().contains(admin.email))
+        assertFalse(call.arguments.contentDeepToString().contains("127.0.0.1"))
+    }
+
+    @Test
+    fun collectsMissingSelectionButSkipsEvaluationAndCollectionFailureDoesNotBreakAnswer() {
+        decide("EVIDENCE", selected = false)
+        val quality = mock(ProductionQualityClient::class.java)
+        val collecting = GovAgentService(client, conversation, evidence, usage, quality)
+        assertEquals(GovAgentOutcome.NEEDS_PROGRAM, collecting.answer(admin, "127.0.0.1", question(null), sampleProduction = true).outcome)
+        val call = mockingDetails(quality).invocations.single()
+        assertEquals("INSUFFICIENT_EVIDENCE", call.arguments[4])
+        assertEquals("", call.arguments[6])
+        clearInvocations(quality)
+        collecting.answer(admin, "127.0.0.1", question(null), sampleProduction = false)
+        verifyNoInteractions(quality)
+        val throwing = mock(ProductionQualityClient::class.java) { throw IllegalStateException("collection unavailable") }
+        assertEquals(GovAgentOutcome.NEEDS_PROGRAM,
+            GovAgentService(client, conversation, evidence, usage, throwing).answer(admin, "127.0.0.1", question(null), sampleProduction = true).outcome)
     }
 
     @Test
@@ -91,10 +128,14 @@ class GovAgentServiceTest {
         doAnswer { invocation -> invocation.getArgument<() -> SupportProgramEvidenceAnswerResult>(3).invoke() }
             .`when`(usage).consume(eq(admin), eq("127.0.0.1") ?: "", eq(PlanUsageFeature.EVIDENCE_QUESTION) ?: PlanUsageFeature.EVIDENCE_QUESTION,
                 any<() -> SupportProgramEvidenceAnswerResult>() ?: { answer })
-        val result = service.answer(admin, "127.0.0.1", question())
+        val result = service.answer(admin, "127.0.0.1", question(), sampleProduction = true)
         assertEquals(answer, result.evidence)
         assertEquals(program, result.program)
         verify(evidence).answer("BIZINFO", "P001", "신청 방법은?")
+        val sample = mockingDetails(productionQuality).invocations.single()
+        assertEquals("assistant-agent", sample.arguments[0])
+        assertEquals("INSUFFICIENT_EVIDENCE", sample.arguments[4])
+        assertEquals("BIZINFO:P001", sample.arguments[6])
         verifyNoInteractions(conversation)
     }
 

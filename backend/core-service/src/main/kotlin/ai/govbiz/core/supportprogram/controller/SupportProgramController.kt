@@ -54,7 +54,7 @@ class SupportProgramController(
     ): ResponseEntity<SupportProgramSearchResponse> = requestAdmissionService.execute(httpRequest.remoteAddr) {
         countingAiSearch(account, query, httpRequest) {
             ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
-                SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly, null, account?.id)),
+                SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly, null, account?.id, sampleProduction = httpRequest.getHeader("X-GovBiz-Evaluation") == null)),
             )
         }
     }
@@ -68,7 +68,7 @@ class SupportProgramController(
         countingAiSearch(account, request.query, httpRequest) {
             ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
                 SupportProgramSearchResponse.from(
-                    searchService.search(request.query, request.acceptingOnly, request.companyConditions?.toDomain(), account?.id),
+                    searchService.search(request.query, request.acceptingOnly, request.companyConditions?.toDomain(), account?.id, sampleProduction = httpRequest.getHeader("X-GovBiz-Evaluation") == null),
                 ),
             )
         }

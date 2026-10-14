@@ -74,13 +74,15 @@ def api_ingest(request):
 @permission_classes([IsAuthenticated])
 def api_samples(request):
     try:
-        if set(request.query_params) - {"page"}:
+        if set(request.query_params) - {"page", "scope"} or any(
+            len(request.query_params.getlist(key)) != 1 for key in request.query_params
+        ):
             raise ProductionQualityError("INVALID_SAMPLE_QUERY")
         try:
             page = int(request.query_params.get("page", "1"))
         except (TypeError, ValueError):
             raise ProductionQualityError("INVALID_SAMPLE_PAGE") from None
-        return Response(sample_dashboard(page))
+        return Response(sample_dashboard(page, request.query_params.get("scope", "")))
     except ProductionQualityError as error:
         return error_response(error)
 

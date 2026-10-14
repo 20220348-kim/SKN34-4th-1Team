@@ -10,24 +10,52 @@ const productionReviewSchema = z.object({
   expected_citation_ids: z.array(z.string()), reviewer: z.string(), created_at: z.iso.datetime({ offset: true }),
 }).refine((value) => value.verdict === ([value.grounded, value.relevant, value.complete].includes('no') ? 'issue'
   : [value.grounded, value.relevant, value.complete].every((decision) => decision === 'yes') ? 'acceptable' : 'unassessable'))
-const productionSampleSchema = z.object({
+export const productionScopes = ['support-program-evidence-answer', 'assistant-agent', 'support-program-search', 'application-document-generation', 'combination-review'] as const
+const productionScopeSchema = z.enum(productionScopes)
+export type ProductionScope = z.infer<typeof productionScopeSchema>
+const productionCriteriaSchema = z.array(z.object({ key: z.enum(['grounded', 'relevant', 'complete']), label: z.string().min(1), description: z.string().min(1) })).length(3)
+  .refine((values) => new Set(values.map((value) => value.key)).size === 3)
+const evidenceCriteria = [
+  { key: 'grounded' as const, label: '근거 일치', description: '답변의 주장이 저장된 근거에 의해 뒷받침됩니까?' },
+  { key: 'relevant' as const, label: '질문 관련성', description: '질문에 필요한 내용을 답했습니까?' },
+  { key: 'complete' as const, label: '중요 조건 포함', description: '지원 자격·제한 등 중요한 조건을 빠뜨리지 않았습니까?' },
+]
+const productionSampleBaseSchema = z.object({
   id: z.uuid(), captured_at: z.iso.datetime({ offset: true }), source_document_id: z.string(), sample_rate_bps: z.number().int().min(0).max(10000),
   checks_status: z.enum(['pending', 'checked', 'error']), check_codes: z.array(z.string()), review_version: z.number().int().nonnegative(),
   review: productionReviewSchema.nullable(), regression_candidate_id: z.uuid().nullable(),
 })
+const evidenceSampleSchema = productionSampleBaseSchema.extend({
+  scope: z.literal('support-program-evidence-answer').default('support-program-evidence-answer'),
+  review_criteria: productionCriteriaSchema.default(evidenceCriteria), regression_supported: z.literal(true).default(true),
+})
+const featureSampleSchema = productionSampleBaseSchema.extend({
+  scope: z.enum(['assistant-agent', 'support-program-search', 'application-document-generation', 'combination-review']),
+  review_criteria: productionCriteriaSchema, regression_supported: z.literal(false), regression_candidate_id: z.null(),
+})
+const productionSampleSchema = z.union([evidenceSampleSchema, featureSampleSchema])
 const productionQualitySchema = z.object({
-  scope: z.literal('support-program-evidence-answer'), enabled: z.boolean(), retention_days: z.number().int().positive(), daily_limit: z.number().int().positive(),
+  scope: z.union([z.literal('all'), productionScopeSchema]), enabled: z.boolean(), retention_days: z.number().int().positive(), daily_limit: z.number().int().positive(),
   summary: z.object({ stored: z.number().int().nonnegative(), checked: z.number().int().nonnegative(), pending: z.number().int().nonnegative(), reviewed: z.number().int().nonnegative(), issues: z.number().int().nonnegative(), unassessable: z.number().int().nonnegative() }),
   days: z.array(z.object({ date: z.iso.date(), samples: z.number().int().nonnegative(), reviewed: z.number().int().nonnegative(), acceptable: z.number().int().nonnegative(), issues: z.number().int().nonnegative(), unassessable: z.number().int().nonnegative() })
     .refine((value) => value.reviewed <= value.samples && value.reviewed === value.acceptable + value.issues + value.unassessable)),
   results: z.array(productionSampleSchema), count: z.number().int().nonnegative(), next: z.boolean(), page: z.number().int().positive(),
-})
-const productionDetailSchema = productionSampleSchema.extend({
-  material: z.object({ question: z.string(), chunks: z.array(z.object({ id: z.string(), document_id: z.string(), order: z.number().int().nonnegative(), text: z.string() })), answer: z.string(), answer_status: productionAnswerStatusSchema, citation_chunk_ids: z.array(z.string()) }),
+}).refine((value) => value.scope === 'all' || value.results.every((sample) => sample.scope === value.scope))
+const productionDetailFields = {
   material_sha256: z.string().regex(/^[a-f0-9]{64}$/), redacted: z.boolean(),
-  trace_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable(), release: z.string().nullable(), scope: z.literal('support-program-evidence-answer'),
+  trace_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable(), release: z.string().nullable(),
   review_history: z.array(productionReviewSchema).default([]),
-})
+}
+const productionDetailSchema = z.union([
+  evidenceSampleSchema.extend({
+    ...productionDetailFields,
+    material: z.object({ question: z.string(), chunks: z.array(z.object({ id: z.string(), document_id: z.string(), order: z.number().int().nonnegative(), text: z.string() })), answer: z.string(), answer_status: productionAnswerStatusSchema, citation_chunk_ids: z.array(z.string()) }),
+  }),
+  featureSampleSchema.extend({
+    ...productionDetailFields,
+    material: z.object({ question: z.string(), contexts: z.array(z.object({ id: z.string(), label: z.string(), text: z.string() })), output: z.string(), output_status: z.enum(['COMPLETED', 'NO_RESULTS', 'INSUFFICIENT_EVIDENCE']), context_truncated: z.boolean(), output_truncated: z.boolean() }),
+  }),
+])
 export type ProductionQuality = z.infer<typeof productionQualitySchema>
 export type ProductionSample = z.infer<typeof productionDetailSchema>
 export type ProductionReviewInput = Pick<NonNullable<ProductionSample['review']>, 'grounded' | 'relevant' | 'complete' | 'note' | 'reference_answer' | 'expected_status' | 'expected_citation_ids'> & { request_id: string; version: number; material_sha256: string }
@@ -693,7 +721,10 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : path.startsWith('/production-quality') && response.status === 404 ? '운영 표본 또는 회귀 후보를 찾을 수 없습니다. 보존 기간과 저장 상태를 확인하세요.'
       : path.startsWith('/production-quality') && response.status === 409 ? '운영 표본이나 검토 기록이 변경되었습니다. 상세 새로고침 후 다시 확인하세요.'
-      : path.startsWith('/production-quality') && response.status === 400 ? '검토 근거와 참조 답변·기대 상태·인용 조건을 확인하세요.'
+      : path.startsWith('/production-quality') && error?.code === 'STRUCTURAL_ISSUES_REQUIRE_REVIEW' ? '구조 오류나 저장 자료의 누락·잘림이 있는 표본은 적합으로 저장할 수 없습니다. 확인할 수 없는 기준은 판단 불가로 검토하세요.'
+      : path.startsWith('/production-quality') && error?.code === 'REGRESSION_SCOPE_UNSUPPORTED' ? '이 기능은 사람 검토만 저장할 수 있으며 회귀 후보용 정답과 인용은 지원하지 않습니다.'
+      : path.startsWith('/production-quality') && ['INVALID_SAMPLE_SCOPE', 'INVALID_SAMPLE_QUERY', 'INVALID_SAMPLE_PAGE'].includes(error?.code ?? '') ? '표본 조회 기능과 페이지 조건을 확인한 뒤 다시 조회하세요.'
+      : path.startsWith('/production-quality') && response.status === 400 ? '검토 기준과 근거를 확인하세요. 회귀 후보를 작성했다면 참조 답변·기대 상태·인용 조건도 확인하세요.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
       : response.status === 404 ? '평가 실행을 찾을 수 없습니다.'
       : response.status === 409 ? '평가 조건이나 검토 기록이 변경되었습니다. 새로고침 후 확인하세요.'
@@ -715,7 +746,7 @@ export const saveManagedDataset = (id: string, data: ManagedDatasetWrite, owner:
 export const publishManagedDataset = (id: string, data: ManagedDatasetAction, owner: string) => post(`/datasets/${encodeURIComponent(id)}/publish`, data, managedDatasetSchema.refine((value) => value.id === id), false, owner)
 export const archiveManagedDataset = (id: string, data: ManagedDatasetAction & { archived: boolean }, owner: string) => post(`/datasets/${encodeURIComponent(id)}/archive`, data, managedDatasetSchema.refine((value) => value.id === id), false, owner)
 
-export const getProductionQuality = (page: number, signal?: AbortSignal) => request(`/production-quality?page=${page}`, productionQualitySchema.refine((value) => value.page === page), { signal })
+export const getProductionQuality = (page: number, signal?: AbortSignal, scope: ProductionScope | '' = '') => request(`/production-quality?page=${page}${scope ? `&scope=${encodeURIComponent(scope)}` : ''}`, productionQualitySchema.refine((value) => value.page === page && (scope ? value.scope === scope : value.scope === 'all' || value.scope === 'support-program-evidence-answer')), { signal })
 export const getProductionSample = (id: string, signal?: AbortSignal) => request(`/production-quality/${encodeURIComponent(id)}`, productionDetailSchema.refine((value) => value.id === id), { signal })
 export const saveProductionReview = (id: string, data: ProductionReviewInput, owner: string) => post(`/production-quality/${encodeURIComponent(id)}/review`, data, productionDetailSchema.refine((value) => value.id === id && value.review?.reviewer === owner), false, owner)
 export const saveProductionRegressionCandidate = (id: string, data: { request_id: string; version: number; material_sha256: string }, owner: string) => post(`/production-quality/${encodeURIComponent(id)}/regression-candidate`, data, productionDetailSchema.refine((value) => value.id === id && value.regression_candidate_id !== null), false, owner)

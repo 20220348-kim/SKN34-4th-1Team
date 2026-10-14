@@ -82,9 +82,17 @@ class SupportProgramRequestAdmissionControllerTest {
         .with { it.remoteAddr = "192.0.2.1"; it }
 
     @Test
+    fun evaluationHeaderDisablesSamplingThroughThePublicSearchPath() {
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = false)).thenReturn(result)
+        mvc().perform(searchRequest().header("X-GovBiz-Evaluation", "evaluation-run"))
+            .andExpect(status().isOk())
+        Mockito.verify(search).search("서울 AI", true, sampleProduction = false)
+    }
+
+    @Test
     fun searchAndEvidenceShareTheSameLimitAndRejectionsNeverCallTheDownstreamService() {
         val mvc = mvc()
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         mvc.perform(searchRequest()).andExpect(status().isOk())
         mvc.perform(answerRequest())
             .andExpect(status().isTooManyRequests())
@@ -97,27 +105,27 @@ class SupportProgramRequestAdmissionControllerTest {
             .andExpect(jsonPath("$.type").value("urn:govbiz:problem:support-program-rate-limited"))
             .andExpect(jsonPath("$.instance").value(ANSWERS))
         Mockito.verifyNoInteractions(evidence)
-        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true)
+        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true, sampleProduction = true)
     }
 
     @Test
     fun postSearchSharesTheSameQuotaWithGetSearchAndEvidence() {
         val mvc = mvc()
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         mvc.perform(postSearchRequest()).andExpect(status().isOk())
         mvc.perform(searchRequest()).andExpect(status().isTooManyRequests())
         mvc.perform(answerRequest()).andExpect(status().isTooManyRequests())
-        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true)
+        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true, sampleProduction = true)
         Mockito.verifyNoInteractions(evidence)
     }
 
     @Test
     fun getSearchCannotBypassTheQuotaByChangingToPost() {
         val mvc = mvc()
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         mvc.perform(searchRequest()).andExpect(status().isOk())
         mvc.perform(postSearchRequest()).andExpect(status().isTooManyRequests())
-        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true)
+        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true, sampleProduction = true)
     }
 
     @Test
@@ -133,7 +141,7 @@ class SupportProgramRequestAdmissionControllerTest {
     @Test
     fun changingForwardedHeadersCannotBypassTheSocketAddressLimit() {
         val mvc = mvc()
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         mvc.perform(searchRequest().header("X-Forwarded-For", "198.51.100.1"))
             .andExpect(status().isOk())
         mvc.perform(searchRequest().header("X-Forwarded-For", "198.51.100.2")
@@ -145,7 +153,7 @@ class SupportProgramRequestAdmissionControllerTest {
     @Test
     fun differentAddressesAreStillSubjectToTheGlobalCapAndRecoverAfterTheRollingWindow() {
         val mvc = mvc(perClient = 10, global = 1)
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         mvc.perform(searchRequest()).andExpect(status().isOk())
         now.set(TimeUnit.MILLISECONDS.toNanos(1))
         mvc.perform(searchRequest("192.0.2.2"))
@@ -158,7 +166,7 @@ class SupportProgramRequestAdmissionControllerTest {
     @Test
     fun invalidRequestsAndOptionsDoNotConsumeQuotaButImplicitHeadDoes() {
         val mvc = mvc()
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         mvc.perform(get(SEARCH)).andExpect(status().isBadRequest())
         mvc.perform(get(SEARCH).param("query", "가".repeat(501))).andExpect(status().isBadRequest())
         mvc.perform(postSearchRequest().content("""{"query":" "}"""))
@@ -174,14 +182,14 @@ class SupportProgramRequestAdmissionControllerTest {
         mvc.perform(head(SEARCH).param("query", "서울 AI").with { it.remoteAddr = "192.0.2.1"; it })
             .andExpect(status().isOk())
         mvc.perform(searchRequest()).andExpect(status().isTooManyRequests())
-        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true)
+        Mockito.verify(search, Mockito.times(1)).search("서울 AI", true, sampleProduction = true)
         Mockito.verifyNoInteractions(evidence)
     }
 
     @Test
     fun readinessAndDetailsRemainAccessibleWhenTheRequestQuotaIsExhausted() {
         val mvc = mvc()
-        Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
+        Mockito.`when`(search.search("서울 AI", true, sampleProduction = true)).thenReturn(result)
         Mockito.`when`(readiness.get()).thenReturn(
             SupportProgramSearchReadinessResult(SupportProgramSearchState.PREPARING, 0, false, null, null, emptyList()),
         )
@@ -204,7 +212,7 @@ class SupportProgramRequestAdmissionControllerTest {
             entered.countDown()
             check(release.await(5, TimeUnit.SECONDS))
             result
-        }.`when`(search).search("서울 AI", true)
+        }.`when`(search).search("서울 AI", true, sampleProduction = true)
         val executor = Executors.newSingleThreadExecutor()
         try {
             val first = executor.submit { mvc.perform(searchRequest()).andExpect(status().isOk()) }
