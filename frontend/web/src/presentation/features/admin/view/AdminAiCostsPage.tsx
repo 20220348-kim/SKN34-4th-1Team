@@ -119,25 +119,25 @@ function CostSections({ vm }: { vm: ViewModel }) {
       </section>
 
       <div className={styles.sectionGrid}>
-        <section className={workspacePageStyles.card} aria-label="기능별">
+        <section className={`${workspacePageStyles.card} min-w-0`} aria-label="기능별">
           <h2 className={workspacePageStyles.cardTitle}>기능별</h2>
-          <Table head={['기능', '호출', '토큰', '추정 비용']} empty="이 기간에 기록된 AI 호출이 없어요."
+          <Table head={['기능', '호출', '토큰', '추정 비용']} empty="이 기간에 기록된 AI 호출이 없어요." firstColumn="feature" wrapDetails
             rows={vm.byFeature.map((row) => ({ key: row.key, cells: [row.label, row.calls, row.tokens, row.note ? `${row.cost} · ${row.note}` : row.cost] }))} />
         </section>
-        <section className={workspacePageStyles.card} aria-label="모델별">
+        <section className={`${workspacePageStyles.card} min-w-0`} aria-label="모델별">
           <h2 className={workspacePageStyles.cardTitle}>모델별</h2>
-          <Table head={['모델', '처리 등급', '호출', '토큰', '추정 비용']} empty="이 기간에 기록된 AI 호출이 없어요." modelColumn
+          <Table head={['모델', '처리 등급', '호출', '토큰', '추정 비용']} empty="이 기간에 기록된 AI 호출이 없어요." firstColumn="model" wrapDetails
             rows={vm.byModel.map((row) => ({ key: row.key, cells: [row.label, row.tier, row.calls, row.tokens, row.cost] }))} />
         </section>
       </div>
 
       <div className={styles.sectionGrid}>
-        <section className={workspacePageStyles.card} aria-label="많이 쓴 회원">
-          <h2 className={workspacePageStyles.cardTitle}>많이 쓴 회원</h2>
+        <section className={`${workspacePageStyles.card} min-w-0`} aria-label="회원 사용량">
+          <h2 className={workspacePageStyles.cardTitle}>회원 사용량</h2>
           {vm.topAccounts.length === 0 ? (
             <p className={styles.sectionNote}>회원에게 붙은 AI 호출이 없어요.</p>
           ) : (
-            <div className={adminAccountsPageStyles.tableScroll} role="region" aria-label="많이 쓴 회원 표 가로 스크롤" tabIndex={0}>
+            <div className={adminAccountsPageStyles.tableScroll} role="region" aria-label="회원 사용량 표 가로 스크롤" tabIndex={0}>
               <table className={workspacePageStyles.table}>
                 <thead><tr>{['회원', '요금제', '호출', '추정 비용'].map((label) => <th className={workspacePageStyles.tableHeadCell} key={label}>{label}</th>)}</tr></thead>
                 <tbody>
@@ -159,13 +159,15 @@ function CostSections({ vm }: { vm: ViewModel }) {
   )
 }
 
-function Table({ head, rows, empty, modelColumn = false }: {
+function Table({ head, rows, empty, firstColumn, wrapDetails = false }: {
   head: string[]
   rows: { key: string; cells: string[] }[]
   empty: string
-  modelColumn?: boolean
+  firstColumn?: 'feature' | 'model'
+  wrapDetails?: boolean
 }) {
   if (rows.length === 0) return <p className={styles.sectionNote}>{empty}</p>
+  const labelClass = firstColumn === 'model' ? styles.modelCell : firstColumn === 'feature' ? styles.featureCell : ''
   return (
     <div className={adminAccountsPageStyles.tableScroll} role="region" aria-label={`${head[0]} 표 가로 스크롤`} tabIndex={0}>
       <table className={workspacePageStyles.table}>
@@ -174,7 +176,7 @@ function Table({ head, rows, empty, modelColumn = false }: {
           {rows.map((row) => (
             <tr key={row.key}>
               {row.cells.map((cell, index) => (
-                <td className={`${workspacePageStyles.tableCell} ${index === 0 ? (modelColumn ? styles.modelCell : '') : styles.numberCell}`} key={index}>{cell}</td>
+                <td className={`${workspacePageStyles.tableCell} ${index === 0 ? labelClass : wrapDetails && index >= head.length - 2 ? styles.detailCell : styles.numberCell}`} key={index}>{cell}</td>
               ))}
             </tr>
           ))}
@@ -190,7 +192,7 @@ function PriceSection({ vm }: { vm: ViewModel }) {
     <section className={workspacePageStyles.card} aria-label="가격표">
       <h2 className={workspacePageStyles.cardTitle}>가격표 (1M 토큰당 USD)</h2>
       <p className={styles.sectionNote}>모델 이름은 앞부분으로 맞춰 날짜가 붙은 모델에도 적용해요. 가격이 바뀌면 고치지 말고 새 시작일로 더해 주세요. 캐시 쓰기 단가가 비어 있으면 쓰기 비용을 확정하지 않아요.</p>
-      <Table head={['모델', '처리 등급', '입력', '캐시 읽기', '캐시 쓰기', '12시간 캐시 쓰기', '출력', '시작일', '비고']} modelColumn
+      <Table head={['모델', '처리 등급', '입력', '캐시 읽기', '캐시 쓰기', '12시간 캐시 쓰기', '출력', '시작일', '비고']} firstColumn="model"
         empty={vm.phase === 'loading' ? '가격표를 불러오는 중이에요.' : '가격이 없어요.'}
         rows={vm.prices.map((row) => ({ key: String(row.id), cells: [row.model, row.tier, row.input, row.cached, row.cacheWrite, row.cacheWrite12h, row.output, row.effectiveFrom, row.note] }))} />
       <form className={styles.filterForm} aria-label="가격 추가" onSubmit={form.submit} noValidate>

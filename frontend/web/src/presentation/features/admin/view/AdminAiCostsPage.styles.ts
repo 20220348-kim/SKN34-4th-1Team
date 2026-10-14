@@ -21,8 +21,11 @@ export const adminAiCostsPageStyles = {
   formError: 'm-0 text-[0.78rem] leading-[1.6] text-danger',
   statNote: 'text-[0.7rem] leading-[1.5] text-ink-muted',
   numberCell: 'whitespace-nowrap text-right tabular-nums',
-  sectionGrid: 'grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))]',
+  detailCell: 'min-w-[10rem] break-keep text-right tabular-nums',
+  // 기능명과 숫자를 함께 읽을 수 있는 폭이 있을 때만 두 표를 나란히 배치합니다.
+  sectionGrid: 'grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,700px),1fr))]',
   sectionNote: 'm-0 text-[0.75rem] leading-[1.6] text-ink-muted',
+  featureCell: 'min-w-[14rem] break-keep font-medium text-ink',
   // 표가 가로로 스크롤되므로 모델 이름은 끊지 않습니다.
   modelCell: 'whitespace-nowrap font-mono text-[0.7rem] text-ink',
 } as const
