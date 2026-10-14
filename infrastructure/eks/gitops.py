@@ -48,6 +48,10 @@ SOURCE_PATHS = (
     "infrastructure/eks/gitops-values.yaml",
 )
 DOCUMENT_JOBS_FLAG = "APPLICATION_DOCUMENT_JOBS_ENABLED"
+OPS_TRACES_RUNTIME_ERROR = (
+    "Ops trace runtime configuration is missing or invalid; prepare LANGFUSE_BASE_URL "
+    "and ops-langfuse key references in the API, sync and both release hook environment patches"
+)
 
 
 def failure_diagnostic(stage, error, resource=None):
@@ -80,6 +84,7 @@ def failure_diagnostic(stage, error, resource=None):
             details["errno"] = error.errno
     elif isinstance(error, ValueError):
         details["code"] = {
+            OPS_TRACES_RUNTIME_ERROR: "OPS_TRACES_RUNTIME_CONFIG_MISSING",
             "Missing GitOps revision": "INVALID_RECEIPT_REVISION",
             "Source superseded while waiting for Argo CD": "SOURCE_SUPERSEDED",
             "Source superseded; deploy the latest tested main": "SOURCE_SUPERSEDED",
@@ -178,6 +183,53 @@ def document_jobs_patches(patches):
                 op["value"].append({"name": DOCUMENT_JOBS_FLAG, "value": "true"})
         patch["patch"] = json.dumps(operations)
     return patches
+
+
+def check_ops_trace_patches(patches):
+    """Reject preserved environment arrays that would erase the trace connection."""
+    targets = (
+        ("Deployment", "ops-service", 0),
+        ("Deployment", "ops-service", 1),
+        ("Job", "ops-service-release-prepare", 0),
+        ("Job", "ops-service-release-resume", 0),
+    )
+    literal_targets = [
+        {"kind": "Deployment", "name": name, "namespace": namespace}
+        for namespace, name, _ in deploy.TARGETS
+    ] + [
+        {"kind": "Job", "name": name, "namespace": "govbiz-msa"}
+        for kind, name, _ in targets if kind == "Job"
+    ]
+    for patch in patches:
+        if any(op.get("path", "").endswith("/env") for op in json.loads(patch["patch"])):
+            # A later regex/selector patch could otherwise erase a valid Ops environment.
+            release.require(patch.get("target") in literal_targets, OPS_TRACES_RUNTIME_ERROR)
+    expected = [
+        {"name": "LANGFUSE_BASE_URL", "value": LANGFUSE_ORIGIN},
+        *[
+            {"name": key, "valueFrom": {"secretKeyRef": {"name": "ops-langfuse", "key": key}}}
+            for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+        ],
+    ]
+    for kind, name, index in targets:
+        environments = [
+            op.get("value")
+            for patch in patches
+            if patch.get("target") == {"kind": kind, "name": name, "namespace": "govbiz-msa"}
+            for op in json.loads(patch["patch"])
+            if op.get("path") == f"/spec/template/spec/containers/{index}/env"
+        ]
+        release.require(
+            len(environments) == 1 and isinstance(environments[0], list),
+            OPS_TRACES_RUNTIME_ERROR,
+        )
+        environment = environments[0]
+        release.require(all(isinstance(item, dict) for item in environment), OPS_TRACES_RUNTIME_ERROR)
+        for entry in expected:
+            release.require(
+                [item for item in environment if item.get("name") == entry["name"]] == [entry],
+                OPS_TRACES_RUNTIME_ERROR,
+            )
 
 
 def document_jobs_patch(app):
@@ -493,6 +545,7 @@ def application(runtime, settings=None):
     patches = document_jobs_patches(runtime_patches(
         runtime, WORKLOADS, preserve_placement=True, replica_bounds=bounds
     ))
+    check_ops_trace_patches(patches)
     return [
         {
             "apiVersion": "argoproj.io/v1alpha1",
@@ -649,6 +702,7 @@ def check_application(app, settings=None):
                     op.get("value") in permitted,
                     "Argo node selector must preserve the configured workload boundary",
                 )
+    check_ops_trace_patches(source.get("kustomize", {}).get("patches", []))
     release.require(
         document_jobs == [{"name": DOCUMENT_JOBS_FLAG, "value": "true"}],
         "Enable document jobs in the preserved Core environment before publishing; use enable-document-jobs",

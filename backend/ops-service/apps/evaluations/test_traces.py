@@ -166,6 +166,89 @@ class TraceClientTests(SimpleTestCase):
         )
 
     @patch("apps.evaluations.trace_client.build_opener")
+    def test_failure_logs_distinguish_causes_without_credentials_or_remote_content(self, opener):
+        private = "private-body-sk-project-private-" + TRACE_ID
+        failures = (
+            (
+                HTTPError("http://private-host", 403, private, {}, BytesIO(private.encode())),
+                "upstream_http",
+                "403",
+            ),
+            (TimeoutError(private), "timeout", "none"),
+            (URLError(TimeoutError(private)), "timeout", "none"),
+            (URLError(private), "transport", "none"),
+            (IncompleteRead(private.encode()), "transport", "none"),
+        )
+        for failure, category, status in failures:
+            opener.return_value.open.reset_mock()
+            opener.return_value.open.side_effect = failure
+            with (
+                self.subTest(category=category, failure_type=type(failure).__name__),
+                self.assertLogs(trace_client.logger, level="WARNING") as logs,
+                self.assertRaises(trace_client.LangfuseUnavailable) as raised,
+            ):
+                trace_client.read_trace(TRACE_ID)
+            self.assertEqual(
+                [record.getMessage() for record in logs.records],
+                [f"langfuse_trace_read_failed category={category} http_status={status}"],
+            )
+            self.assertIsNone(logs.records[0].exc_info)
+            self.assertEqual(str(raised.exception), "")
+            opener.return_value.open.assert_called_once()
+
+    @patch("apps.evaluations.trace_client.build_opener")
+    def test_configuration_and_response_logs_are_sanitized_and_failure_remains_explicit(
+        self, opener
+    ):
+        with (
+            self.settings(LANGFUSE_SECRET_KEY="sk-project-private\n"),
+            self.assertLogs(trace_client.logger, level="WARNING") as logs,
+            self.assertRaises(trace_client.LangfuseUnavailable),
+        ):
+            trace_client.read_trace(TRACE_ID)
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            ["langfuse_trace_read_failed category=configuration http_status=none"],
+        )
+        opener.assert_not_called()
+        cases = (
+            (b"private response body", "response_parse"),
+            ({"data": "private response body", "meta": {}}, "response_validation"),
+        )
+        for payload, category in cases:
+            opener.return_value.open.return_value = response_bytes(payload)
+            with (
+                self.subTest(category=category),
+                self.assertLogs(trace_client.logger, level="WARNING") as logs,
+                self.assertRaises(trace_client.LangfuseUnavailable),
+            ):
+                trace_client.read_trace(TRACE_ID)
+            self.assertEqual(
+                [record.getMessage() for record in logs.records],
+                [f"langfuse_trace_read_failed category={category} http_status=200"],
+            )
+            self.assertIsNone(logs.records[0].exc_info)
+
+    @patch("apps.evaluations.trace_client.read_page")
+    def test_malformed_observation_logs_do_not_include_trace_or_response_data(self, read_page):
+        read_page.return_value = ([row(startTime="private response body")], None)
+        for operation in ("list", "detail"):
+            with (
+                self.subTest(operation=operation),
+                self.assertLogs(trace_client.logger, level="WARNING") as logs,
+                self.assertRaises(trace_client.LangfuseUnavailable),
+            ):
+                if operation == "list":
+                    trace_client.read_roots(from_time=NOW - timedelta(days=1), to_time=NOW)
+                else:
+                    trace_client.read_trace(TRACE_ID)
+            self.assertEqual(
+                [record.getMessage() for record in logs.records],
+                [f"langfuse_trace_read_failed category=response_validation operation={operation}"],
+            )
+            self.assertIsNone(logs.records[0].exc_info)
+
+    @patch("apps.evaluations.trace_client.build_opener")
     def test_invalid_or_oversized_pages_are_rejected(self, opener):
         invalid = [
             b"not json",
