@@ -30,6 +30,10 @@ PASSES = 2  # First pass and one warm repeat; not a load or end-to-end latency t
 # The saved capture predates tolerant metric verification. Accept this exact
 # verifier revision as well as the current one, without relaxing other hashes.
 CAPTURE_COMPARISON_SHA256 = "a0bb8927617845a6567d878a811383168c5c1ce13e1932f5854814b69d16c900"
+# The optional semantic-text validation added later does not affect this frozen
+# full-source fixture. Permit only this reviewed evaluator revision pair.
+CAPTURE_EVALUATOR_SHA256 = "651d00a5470495307bbee2b2715394e951b8988b9c7609879cc3c15b4f775f69"
+SEMANTIC_VALIDATION_EVALUATOR_SHA256 = "cd863bc81b74b6fcb645428cdd56b9b82119ad8a7e3652e5870f2baa87d5e282"
 
 
 def load_inputs():
@@ -133,6 +137,11 @@ def verify(report):
         expected["sourceSha256"][verifier_path] = CAPTURE_COMPARISON_SHA256
         # The captured revision had no shared metric comparator.
         del expected["sourceSha256"][(ROOT / "metric_comparison.py").relative_to(PROJECT).as_posix()]
+        evaluator_path = (ROOT / "evaluate.py").relative_to(PROJECT).as_posix()
+        if report["sourceSha256"].get(evaluator_path) != CAPTURE_EVALUATOR_SHA256:
+            raise ValueError("Report inputs/configuration/provenance changed")
+        if expected["sourceSha256"][evaluator_path] == SEMANTIC_VALIDATION_EVALUATOR_SHA256:
+            expected["sourceSha256"][evaluator_path] = CAPTURE_EVALUATOR_SHA256
         # Keep the frozen capture's original path labels, but verify the hashes
         # against the files in today's source folder. Do not rewrite the report.
         expected["sourceSha256"] = {

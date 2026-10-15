@@ -91,6 +91,38 @@ class LexicalV2ComparisonTest(unittest.TestCase):
         self.assertEqual(3, sum(path.startswith("backend/core-service/") for path in sources))
         self.assertFalse(any(path.startswith("backend/core-api/") for path in sources))
 
+    def test_frozen_capture_only_accepts_reviewed_evaluator_revisions(self):
+        evaluator = comparison.ROOT / "evaluate.py"
+        sha256 = comparison.base.sha256
+        self.assertFalse(any("semanticText" in doc or "semanticContentHash" in doc
+                             for doc in self.fixture["docs"]))
+        for digest in (comparison.CAPTURE_EVALUATOR_SHA256,
+                       comparison.SEMANTIC_VALIDATION_EVALUATOR_SHA256, "0" * 64):
+            with self.subTest(digest=digest), patch.object(
+                    comparison.base, "sha256",
+                    side_effect=lambda path: digest if path == evaluator else sha256(path)):
+                if digest == "0" * 64:
+                    with self.assertRaisesRegex(ValueError, "Report inputs/configuration/provenance changed"):
+                        comparison.verify(self.report)
+                else:
+                    comparison.verify(self.report)
+
+    def test_frozen_capture_requires_its_original_evaluator_hash(self):
+        for digest in (comparison.SEMANTIC_VALIDATION_EVALUATOR_SHA256, "0" * 64):
+            with self.subTest(digest=digest):
+                report = copy.deepcopy(self.report)
+                report["sourceSha256"]["evaluation/support-program-search/evaluate.py"] = digest
+                with self.assertRaisesRegex(ValueError, "Report inputs/configuration/provenance changed"):
+                    comparison.verify(report)
+
+    def test_new_report_does_not_accept_the_historical_evaluator_hash(self):
+        _, _, provenance = comparison.load_inputs()
+        report = copy.deepcopy(self.report)
+        report.update(comparison.metadata(self.fixture, self.cases, provenance))
+        report["sourceSha256"]["evaluation/support-program-search/evaluate.py"] = comparison.CAPTURE_EVALUATOR_SHA256
+        with self.assertRaisesRegex(ValueError, "Report inputs/configuration/provenance changed"):
+            comparison.verify(report)
+
     def test_frozen_capture_still_requires_exact_original_paths_and_source_hashes(self):
         for path in self.report["sourceSha256"]:
             if not path.startswith("backend/core-api/"):
