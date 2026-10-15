@@ -718,8 +718,9 @@ Web의 POST 검색은 `query`와 선택적인 `companyConditions`를 따로 보�
    오름차순의 최대 5개를 AI 없이 반환합니다. 자연어 검색의 빈 후보가 전체 색인 장애 때문이면 503으로 알리고,
    최초 빈 DB나 준비된 제공처의 정상 0건이면 빈 목록을 반환합니다. 미공개 제공처 데이터는 노출하지 않습니다.
 3. 비어 있지 않은 질의는 대상 공고 전체의 정확한 ID·의미검색 본문 해시를 AI Service에 전달합니다.
-   의미검색 본문은 제목·지원대상·지원내용·분야·지역과 K-Startup 분류입니다. BM25 본문과 카탈로그 지문에는
-   기관·신청기간을 포함한 기존 전체 본문을 유지합니다. Core와 Catalog의 본문 구성 규칙은 같습니다.
+   의미검색·BM25·카탈로그 지문은 제목·기관·지원대상·분야·지역·신청기간·지원내용과 K-Startup 분류의
+   기존 전체 본문을 유지합니다. Core와 Catalog의 본문 구성 규칙은 같으며 RRF 순위 계산 변경으로
+   본문·해시·Qdrant 벡터 ID를 바꾸지 않습니다.
    Core는 적격 공고 전체 값과 순서가 같은 동안 단일 불변 스냅샷의 해시·두 색인 버전 참조를 재사용합니다.
    스냅샷 크기는 제한하며 큰 입력은 저장하지 않고 정상 처리합니다. 가변 목록을 복사하고 HTTP 호출을 락으로
    직렬화하지 않습니다. DB 조회·접수 상태 계산·공개/색인 준비 검증·키워드 순위 계산은 매 요청 유지합니다.
@@ -730,7 +731,8 @@ Web의 POST 검색은 `query`와 선택적인 `companyConditions`를 따로 보�
    이어 의미 검색 응답의 질의·ID·해시·중복·유한 점수·내림차순·개수를 검증합니다.
    의미 검색과 키워드의 1부터 시작하는 순위를 동일 가중치 RRF `1 / (1 + 순위)`로 합산하고,
    동점은 BM25 순위·제공처 포함 ID 오름차순으로 정렬해 중복 없는 최대 20개를 점수화에 전달합니다.
-   상위 순위의 차이를 반영하며, 설정 비교와 질문별 회귀는 [2026-10-15 후속 기록](../evaluation/support-program-search/runs/semantic-focus-20261015-v1/README.md)을 참고하세요.
+   상위 순위의 차이를 반영합니다. [2026-10-15 후속 기록](../evaluation/support-program-search/runs/semantic-focus-20261015-v1/README.md)은
+   운영 적용을 보류한 지원 내용 중심 본문까지 포함한 실험이며 현재 본문을 유지하는 RRF 변경의 실측 성능은 아닙니다.
    어느 색인이든 실패하거나 잘못됐으면 오류를 반환합니다. 정상 키워드 일치가 없으면 의미 검색 순서를 유지합니다.
 5. AI Service는 전체 입력이 같은 검증된 랭킹 응답을 재사용하거나 모든 후보를 다시 평가합니다.
    AI는 후보의 의미·자격·세부 점수를 판단하고 총점은 출력하지 않습니다.
@@ -945,7 +947,7 @@ Frontend는 `evidenceQuestionSupported=false`인 상세(`MSIT`·`CNTRADE_NOTICE`
 ```text
 evaluation-fixture-export profile (비웹 실행)
   → findSearchablePresent로 준비된 제공처의 공개 공고 조회 → 지정한 referenceDate 기준 OPEN 공고만 선정
-  → 기존 전체 본문 text/contentHash와 의미검색용 semanticText/semanticContentHash를 별도로 기록
+  → 전체 본문 text/contentHash와 실제 의미검색 입력 semanticText/semanticContentHash 기록 (현재 두 쌍은 같음)
   → 기준 날짜·전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
   → 질문을 고정하고 선택한 AI-only·혼합·사람 검토 방식으로 참조 라벨 확정
 

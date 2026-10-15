@@ -490,7 +490,8 @@ cd backend/core-service
 실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL에서
 색인 준비가 확인된 제공처의 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽습니다.
 `id`·`text`·`contentHash`는 기존 전체 본문과 카탈로그 지문을 보존하고,
-`semanticText`·`semanticContentHash`에는 운영 색인 Mapper가 만드는 실제 의미검색 입력을 따로 기록합니다.
+`semanticText`·`semanticContentHash`에는 운영 색인 Mapper가 만드는 실제 의미검색 입력을 기록합니다.
+현재는 기존 벡터와의 호환을 위해 `text`·`contentHash`와 같은 전체 본문·해시를 사용합니다.
 공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
 이후 캡처 결과가 같은 공고 스냅샷에서 나왔는지 확인할 수 있습니다.
 
@@ -765,9 +766,10 @@ AI Service는 모델의 답변·질문 종류 코드를 허용된 존댓말 문�
 ### 검색·상세·근거 질문
 
 키워드 색인 HTTP 경계는 `client/elasticsearch`, 검색 본문 구성은 `helper/SupportProgramIndexTextHelper`입니다.
-`buildText`는 기관·기간을 포함한 기존 BM25 본문·카탈로그 지문을 보존합니다. `buildSemanticText`는
-제목·지원대상·지원내용·분야·지역 순으로 구성하고 K-Startup 분류를 덧붙여 의미검색용 해시를 별도로 만듭니다.
-Catalog에도 같은 규칙을 적용합니다. 기존 환경 전환은 [새 의미 벡터 준비 절차](../../docs/elasticsearch-lexical-search.md#의미검색-본문-전환)를 따릅니다.
+`buildText`는 제목·기관·지원대상·분야·지역·신청기간·지원내용과 K-Startup 분류를 구성합니다.
+Qdrant·BM25·카탈로그 지문과 임베딩 비용 계산은 이 기존 본문을 사용하며 Catalog에도 같은 규칙을 적용합니다.
+RRF 순위 계산 변경으로 본문·해시·벡터 ID를 바꾸지 않습니다. 지원 내용 중심 본문은 평가용 비교안이며,
+[운영 본문 전환은 보류](../../docs/elasticsearch-lexical-search.md#의미검색-본문-전환)합니다.
 `SupportProgramIndexSyncService`가 Elasticsearch → Qdrant를 준비한 뒤에만 제공처 스냅샷을 공개합니다.
 기존 환경은 `V24`가 이전 준비 플래그를 재검증 대상으로 바꾸므로 **색인 복구 후** 자연어 검색이 가능합니다.
 환경변수·장애 계약·테스트·업그레이드는 [Elasticsearch 적용 상세](../../docs/elasticsearch-lexical-search.md)를 참고하세요.
@@ -776,8 +778,9 @@ v1을 사용하던 환경은 **새 v2 인덱스 이름으로 전환하고 재색
 줄임말·동의어를 넓힌 `elasticsearch/support-program-lexical-v3.json`(중기부·소진공·코트라·알앤디·정책자금 등)은 정의만 있고
 클라이언트는 여전히 v2를 씁니다. 316문항 비교 전에는 전환·재색인하지 않으며 절차는 Elasticsearch 문서에 있습니다.
 
-현재 본문·RRF 설정의 근거와 질문별 회귀는
+지원 내용 중심 본문·RRF 설정의 비교 실험과 질문별 회귀는
 [2026-10-15 후속 비교](../../evaluation/support-program-search/runs/semantic-focus-20261015-v1/README.md)에 기록했습니다.
+이 수치는 새 본문까지 적용한 평가 결과이며 기존 벡터를 유지하는 현재 RRF 변경의 실측 성능은 아닙니다.
 이전 가중치·후보 수 비교는 [기존 기록](../../evaluation/support-program-search/runs/rrf-tuning-20261015-v1/README.md)에 보존합니다.
 
 - GET 검색: 필수 `query`는 최대 500 UTF-16 코드 단위이며 빈 문자열을 허용합니다. 탭·줄바꿈·캐리지 리턴을 제외한
