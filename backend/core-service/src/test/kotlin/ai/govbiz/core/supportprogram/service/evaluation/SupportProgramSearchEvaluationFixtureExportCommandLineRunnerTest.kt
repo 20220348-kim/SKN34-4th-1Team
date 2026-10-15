@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumen
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper.catalogProgram
+import ai.govbiz.core.supportprogram.helper.SupportProgramIndexTextHelper
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.evaluation.config.SupportProgramSearchEvaluationFixtureExportProperties
 import java.nio.charset.StandardCharsets.UTF_8
@@ -87,12 +88,15 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             val expectedDocument = SupportProgramIndexDocumentMapper.fromCatalog(program)
             val document = fixture.get("docs").get(index)
             assertEquals(
-                setOf("id", "contentHash", "text", "sortTimestamp"),
+                setOf("id", "contentHash", "text", "semanticContentHash", "semanticText", "sortTimestamp"),
                 document.propertyNames().asSequence().toSet(),
             )
             assertEquals(expectedDocument.id, document.get("id").stringValue())
-            assertEquals(expectedDocument.contentHash, document.get("contentHash").stringValue())
-            assertEquals(expectedDocument.text, document.get("text").stringValue())
+            val sourceText = SupportProgramIndexTextHelper.buildText(program)
+            assertEquals(SupportProgramIndexTextHelper.calculateContentHash(sourceText), document.get("contentHash").stringValue())
+            assertEquals(sourceText, document.get("text").stringValue())
+            assertEquals(expectedDocument.contentHash, document.get("semanticContentHash").stringValue())
+            assertEquals(expectedDocument.text, document.get("semanticText").stringValue())
             assertEquals(program.sortTimestamp, document.get("sortTimestamp").stringValue())
         }
         verify(supportProgramRepository).findSearchablePresent()
@@ -251,8 +255,10 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         HexFormat.of().formatHex(
             MessageDigest.getInstance("SHA-256").digest(
                 programs
-                    .map(SupportProgramIndexDocumentMapper::fromCatalog)
-                    .map { document -> "${document.id}:${document.contentHash}" }
+                    .map { program ->
+                        val hash = SupportProgramIndexTextHelper.calculateContentHash(SupportProgramIndexTextHelper.buildText(program))
+                        "${program.program.sourceQualifiedId}:$hash"
+                    }
                     .sorted()
                     .joinToString("\n")
                     .toByteArray(UTF_8),

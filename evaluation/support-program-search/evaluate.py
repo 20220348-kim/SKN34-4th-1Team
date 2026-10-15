@@ -262,7 +262,7 @@ def _validate_catalog_metadata(catalog, owner):
 
 
 def eligible_catalog_fingerprint(docs):
-    """Mirror the Core API's sorted UTF-8 `id:contentHash` snapshot fingerprint."""
+    """Mirror the Core API's stable full-source `id:contentHash` catalog fingerprint."""
     entries = []
     for doc in docs:
         content_hash = doc.get("contentHash")
@@ -283,6 +283,13 @@ def _validate_document_content_hashes(docs):
             raise ValueError(
                 f"Fixture document contentHash does not match its UTF-8 text for {doc['id']}",
             )
+
+        if "semanticText" in doc or "semanticContentHash" in doc:
+            semantic_text = doc.get("semanticText")
+            if not isinstance(semantic_text, str) or not semantic_text:
+                raise ValueError(f"Fixture semanticText must be nonempty for {doc['id']}")
+            if doc.get("semanticContentHash") != hashlib.sha256(semantic_text.encode("utf-8")).hexdigest():
+                raise ValueError(f"Fixture semanticContentHash does not match its UTF-8 text for {doc['id']}")
 
 
 def _validate_capture_fixture(fixture, capture_catalog):

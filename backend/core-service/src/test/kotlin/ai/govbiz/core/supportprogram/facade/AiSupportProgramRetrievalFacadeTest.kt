@@ -83,13 +83,13 @@ class AiSupportProgramRetrievalFacadeTest {
 
         assertEquals(20, result.size)
         assertEquals(20, ids.toSet().size)
-        // 두 순위에 포함된 공고가 먼저 오고, 같은 RRF 점수에서는 의미 검색 순위를 우선한다.
-        assertEquals(listOf("program-20", "program-1", "program-25"), ids.take(3))
+        // 각 검색의 최상위 후보를 보존하고, 같은 RRF 점수에서는 키워드 검색 순위를 우선한다.
+        assertEquals(listOf("program-25", "program-1", "program-20"), ids.take(3))
         assertTrue(result.all { it in candidates })
     }
 
     @Test
-    fun combinesBothRankingsAndUsesSemanticRankForEqualFusionScores() {
+    fun combinesBothRankingsAndUsesKeywordRankForEqualFusionScores() {
         val first = catalogProgram("first", "quartz").copy(sortTimestamp = "2026-08-01")
         val second = catalogProgram("second", "quartz").copy(sortTimestamp = "2026-08-02")
         val candidates = listOf(first, second, catalogProgram("third", "별도 공고"))
@@ -98,8 +98,44 @@ class AiSupportProgramRetrievalFacadeTest {
 
         val result = AiSupportProgramRetrievalFacade(client, lexicalClient).retrieve("quartz", candidates)
 
-        // 의미 순위 first/second와 키워드 순위 second/first의 합은 같으므로 first가 먼저다.
-        assertEquals(listOf("first", "second", "third"), result.map { it.program.id })
+        // 의미 순위 first/second와 키워드 순위 second/first의 합은 같으므로 키워드 1위인 second가 먼저다.
+        assertEquals(listOf("second", "first", "third"), result.map { it.program.id })
+    }
+
+    @Test
+    fun keepsStrongSingleSourceMatchesAheadOfWeakOverlapFromBothSearches() {
+        val query = "구미 방산기업 지원"
+        val semantic = (1..19).map { catalogProgram("semantic-$it") }
+        val keyword = (1..19).map { catalogProgram("keyword-$it") }
+        val weakOverlap = catalogProgram("weak-overlap")
+        val candidates = semantic + keyword + weakOverlap
+        stubSemantic(query, candidates, semantic + weakOverlap)
+        stubLexical(query, candidates, keyword + weakOverlap)
+
+        val result = AiSupportProgramRetrievalFacade(client, lexicalClient).retrieve(query, candidates)
+
+        assertEquals(listOf(keyword.first(), semantic.first()), result.take(2))
+        assertTrue(result.indexOf(keyword.first()) < result.indexOf(weakOverlap))
+        assertTrue(result.indexOf(semantic.first()) < result.indexOf(weakOverlap))
+        assertEquals(20, result.size)
+        assertEquals(20, result.map { it.program.sourceQualifiedId }.toSet().size)
+    }
+
+    @Test
+    fun includesTheKeywordCandidateWhenTheTwentiethFusionScoreIsTied() {
+        val query = "서울 AI"
+        val shared = (1..19).map { catalogProgram("shared-$it") }
+        val semanticOnly = catalogProgram("semantic-only")
+        val keywordOnly = catalogProgram("keyword-only")
+        val candidates = shared + listOf(semanticOnly, keywordOnly)
+        stubSemantic(query, candidates, shared + semanticOnly)
+        stubLexical(query, candidates, shared + keywordOnly)
+
+        val result = AiSupportProgramRetrievalFacade(client, lexicalClient).retrieve(query, candidates)
+
+        // 각 검색의 20위가 같은 점수일 때 BM25 후보가 마지막 점수화 자리를 차지한다.
+        assertEquals(shared + keywordOnly, result)
+        assertEquals(20, result.map { it.program.sourceQualifiedId }.toSet().size)
     }
 
     @Test

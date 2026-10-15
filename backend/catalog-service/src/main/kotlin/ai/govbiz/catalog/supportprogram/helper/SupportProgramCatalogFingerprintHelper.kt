@@ -1,12 +1,11 @@
 package ai.govbiz.catalog.supportprogram.helper
 
-import ai.govbiz.catalog.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.HexFormat
 
-/** 현재 적격 공고의 검색 문서 ID·내용 해시를 기준으로 재현 가능한 카탈로그 지문을 만듭니다. */
+/** 의미 검색 표현 변경과 무관하게 기존 전체 본문 기준의 카탈로그 지문을 유지합니다. */
 object SupportProgramCatalogFingerprintHelper {
 
     fun calculate(programs: List<CatalogSupportProgram>): String =
@@ -14,8 +13,10 @@ object SupportProgramCatalogFingerprintHelper {
             MessageDigest.getInstance("SHA-256").digest(
                 programs
                     .asSequence()
-                    .map(SupportProgramIndexDocumentMapper::fromCatalog)
-                    .map { document -> "${document.id}:${document.contentHash}" }
+                    .map { candidate ->
+                        val hash = SupportProgramIndexTextHelper.calculateContentHash(SupportProgramIndexTextHelper.buildText(candidate))
+                        "${candidate.program.sourceQualifiedId}:$hash"
+                    }
                     .sorted()
                     .joinToString("\n")
                     .toByteArray(StandardCharsets.UTF_8),

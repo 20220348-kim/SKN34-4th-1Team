@@ -44,6 +44,68 @@ def test_rejects_refusal_even_when_response_also_contains_valid_json():
         ), SupportProgramEvidenceAnswerSelection)
 
 
+@pytest.mark.parametrize("content", [VALID, [{"type": "text", "text": VALID}]])
+def test_preserves_strict_validation_for_legacy_responses_without_phase(content):
+    result = validate_support_program_output(
+        AIMessage(content=content, response_metadata={"status": "completed"}),
+        SupportProgramEvidenceAnswerSelection,
+    )
+    assert result.citation_chunk_indexes == [0]
+
+
+def test_validates_only_explicit_final_answer_without_mutating_commentary():
+    content = [
+        {"type": "text", "text": "Intermediate text is not JSON", "phase": "commentary"},
+        {"type": "text", "text": VALID, "phase": "final_answer"},
+    ]
+    message = AIMessage(content=content, response_metadata={"status": "completed"})
+    result = validate_support_program_output(message, SupportProgramEvidenceAnswerSelection)
+    assert result.citation_chunk_indexes == [0]
+    assert message.content == content
+
+
+@pytest.mark.parametrize("content", [
+    [{"type": "text", "text": VALID, "phase": "commentary"}],
+    [{"type": "text", "text": VALID, "phase": "unrecognized"}],
+    [{"type": "text", "text": VALID, "phase": "final_answer"},
+     {"type": "text", "text": "ambiguous legacy text"}],
+    [{"type": "text", "text": VALID, "phase": "final_answer"}, "ambiguous legacy text"],
+])
+def test_rejects_missing_final_or_unrecognized_and_mixed_text_phases(content):
+    with pytest.raises(ValueError):
+        validate_support_program_output(
+            AIMessage(content=content, response_metadata={"status": "completed"}),
+            SupportProgramEvidenceAnswerSelection,
+        )
+
+
+@pytest.mark.parametrize("final_text", [VALID[:-1], VALID + VALID, VALID.replace("[0]", '["0"]')])
+def test_does_not_repair_invalid_final_text_or_use_valid_commentary_as_fallback(final_text):
+    with pytest.raises(ValidationError):
+        validate_support_program_output(AIMessage(content=[
+            {"type": "text", "text": VALID, "phase": "commentary"},
+            {"type": "text", "text": final_text, "phase": "final_answer"},
+        ], response_metadata={"status": "completed"}), SupportProgramEvidenceAnswerSelection)
+
+
+@pytest.mark.parametrize("case", ["incomplete", "refusal", "additional_refusal", "tool", "invalid_tool"])
+def test_final_phase_does_not_bypass_response_failure_guards(case):
+    message = AIMessage(content=[{"type": "text", "text": VALID, "phase": "final_answer"}],
+                        response_metadata={"status": "completed"})
+    if case == "incomplete":
+        message.response_metadata["status"] = "incomplete"
+    elif case == "refusal":
+        message.content.append({"type": "refusal", "refusal": "refused", "phase": "commentary"})
+    elif case == "additional_refusal":
+        message.additional_kwargs["refusal"] = "refused"
+    elif case == "tool":
+        message.tool_calls = [{"name": "unexpected", "args": {}, "id": "call-1", "type": "tool_call"}]
+    else:
+        message.invalid_tool_calls = [{"name": "unexpected", "args": "invalid", "id": "call-1", "error": "invalid"}]
+    with pytest.raises(ValueError):
+        validate_support_program_output(message, SupportProgramEvidenceAnswerSelection)
+
+
 @pytest.mark.anyio
 async def test_cancelling_langchain_request_cancels_http_without_retry():
     entered, stopped = asyncio.Event(), asyncio.Event()

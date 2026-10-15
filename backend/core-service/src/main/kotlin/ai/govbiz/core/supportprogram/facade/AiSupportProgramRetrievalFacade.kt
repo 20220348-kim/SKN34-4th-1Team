@@ -13,7 +13,7 @@ import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
-/** 현재 DB 공고 버전에서 검증한 의미 검색과 키워드 순위를 결합해 점수화 후보를 고릅니다. */
+/** 현재 DB 공고 버전의 의미·키워드 순위를 동일 가중치 RRF로 결합하고, 동점은 키워드 순위를 우선합니다. */
 @Component
 class AiSupportProgramRetrievalFacade(
     private val client: AiSupportProgramIndexClient,
@@ -154,7 +154,7 @@ class AiSupportProgramRetrievalFacade(
     }
 
     private fun combineRanks(semanticIds: List<String>, keywordIds: List<String>): List<String> {
-        val semanticRanks = semanticIds.withIndex().associate { it.value to it.index + 1 }
+        val keywordRanks = keywordIds.withIndex().associate { it.value to it.index + 1 }
         val scores = mutableMapOf<String, Double>()
         for (ids in listOf(semanticIds, keywordIds)) {
             ids.forEachIndexed { index, id ->
@@ -163,13 +163,15 @@ class AiSupportProgramRetrievalFacade(
         }
         return scores.keys.sortedWith(
             compareByDescending<String> { scores.getValue(it) }
-                .thenBy { semanticRanks[it] ?: Int.MAX_VALUE }
+                .thenBy { keywordRanks[it] ?: Int.MAX_VALUE }
                 .thenBy { it },
         ).take(SupportProgramRankingFacade.MAX_CANDIDATES)
     }
 
     private companion object {
-        const val RRF_OFFSET = 60.0
+        // 상위 순위의 차이를 유지합니다. 두 검색의 하위 교집합이 한 검색의 최상위 후보를
+        // 무조건 앞서지 않게 하며, 후보 수와 가중치·동점 정책은 그대로 유지합니다.
+        const val RRF_OFFSET = 1.0
         const val MAX_CACHED_SOURCE_CHARACTERS = 2_000_000L
         val logger = LoggerFactory.getLogger(AiSupportProgramRetrievalFacade::class.java)
     }

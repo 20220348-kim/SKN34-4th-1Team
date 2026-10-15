@@ -20,6 +20,11 @@ Core의 계정·세션·신청서·원문 캐시 코드 또는 Gradle 프로젝�
   Core가 인증된 스냅샷을 읽고 자기 DB에 projection을 갱신합니다.
 - 신청서 분석 등록과 원문/첨부 문서 캐시는 Core의 책임으로 유지합니다.
 
+색인 본문은 Core와 같은 규칙으로 구성합니다. `buildText`의 전체 본문은 BM25·카탈로그 지문에 유지하고,
+`buildSemanticText`의 제목·지원대상·지원내용·분야·지역과 K-Startup 분류는 Qdrant에 사용합니다.
+기관·신청기간 변경은 카탈로그 지문에 반영되지만 의미 벡터는 재사용할 수 있습니다.
+본문 변경 시 기존 벡터를 삭제하지 않고 [새 의미 벡터를 준비한 뒤 Core를 전환](../../docs/elasticsearch-lexical-search.md#의미검색-본문-전환)합니다.
+
 독립 Flyway `V1__create_catalog.sql`은 `support_program`, `support_program_sync_generation`,
 `support_program_sync_status`, `catalog_instance`, `catalog_source_revision`만 생성합니다.
 `V2__add_support_program_application_route.sql`은 공식 신청방법·신청 URL·경로 분류 열을 추가합니다.

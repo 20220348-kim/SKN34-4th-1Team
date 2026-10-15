@@ -53,8 +53,22 @@ def validate_support_program_output(message: AIMessage, output_type: type[Output
         or any(isinstance(block, dict) and block.get("type") == "refusal" for block in message.content)
     ):
         raise ValueError("Support program model did not complete a structured response")
-    # JSON 자동 복구·문자열/숫자 강제 변환 없이 원문 전체를 검증한다.
-    return output_type.model_validate_json(message.text, strict=True)
+    text = message.text
+    if isinstance(message.content, list):
+        blocks = [block for block in message.content
+                  if isinstance(block, dict) and block.get("type") == "text"]
+        if any(block.get("phase") is not None for block in blocks):
+            # Responses의 commentary는 최종 structured output이 아니다.
+            # phase가 없는 기존 응답은 기존처럼 전체 text를 검증한다.
+            if (any(block.get("phase") not in ("commentary", "final_answer") for block in blocks)
+                    or any(isinstance(block, str) for block in message.content)):
+                raise ValueError("Support program model returned an unrecognized response phase")
+            final_blocks = [block for block in blocks if block.get("phase") == "final_answer"]
+            if not final_blocks:
+                raise ValueError("Support program model did not return a final structured response")
+            text = "".join(block["text"] for block in final_blocks)
+    # JSON 자동 복구·문자열/숫자 강제 변환 없이 선택한 최종 원문 전체를 검증한다.
+    return output_type.model_validate_json(text, strict=True)
 
 
 

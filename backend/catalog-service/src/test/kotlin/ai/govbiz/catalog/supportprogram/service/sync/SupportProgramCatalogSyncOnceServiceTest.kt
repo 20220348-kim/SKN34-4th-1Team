@@ -1,5 +1,6 @@
 package ai.govbiz.catalog.supportprogram.service.sync
 
+import ai.govbiz.catalog.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatus
@@ -23,6 +24,20 @@ class SupportProgramCatalogSyncOnceServiceTest {
     @Test
     fun dryRunCollectsSelectedSourcesWithoutWritingOrCallingAi() {
         service().run(properties(apply = false))
+        verifyNoInteractions(repository, index)
+        assertFalse(Files.exists(directory.resolve("receipt")))
+    }
+
+    @Test
+    fun dryRunBudgetsOnlyTheFocusedTextActuallySentForEmbedding() {
+        val candidate = program().let { it.copy(program = it.program.copy(
+            organization = "기관".repeat(60), applicationPeriod = "2026-01-01 ~ 2026-12-31",
+        )) }
+        val transmittedBytes = SupportProgramIndexDocumentMapper.fromCatalog(candidate).text.toByteArray(Charsets.UTF_8).size
+        val exactBudget = BigDecimal.valueOf(transmittedBytes.toLong()).multiply(BigDecimal("0.00000002"))
+
+        service(listOf(candidate)).run(properties(apply = false).copy(maxUsd = exactBudget))
+
         verifyNoInteractions(repository, index)
         assertFalse(Files.exists(directory.resolve("receipt")))
     }

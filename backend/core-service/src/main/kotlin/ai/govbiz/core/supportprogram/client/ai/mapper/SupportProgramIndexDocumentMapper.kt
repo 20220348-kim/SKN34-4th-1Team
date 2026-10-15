@@ -9,7 +9,7 @@ object SupportProgramIndexDocumentMapper {
     const val MAX_DOCUMENTS = SupportProgramIndexTextHelper.MAX_DOCUMENTS
 
     fun fromCatalog(candidate: CatalogSupportProgram): AiSupportProgramIndexDocumentRequest {
-        val text = SupportProgramIndexTextHelper.buildText(candidate)
+        val text = SupportProgramIndexTextHelper.buildSemanticText(candidate)
         return AiSupportProgramIndexDocumentRequest(
             candidate.program.sourceQualifiedId, SupportProgramIndexTextHelper.calculateContentHash(text), text,
         )

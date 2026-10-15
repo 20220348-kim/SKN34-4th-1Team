@@ -4,6 +4,22 @@
 !.gitignore
 !README.md
 
+# Frozen16-query RRF tuning: public rankings, AI review provenance and API-free replay.
+!rrf-tuning-20261015-v1/
+!rrf-tuning-20261015-v1/README.md
+!rrf-tuning-20261015-v1/inputs.json
+!rrf-tuning-20261015-v1/labels.json
+!rrf-tuning-20261015-v1/metrics.json
+!rrf-tuning-20261015-v1/replay.py
+
+# Focused semantic text and posthoc six-offset comparison; reuses prior judgments and fixture.
+!semantic-focus-20261015-v1/
+!semantic-focus-20261015-v1/README.md
+!semantic-focus-20261015-v1/inputs.json
+!semantic-focus-20261015-v1/labels.json
+!semantic-focus-20261015-v1/metrics.json
+!semantic-focus-20261015-v1/replay.py
+
 # Elasticsearch/Nori lexical-only comparison; reuses the already-shared public fixture.
 !elasticsearch-nori-20260912-v1/
 !elasticsearch-nori-20260912-v1/README.md
