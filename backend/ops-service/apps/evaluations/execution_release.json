@@ -44,7 +44,7 @@
     "scope": "source-chunks-retrieval-answer"
   },
   "generation": {
-    "sha256": "a401c8ec174a9e86adc009e5d27990c99ba384cd22c20aa430f556f10943d597",
+    "sha256": "46b256d4fd6c8878aef27d273d5cca27aa5a857ff9fe435ac055b1570e3c5d62",
     "files": {
       "evaluation/support-program-evidence/evaluate.py": "7cf30a24ade715bd0d167ea5719a9d506ef4eed22b6afd8b3dc52083e01cb3ba",
       "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
@@ -56,7 +56,7 @@
       "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
       "backend/ai-service/app/support_program_evidence/errors.py": "1297c9c6e5b964bad22c7badff4697a0703bc7f45b5490b158f0dd0294054b67",
       "backend/ai-service/app/tracing.py": "edfb2fe962e86d284d3afe56e5a9d3859903fe42ef2351c926911eadbffc13d7",
-      "backend/ai-service/app/support_program_llm.py": "4cb756fba7473a7d13b91c620dc3652b355fa41300c7260e8e55e71d6329d79d",
+      "backend/ai-service/app/support_program_llm.py": "cd22d16709e127afcb0d169cc6d467f474cdc4053f8100c13eedaeb4a24fd341",
       "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
@@ -76,7 +76,7 @@
     }
   },
   "rag_generation": {
-    "sha256": "5a83bd5317fff4f6fd6528b3dbe9681fc801882aeff300834f1ac3d3f99a5d7f",
+    "sha256": "07f480e757c21dcde307c3b0ce23316bde8e30de7520b52bd1536f1c1d5ebeca",
     "files": {
       "evaluation/support-program-evidence/evaluate.py": "7cf30a24ade715bd0d167ea5719a9d506ef4eed22b6afd8b3dc52083e01cb3ba",
       "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
@@ -88,7 +88,7 @@
       "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
       "backend/ai-service/app/support_program_evidence/errors.py": "1297c9c6e5b964bad22c7badff4697a0703bc7f45b5490b158f0dd0294054b67",
       "backend/ai-service/app/tracing.py": "edfb2fe962e86d284d3afe56e5a9d3859903fe42ef2351c926911eadbffc13d7",
-      "backend/ai-service/app/support_program_llm.py": "4cb756fba7473a7d13b91c620dc3652b355fa41300c7260e8e55e71d6329d79d",
+      "backend/ai-service/app/support_program_llm.py": "cd22d16709e127afcb0d169cc6d467f474cdc4053f8100c13eedaeb4a24fd341",
       "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3",
