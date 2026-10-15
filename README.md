@@ -759,6 +759,35 @@ flowchart LR
 RAG는 **검색한 공식 원문을 모델에게 함께 전달해 답변의 근거로 사용하는 방식**입니다.
 현재 상세 공고 질문은 기업마당·K-Startup 공식 HTML 본문을 사용합니다.
 
+<table width="100%">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>① 공고 상세</strong><br>
+      <a href="docs/assets/screenshots/evidence-question/01-program-detail.jpg"><img src="docs/assets/screenshots/evidence-question/01-program-detail.jpg" alt="공고 상세 화면과 원문에 질문하기 버튼" width="320"></a><br>
+      공고 상세에서 원문 질문을 엽니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>② 질문 입력</strong><br>
+      <a href="docs/assets/screenshots/evidence-question/02-question-input.jpg"><img src="docs/assets/screenshots/evidence-question/02-question-input.jpg" alt="원문 질문 패널에 지원 대상과 신청 방법을 묻는 질문을 입력한 화면" width="320"></a><br>
+      공고에 대해 궁금한 점을 적습니다.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>③ 근거 답변</strong><br>
+      <a href="docs/assets/screenshots/evidence-question/03-evidence-answer.jpg"><img src="docs/assets/screenshots/evidence-question/03-evidence-answer.jpg" alt="공식 원문을 근거로 만든 답변과 근거 원문 보기 버튼" width="320"></a><br>
+      원문 근거로 만든 답변을 봅니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>④ 근거 원문 확인</strong><br>
+      <a href="docs/assets/screenshots/evidence-question/04-source-excerpt.jpg"><img src="docs/assets/screenshots/evidence-question/04-source-excerpt.jpg" alt="답변에 인용된 공식 원문 발췌를 펼친 화면" width="320"></a><br>
+      인용한 원문 발췌를 펼쳐 확인합니다.
+    </td>
+  </tr>
+</table>
+
+사진은 로컬 웹에서 기업마당 공고 하나에 질문 1개를 보낸 시연입니다. ④는 답변에 인용된 원문 1건을 펼친 모습입니다.
+
 <img src="docs/assets/readme/rag-source-caption.svg" alt="원문 준비·근거 검색 — 저장한 원문이 없거나 갱신이 필요하면 공식 HTML을 읽어 MySQL에 저장하고 청크로 나눕니다." width="820">
 
 ```mermaid
@@ -877,6 +906,35 @@ flowchart LR
 
 웹 도우미가 질문을 분류해 **서비스 이용 안내, 권한 범위의 자료 조회, 관심 공고에 대한 근거 답변**을 제공합니다.
 
+<table width="100%">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>① 도우미 열기</strong><br>
+      <a href="docs/assets/screenshots/assistant/01-open.jpg"><img src="docs/assets/screenshots/assistant/01-open.jpg" alt="도우미를 연 첫 화면과 주제·진행 상황 버튼" width="320"></a><br>
+      주제와 진행 상황 버튼으로 시작합니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>② 자유 질문</strong><br>
+      <a href="docs/assets/screenshots/assistant/02-free-question.jpg"><img src="docs/assets/screenshots/assistant/02-free-question.jpg" alt="자유 질문을 공고 원문 질문으로 분류하고 원문 질문 열기 버튼을 보여 준 화면" width="320"></a><br>
+      질문을 분류해 알맞은 화면으로 안내합니다.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>③ 관심 공고 마감 확인</strong><br>
+      <a href="docs/assets/screenshots/assistant/03-saved-deadlines.jpg"><img src="docs/assets/screenshots/assistant/03-saved-deadlines.jpg" alt="관심 공고 11건 중 7일 안에 마감되는 공고를 보여 준 화면" width="320"></a><br>
+      관심 공고 중 마감이 가까운 공고를 봅니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>④ 도움말·화면 이동</strong><br>
+      <a href="docs/assets/screenshots/assistant/04-help-answer.jpg"><img src="docs/assets/screenshots/assistant/04-help-answer.jpg" alt="신청 문서 만드는 방법 도움말과 신청 문서 작성 열기 버튼" width="320"></a><br>
+      도움말과 해당 화면 이동 버튼을 줍니다.
+    </td>
+  </tr>
+</table>
+
+사진은 로컬 웹의 공고 상세에서 연 도우미입니다. ②만 AI가 질문을 분류한 결과로, 공고 상세에서 물어 원문 질문으로 안내했습니다. ①·③·④는 AI를 호출하지 않는 버튼 응답입니다.
+
 <img src="docs/assets/readme/assistant-routing-caption.svg" alt="질문 분류·처리 경로 선택 — 현재 화면과 대화 문맥을 함께 전달하고, Agents SDK로 질문 의도를 분류합니다. 도구 에이전트 분기는 해당 기능을 켠 회원 요청에 적용됩니다." width="820">
 
 ```mermaid
@@ -925,6 +983,48 @@ flowchart LR
 
 자연어 요청은 Core의 관리자 권한·요청 제한 확인 뒤 AI가 한 번에 하나의 경로를 선택하고, Core가 해당 기능으로 연결합니다.
 웹의 **신청 문서 쓰기·중복 검토·파트너 찾기** 작업 버튼은 선택한 공고로 카드를 만들며 AI 경로 선택을 호출하지 않습니다.
+
+<table width="100%">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>① 조건 제안</strong><br>
+      <a href="docs/assets/screenshots/gov-agent/01-condition-proposal.jpg"><img src="docs/assets/screenshots/gov-agent/01-condition-proposal.jpg" alt="자연어 요청을 해석한 검색 조건 제안과 이 조건으로 검색 버튼" width="320"></a><br>
+      요청을 해석한 검색 조건을 확인합니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>② 추천 결과</strong><br>
+      <a href="docs/assets/screenshots/gov-agent/02-recommendations.jpg"><img src="docs/assets/screenshots/gov-agent/02-recommendations.jpg" alt="확인한 조건으로 검색한 추천 공고와 이 공고로 작업 버튼" width="320"></a><br>
+      추천 공고에서 작업할 공고를 고릅니다.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>③ 선택 공고·작업 버튼</strong><br>
+      <a href="docs/assets/screenshots/gov-agent/03-selected-program.jpg"><img src="docs/assets/screenshots/gov-agent/03-selected-program.jpg" alt="입력창 위의 선택 공고와 신청 문서 쓰기·중복 검토·파트너 찾기 버튼" width="320"></a><br>
+      선택 공고로 바로 작업을 시작합니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>④ 작업 카드</strong><br>
+      <a href="docs/assets/screenshots/gov-agent/04-task-cards.jpg"><img src="docs/assets/screenshots/gov-agent/04-task-cards.jpg" alt="대화에 생긴 신청 문서·중복 검토 카드와 단계 표시" width="320"></a><br>
+      대화에 신청 문서·중복 검토 카드가 생깁니다.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <strong>⑤ 파트너 모집글</strong><br>
+      <a href="docs/assets/screenshots/gov-agent/05-partner-card.jpg"><img src="docs/assets/screenshots/gov-agent/05-partner-card.jpg" alt="맞춤 파트너 모집글 조회 결과와 조건 빼고 보기·모집글 쓰기 버튼" width="320"></a><br>
+      맞춤 모집글과 조건 조정 버튼을 봅니다.
+    </td>
+    <td align="center" valign="top" width="50%">
+      <strong>⑥ 대화 위 시트</strong><br>
+      <a href="docs/assets/screenshots/gov-agent/06-review-sheet.jpg"><img src="docs/assets/screenshots/gov-agent/06-review-sheet.jpg" alt="중복 검토 카드에서 연 대화 위 중복 검토 화면" width="320"></a><br>
+      카드에서 중복 검토 화면을 엽니다.
+    </td>
+  </tr>
+</table>
+
+사진은 로컬 웹에서 이전에 실행해 저장한 관리자 대화를 다시 연 모습이며, 다시 여는 동안 모델 호출은 없습니다. ⑤는 조건에 맞는 모집글이 0건인 경우이고, ⑥은 카드에서 열기만 하고 저장하지 않았습니다.
+
 다음은 웹 대화의 주요 흐름입니다.
 
 ```mermaid
