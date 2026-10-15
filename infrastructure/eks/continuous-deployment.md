@@ -110,6 +110,27 @@ flowchart LR
 실패·시간 초과·main 변경 시 Vercel 전환을 차단한다. 이미 발행한 태그의 Argo 실행은
 workflow 종료만으로 취소되지 않으므로 실패 시 Argo operation과 Ops 접수 상태를 함께 확인한다.
 
+### 고정 근거 수동 평가 활성화 유지
+
+운영자가 승인한 새 모델 평가는 `argocd/govbiz-eks`의 비공개 Application 환경변수 patch에서
+`LLMOPS_LIVE_ENABLED=true`로 유지한다. 대상은 Ops API·`ops-sync`·두 release hook과
+`evaluation-runner`이며, 실행 모델도 API와 실행기에 동일하게 지정한다. Deployment만 변경하면
+다음 자동 동기화에서 보존된 환경변수가 다시 적용되므로 Application patch를 함께 갱신한다.
+완료된 태그의 환경변수 변경으로 자동 동기화가 다시 시작되면 PreSync가 기존 배포 이력의 재사용을 차단한다.
+운영 소스와 현재 main SHA·필수 CI를 확인한 뒤 새 정식 release를 발행한다. 소스가 다르면 추가 배포 범위도 확인한다.
+완료 태그의 반복 실행·선택적 동기화·DB 배포 이력 변경으로 이 검사를 우회하지 않는다.
+`LLMOPS_RAG_LIVE_ENABLED`와 `LLMOPS_SCHEDULES_ENABLED`는 `false`를 유지하며,
+각 수동 실행의 자료·모델·호출 및 토큰 상한 확인과 누적·일별 예산 검사는 그대로 적용한다.
+
+OpenAI 키는 `govbiz-evaluation/llmops-openai` Secret의 `OPENAI_API_KEY`를 실행기만
+`secretKeyRef`로 참조한다. 키 원문은 Git·Application patch에 넣지 않으며 기존 내부 인증용
+Secret을 변경하지 않는다. 외부 연결은 [수동 평가 egress 정책](evaluation-live-network-policy.yaml)을
+별도 기반 자원으로 적용한다. 이 정책은 Argo 앱 릴리스가 소유하는 기존 실행기 정책을 유지하면서
+실행기에만 공용 IPv4 TCP 443을 추가 허용하며 사설·링크 로컬·메타데이터 대역 등은 제외한다.
+표준 NetworkPolicy의 IP·포트 규칙이므로 **OpenAI 도메인만 제한하는 정책은 아니다**.
+DNS와 내부 서비스 통신은 기존 정책을 사용한다. 이 별도 정책과 Secret은 자동 앱 배포에서
+교체하지 않으며, 활성화 유지가 추가 평가의 자동 실행이나 예산 증액을 허용하지 않는다.
+
 ## 최초 연결 순서
 
 1. [시드니 EKS 구성](sydney-demo.md)으로 클러스터를 만들고 최초 데이터 복원·백엔드 기동을
