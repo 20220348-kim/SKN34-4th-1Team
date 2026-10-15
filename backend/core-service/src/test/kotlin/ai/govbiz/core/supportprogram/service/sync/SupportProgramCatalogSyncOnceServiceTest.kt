@@ -29,7 +29,7 @@ class SupportProgramCatalogSyncOnceServiceTest {
     }
 
     @Test
-    fun dryRunBudgetsOnlyTheFocusedTextActuallySentForEmbedding() {
+    fun dryRunBudgetsTheFullLegacyTextActuallySentForEmbedding() {
         val candidate = program().let { it.copy(program = it.program.copy(
             organization = "기관".repeat(60), applicationPeriod = "2026-01-01 ~ 2026-12-31",
         )) }
@@ -37,6 +37,9 @@ class SupportProgramCatalogSyncOnceServiceTest {
         val exactBudget = BigDecimal.valueOf(transmittedBytes.toLong()).multiply(BigDecimal("0.00000002"))
 
         service(listOf(candidate)).run(properties(apply = false).copy(maxUsd = exactBudget))
+        assertThrows(IllegalStateException::class.java) {
+            service(listOf(candidate)).run(properties(apply = false).copy(maxUsd = exactBudget.subtract(BigDecimal("0.00000002"))))
+        }
 
         verifyNoInteractions(repository, index)
         assertFalse(Files.exists(directory.resolve("receipt")))

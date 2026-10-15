@@ -48,7 +48,7 @@ class SupportProgramCatalogSyncOnceService(
         // cl100k_base의 byte-level BPE 토큰 수는 UTF-8 바이트 수 이하이며 AI의 8191 토큰 상한도 적용합니다.
         // 동일 스냅샷의 모든 문서를 신규 임베딩한다고 가정합니다. 기존 벡터 재사용에 따른 절약은 빼지 않습니다.
         val tokenUpperBound = programs.sumOf {
-            minOf(SupportProgramIndexTextHelper.buildSemanticText(it).toByteArray(UTF_8).size, 8191).toLong()
+            minOf(SupportProgramIndexTextHelper.buildText(it).toByteArray(UTF_8).size, 8191).toLong()
         }
         val costUpperBound = BigDecimal.valueOf(tokenUpperBound).multiply(USD_PER_TOKEN)
         logger.info("CATALOG_SYNC_ONCE_PREFLIGHT count={} tokenUpperBound={} costUpperBoundUsd={} budgetUsd={} apply={}",
