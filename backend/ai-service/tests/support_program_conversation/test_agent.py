@@ -158,16 +158,27 @@ async def test_run_deadline(request_data):
 
 
 @pytest.mark.anyio
-async def test_model_deadline_is_classified_as_timeout_without_retry(request_data):
+async def test_model_deadline_is_classified_as_timeout_without_retry(request_data, conversation_deadlines):
+    cancelled = []
+
     async def hang_forever(_):
-        await asyncio.Event().wait()
-        return []
+        assert set(conversation_deadlines) == {"model", "run"}
+        conversation_deadlines["model"].reschedule(asyncio.get_running_loop().time())
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
     model = ResponsesChatStub([(hang_forever)])
-    agent = SupportProgramConversationAgent(model=model.model, model_timeout_seconds=0.1, run_timeout_seconds=1)
+    agent = SupportProgramConversationAgent(model=model.model, model_timeout_seconds=10, run_timeout_seconds=20)
     with pytest.raises(SupportProgramConversationTimeoutError) as captured:
         await agent.interpret(SupportProgramConversationRequest.model_validate(request_data))
     assert isinstance(captured.value.__cause__, TimeoutError)
     assert len(model.calls) == 1
+    assert model.first_call.timeout == 10
+    assert cancelled == [True]
+    assert conversation_deadlines["model"].expired()
+    assert not conversation_deadlines["run"].expired()
 
 
 @pytest.mark.anyio
