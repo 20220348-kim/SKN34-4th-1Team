@@ -1422,74 +1422,79 @@ flowchart LR
 2026년 10월 15일 Android 에뮬레이터에 설치한 v8 APK의 실제 앱 화면입니다. 긴 대기 구간을 줄이고 실제 터치·키보드 입력·스크롤·짧은 로딩을 유지했습니다.
 웹과 같은 기능 순서로 구성했으며, 실물 기기에서 촬영한 영상은 아닙니다.
 
-### 11.1 공고 탐색·필터 검색
-
-서울 필터 → 검색어 입력 → 검색 결과 → 공고 상세를 확인합니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-discovery.gif" alt="모바일 공고 탐색·필터 검색" width="320" />
-
-### 11.2 AI 대화 검색
-
-서울 AI 창업지원 주제의 영문 질문 입력 → 조건 제안 → 검색 확인 → 추천 공고 5건을 확인합니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-ai-search.gif" alt="모바일 AI 대화 검색" width="320" />
-
-### 11.3 대화 이력 복원
-
-새 대화 → 10월 15일 대화 기록 선택 → 같은 추천 공고 5건을 복원합니다. 이력 조회 중 추가 AI 검색은 실행하지 않습니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-history.gif" alt="모바일 대화 이력 복원" width="320" />
-
-### 11.4 공고 원문 질문·근거 확인
-
-지원 대상 질문 → 답변 확인 → 근거 원문을 스크롤합니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-source-qa.gif" alt="모바일 공고 원문 질문·근거 확인" width="320" />
-
-### 11.5 관심 공고 저장
-
-MWC2027 공고 저장 → 저장 확인 → 관심함 목록으로 이동합니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-bookmark-flow.gif" alt="모바일 관심 공고 저장" width="320" />
-
-### 11.6 달력·진행 관리
-
-달력 → 10월 29일 공고 → 진행 관리 → 준비 중인 문서를 확인합니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-management.gif" alt="모바일 달력·진행 관리" width="320" />
-
-### 11.7 신청 문서 초안 작성
-
-공고·저장된 양식 선택 → 업체명 입력·자동 저장 → 검토 → HWPX 초안 생성을 확인합니다.
-업체명만 입력한 시연용 초안이며, 나머지 문항 작성·실제 파일 수신·기관 제출은 완료하지 않았습니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-document-flow.gif" alt="모바일 신청 문서 초안 작성" width="320" />
-
-### 11.8 중복 지원·수혜 검토
-
-기존 두 공고·입력 확인 → 분석 → 새 실행 결과 → 근거와 앞뒤 원문을 확인합니다.
-결과의 `규정 없음`은 중복 지원 허용 확정이나 사람의 검토 완료를 뜻하지 않습니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-review-flow.gif" alt="모바일 중복 지원·수혜 검토" width="320" />
-
-### 11.9 기업 맞춤 리포트 조회
-
-저장된 10월 14일 리포트 → 추천 공고의 지원 내용·대상·신청 방법을 확인합니다.
-기존 리포트 조회 시연이며 새 리포트 생성·메일 발송은 실행하지 않았습니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-report.gif" alt="모바일 기업 맞춤 리포트 조회" width="320" />
-
-### 11.10 GovBiz 도우미 사용 안내
-
-도우미 열기 → 요금제 예시 질문 → 도움말 답변 → 요금제 화면으로 이동합니다. 사용 안내와 화면 이동을 촬영한 시연입니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-helper.gif" alt="모바일 GovBiz 도우미 사용 안내" width="320" />
-
-### 11.11 요금제 안내
-
-무료·플러스·프리미엄 요금제 → 스크롤 → 비교 내용을 확인합니다. 결제나 이용권 변경은 실행하지 않았습니다.
-
-<img src="docs/assets/demos/mobile/2026-10-15/mobile-plan-flow.gif" alt="모바일 요금제 안내" width="320" />
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>11.1 공고 탐색·필터 검색</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-discovery.gif" alt="모바일 공고 탐색·필터 검색" width="300" /></p>
+      <p>서울 필터 → 검색어 입력 → 검색 결과 → 공고 상세를 확인합니다.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>11.2 AI 대화 검색</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-ai-search.gif" alt="모바일 AI 대화 검색" width="300" /></p>
+      <p>서울 AI 창업지원 주제의 영문 질문 입력 → 조건 제안 → 검색 확인 → 추천 공고 5건을 확인합니다.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>11.3 대화 이력 복원</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-history.gif" alt="모바일 대화 이력 복원" width="300" /></p>
+      <p>새 대화 → 10월 15일 대화 기록 선택 → 같은 추천 공고 5건을 복원합니다. 이력 조회 중 추가 AI 검색은 실행하지 않습니다.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>11.4 공고 원문 질문·근거 확인</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-source-qa.gif" alt="모바일 공고 원문 질문·근거 확인" width="300" /></p>
+      <p>지원 대상 질문 → 답변 확인 → 근거 원문을 스크롤합니다.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>11.5 관심 공고 저장</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-bookmark-flow.gif" alt="모바일 관심 공고 저장" width="300" /></p>
+      <p>MWC2027 공고 저장 → 저장 확인 → 관심함 목록으로 이동합니다.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>11.6 달력·진행 관리</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-management.gif" alt="모바일 달력·진행 관리" width="300" /></p>
+      <p>달력 → 10월 29일 공고 → 진행 관리 → 준비 중인 문서를 확인합니다.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>11.7 신청 문서 초안 작성</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-document-flow.gif" alt="모바일 신청 문서 초안 작성" width="300" /></p>
+      <p>공고·저장된 양식 선택 → 업체명 입력·자동 저장 → 검토 → HWPX 초안 생성을 확인합니다.
+      업체명만 입력한 시연용 초안이며, 나머지 문항 작성·실제 파일 수신·기관 제출은 완료하지 않았습니다.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>11.8 중복 지원·수혜 검토</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-review-flow.gif" alt="모바일 중복 지원·수혜 검토" width="300" /></p>
+      <p>기존 두 공고·입력 확인 → 분석 → 새 실행 결과 → 근거와 앞뒤 원문을 확인합니다.
+      결과의 <code>규정 없음</code>은 중복 지원 허용 확정이나 사람의 검토 완료를 뜻하지 않습니다.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>11.9 기업 맞춤 리포트 조회</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-report.gif" alt="모바일 기업 맞춤 리포트 조회" width="300" /></p>
+      <p>저장된 10월 14일 리포트 → 추천 공고의 지원 내용·대상·신청 방법을 확인합니다.
+      기존 리포트 조회 시연이며 새 리포트 생성·메일 발송은 실행하지 않았습니다.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>11.10 GovBiz 도우미 사용 안내</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-helper.gif" alt="모바일 GovBiz 도우미 사용 안내" width="300" /></p>
+      <p>도우미 열기 → 요금제 예시 질문 → 도움말 답변 → 요금제 화면으로 이동합니다. 사용 안내와 화면 이동을 촬영한 시연입니다.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>11.11 요금제 안내</h3>
+      <p align="center"><img src="docs/assets/demos/mobile/2026-10-15/mobile-plan-flow.gif" alt="모바일 요금제 안내" width="300" /></p>
+      <p>무료·플러스·프리미엄 요금제 → 스크롤 → 비교 내용을 확인합니다. 결제나 이용권 변경은 실행하지 않았습니다.</p>
+    </td>
+    <td width="50%" valign="top"></td>
+  </tr>
+</table>
 
 <a id="저장소-구성"></a>
 
