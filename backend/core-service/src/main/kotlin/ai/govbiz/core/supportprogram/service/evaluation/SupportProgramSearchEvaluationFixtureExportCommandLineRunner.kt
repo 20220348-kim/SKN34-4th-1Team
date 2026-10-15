@@ -6,6 +6,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import ai.govbiz.core.supportprogram.helper.SupportProgramCatalogFingerprintHelper
+import ai.govbiz.core.supportprogram.helper.SupportProgramIndexTextHelper
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.evaluation.config.SupportProgramSearchEvaluationFixtureExportProperties
 import ai.govbiz.core.supportprogram.service.evaluation.helper.SupportProgramSearchEvaluationFileHelper
@@ -50,10 +51,13 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
                 "eligibleCatalogFingerprint" to SupportProgramCatalogFingerprintHelper.calculate(eligiblePrograms),
             ),
             "docs" to documents.map { document ->
+                val sourceText = SupportProgramIndexTextHelper.buildText(document.catalogProgram)
                 linkedMapOf(
                     "id" to document.indexDocument.id,
-                    "contentHash" to document.indexDocument.contentHash,
-                    "text" to document.indexDocument.text,
+                    "contentHash" to SupportProgramIndexTextHelper.calculateContentHash(sourceText),
+                    "text" to sourceText,
+                    "semanticContentHash" to document.indexDocument.contentHash,
+                    "semanticText" to document.indexDocument.text,
                     "sortTimestamp" to document.catalogProgram.sortTimestamp,
                 )
             },

@@ -488,8 +488,10 @@ cd backend/core-service
 ### 실제 공고 fixture 초안 내보내기
 
 실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL에서
-색인 준비가 확인된 제공처의 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper.fromCatalog`로
-`id`·`contentHash`·`text`를 만듭니다. 공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
+색인 준비가 확인된 제공처의 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽습니다.
+`id`·`text`·`contentHash`는 기존 전체 본문과 카탈로그 지문을 보존하고,
+`semanticText`·`semanticContentHash`에는 운영 색인 Mapper가 만드는 실제 의미검색 입력을 따로 기록합니다.
+공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
 이후 캡처 결과가 같은 공고 스냅샷에서 나왔는지 확인할 수 있습니다.
 
 이 프로필은 웹 서버·기업마당/K-Startup 동기화·누락 색인 복구를 끄며 Qdrant, AI Service, OpenAI를 호출하지 않습니다.
@@ -762,7 +764,10 @@ AI Service는 모델의 답변·질문 종류 코드를 허용된 존댓말 문�
 
 ### 검색·상세·근거 질문
 
-키워드 색인 HTTP 경계는 `client/elasticsearch`, 공유 본문 구성은 `helper/SupportProgramIndexTextHelper`입니다.
+키워드 색인 HTTP 경계는 `client/elasticsearch`, 검색 본문 구성은 `helper/SupportProgramIndexTextHelper`입니다.
+`buildText`는 기관·기간을 포함한 기존 BM25 본문·카탈로그 지문을 보존합니다. `buildSemanticText`는
+제목·지원대상·지원내용·분야·지역 순으로 구성하고 K-Startup 분류를 덧붙여 의미검색용 해시를 별도로 만듭니다.
+Catalog에도 같은 규칙을 적용합니다. 기존 환경 전환은 [새 의미 벡터 준비 절차](../../docs/elasticsearch-lexical-search.md#의미검색-본문-전환)를 따릅니다.
 `SupportProgramIndexSyncService`가 Elasticsearch → Qdrant를 준비한 뒤에만 제공처 스냅샷을 공개합니다.
 기존 환경은 `V24`가 이전 준비 플래그를 재검증 대상으로 바꾸므로 **색인 복구 후** 자연어 검색이 가능합니다.
 환경변수·장애 계약·테스트·업그레이드는 [Elasticsearch 적용 상세](../../docs/elasticsearch-lexical-search.md)를 참고하세요.
@@ -771,13 +776,17 @@ v1을 사용하던 환경은 **새 v2 인덱스 이름으로 전환하고 재색
 줄임말·동의어를 넓힌 `elasticsearch/support-program-lexical-v3.json`(중기부·소진공·코트라·알앤디·정책자금 등)은 정의만 있고
 클라이언트는 여전히 v2를 씁니다. 316문항 비교 전에는 전환·재색인하지 않으며 절차는 Elasticsearch 문서에 있습니다.
 
+현재 본문·RRF 설정의 근거와 질문별 회귀는
+[2026-10-15 후속 비교](../../evaluation/support-program-search/runs/semantic-focus-20261015-v1/README.md)에 기록했습니다.
+이전 가중치·후보 수 비교는 [기존 기록](../../evaluation/support-program-search/runs/rrf-tuning-20261015-v1/README.md)에 보존합니다.
+
 - GET 검색: 필수 `query`는 최대 500 UTF-16 코드 단위이며 빈 문자열을 허용합니다. 탭·줄바꿈·캐리지 리턴을 제외한
   Unicode C 범주 문자(예: NUL·제로폭 문자·단독 surrogate)는 DB·AI 호출 전에 400으로 거부합니다.
   `acceptingOnly`의 기본값은 `true`이고
   이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 검증된 의미 검색 상위 20개와 전체 적격 공고의
-  키워드 상위 20개를 같은 가중치의 RRF(`1 / (60 + 순위)`)로 결합하고, 최대 20개를 AI가 점수화하여
+  키워드 상위 20개를 같은 가중치의 RRF(`1 / (1 + 순위)`)로 결합하고, 최대 20개를 AI가 점수화하여
   기준을 통과한 0~5개를 선정한 후 아래 로그인별 노출 정책을 적용합니다. 키워드는 Elasticsearch Nori(`discard`, 사용자 사전·검색용 동의어)·BM25로 정렬하고
-  동점은 최신순·제공처 포함 ID순입니다. RRF 동점은 의미 검색 순위·제공처 포함 ID순입니다.
+  동점은 최신순·제공처 포함 ID순입니다. RRF 동점은 BM25 순위·제공처 포함 ID순입니다.
   적격 공고의 전체 값과 순서가 같으면 제한된 단일 불변 스냅샷에서 문서 해시·두 색인의 버전 참조를 재사용합니다.
   DB 조회·접수 상태 계산·현재 벡터 확인은 매 검색 수행하고, 질문·검색 결과·랭킹은 이 캐시에 보관하지 않습니다.
   내용·순서·접수 상태가 바뀌면 전처리를 다시 수행합니다. DB·후보 준비·의미/키워드 검색·랭킹·전체 처리의

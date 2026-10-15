@@ -102,6 +102,8 @@ def test_prompt_declares_the_recommendation_minimum_without_omitting_candidates(
     assert "sourceCode:sourceProgramId" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "필수 키" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "programId를 출력하지 않습니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "중간 commentary나 초안을 출력하지 말고" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "final_answer에 스키마를 따르는 JSON 객체를 한 번만" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
 def test_prompt_distinguishes_requested_support_from_topic_similarity_without_requiring_every_term() -> None:
@@ -245,6 +247,24 @@ async def test_runs_typed_ranking_agent_through_langchain() -> None:
     assert call.timeout == 3.0
     assert call.body["reasoning"]["effort"] == "none"
     assert call.tracing_disabled
+    model.assert_complete()
+
+
+@pytest.mark.anyio
+async def test_ranking_service_validates_final_phase_after_sdk_preserves_commentary():
+    from app.support_program_ranking.service import SupportProgramRankingService
+
+    commentary = {**response_message("Intermediate commentary is not a JSON result"),
+                  "id": "msg_commentary", "phase": "commentary"}
+    final = {**response_message(llm_output_json(20)), "id": "msg_final", "phase": "final_answer"}
+    model = ResponsesChatStub([[commentary, final]])
+    agent = SupportProgramRecommendationAgent(model=model.model, model_timeout_seconds=3, run_timeout_seconds=4)
+    response = await SupportProgramRankingService(agent).rank(ranking_request(20))
+
+    assert [row.program_id for row in response.rankings] == [f"BIZINFO:program-{i}" for i in range(1, 6)]
+    assert all(row.total_score == 92 for row in response.rankings)
+    assert len(model.calls) == 1
+    assert model.first_call.body["text"]["format"]["strict"] is True
     model.assert_complete()
 
 

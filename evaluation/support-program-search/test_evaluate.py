@@ -330,6 +330,36 @@ class RetrievalEvaluationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "contentHash does not match its UTF-8 text"):
             validate_capture(capture, fixture, fixture["cases"])
 
+    def test_capture_accepts_separate_semantic_text_without_changing_catalog_identity(self):
+        fixture = self.capture_fixture()
+        original_fingerprint = fixture["catalog"]["eligibleCatalogFingerprint"]
+        for doc in fixture["docs"]:
+            doc["semanticText"] = "제목: 지원사업\n지원대상: 중소기업\n내용: 홍보물 제작\n분야: 경영\n지역: 전국"
+            doc["semanticContentHash"] = hashlib.sha256(doc["semanticText"].encode("utf-8")).hexdigest()
+        capture = self.capture(fixture, [
+            self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+            self.observation(fixture, "Q2", [], []),
+        ])
+
+        validate_capture(capture, fixture, fixture["cases"])
+        self.assertEqual(original_fingerprint, eligible_catalog_fingerprint(fixture["docs"]))
+
+    def test_capture_rejects_incomplete_or_tampered_semantic_text(self):
+        for semantic in (
+            {"semanticText": "집중 검색 본문"},
+            {"semanticContentHash": "0" * 64},
+            {"semanticText": "집중 검색 본문", "semanticContentHash": "0" * 64},
+        ):
+            with self.subTest(semantic=semantic):
+                fixture = self.capture_fixture()
+                fixture["docs"][0].update(semantic)
+                capture = self.capture(fixture, [
+                    self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                    self.observation(fixture, "Q2", [], []),
+                ])
+                with self.assertRaisesRegex(ValueError, "semantic"):
+                    validate_capture(capture, fixture, fixture["cases"])
+
     def test_eligible_catalog_fingerprint_is_sorted_by_canonical_id(self):
         docs = self.capture_fixture()["docs"]
 

@@ -622,17 +622,25 @@ Qdrant·Elasticsearch·Redis와 평가 결과 파일의 연결은 [서비스 연
 | 과학기술정보통신부 | 과학기술·연구개발 사업 | `MSIT` |
 | 충남 온라인수출지원시스템 | 충청남도 기업 수출지원사업 | `CNTRADE_NOTICE` |
 
-Catalog가 공식 API의 제목·기관·신청 기간·지역·분야·지원 대상·원문 URL·신청 경로를 정규화합니다.
-공고는 **제공처 코드 + 원본 ID**로 구분하고, 접수 상태는 신청 기간과 서울 기준 현재 날짜로 계산합니다.
+새 공고 A를 가져오면 **수집한 데이터를 먼저 메모리에 보관하고, 검색 자료 준비가 성공한 뒤
+Catalog MySQL에 저장**합니다. 여기서 색인은 공고를 검색하기 위해 미리 만들어 두는 자료입니다.
 
-<img src="docs/assets/readme/catalog-indexing-caption.svg" alt="수집·색인 준비 — catalog-service가 수집 결과를 검증·정규화하고, 키워드 색인과 의미 검색 벡터를 준비합니다." width="820">
+1. **공식 API에서 공고 수집:** Catalog가 제공처의 전체 목록을 가져와 응답을 검증하고,
+   제목·기관·지원 대상·신청 기간 등의 형식을 정리합니다. 이 공고 데이터는 우선 프로그램 메모리에 보관합니다.
+2. **검색에 쓸 자료 저장:** Elasticsearch에는 공고 텍스트와 메타데이터를 저장하고 Nori로 키워드 색인을 만듭니다.
+   이어서 AI Service를 통해 공고 텍스트를 임베딩하고 Qdrant에 벡터를 준비합니다.
+   같은 문서 버전의 검색 자료가 이미 있으면 재사용합니다.
+3. **둘 다 성공하면 MySQL에 저장:** Catalog MySQL에 새 공고를 추가하고 기존 공고의 내용을 갱신합니다.
+   Core는 이후 Catalog의 최신 공고 목록을 가져와 Core MySQL에도 저장하고, 사용자 화면의 조회에 사용합니다.
+
+<img src="docs/assets/readme/catalog-indexing-caption.svg" alt="① 공고 수집 · ② 검색에 쓸 자료 저장 — Catalog가 수집한 공고를 메모리에 보관하고, Elasticsearch 검색 문서와 Qdrant 임베딩 벡터를 준비합니다." width="820">
 
 ```mermaid
 flowchart LR
-    Source["공식 제공처<br/>API 4곳"] --> Catalog["catalog-service<br/>수집 · 검증 · 정규화"]
-    Catalog -. 키워드 색인 .-> Elastic[("Elasticsearch<br/>공고 검색 문서")]
-    Catalog -->|벡터 준비 요청| AI["ai-service<br/>OpenAI 임베딩"]
-    AI -. 벡터 저장 .-> Qdrant[("Qdrant<br/>공고 검색 벡터")]
+    Source["공식 제공처<br/>API 4곳"] -->|전체 목록 수집| Catalog["catalog-service<br/>검증 · 형식 정리<br/>공고를 메모리에 보관"]
+    Catalog -->|먼저 검색 문서 저장| Elastic[("Elasticsearch<br/>공고 텍스트 · 메타데이터<br/>Nori 키워드 색인")]
+    Catalog -->|ES 준비 성공 후 벡터 요청| AI["ai-service<br/>OpenAI 임베딩"]
+    AI -->|임베딩 벡터 저장| Qdrant[("Qdrant<br/>공고 검색 벡터")]
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
@@ -643,25 +651,86 @@ flowchart LR
     class Elastic searchIndex
 ```
 
-<img src="docs/assets/readme/catalog-sync-caption.svg" alt="공개·동기화 — 수집과 두 색인 준비가 모두 성공하면 Catalog MySQL에 공개합니다. core-service는 인증된 HTTP snapshot을 조회·검증해 Core MySQL의 조회용 복제본을 갱신합니다." width="820">
+<img src="docs/assets/readme/catalog-sync-caption.svg" alt="③ 둘 다 성공하면 MySQL에 저장 — Catalog MySQL에 새 공고를 추가하고 기존 공고의 내용을 갱신합니다. Core가 최신 목록을 가져와 Core MySQL에 저장합니다." width="820">
 
 ```mermaid
 flowchart LR
-    Core["core-service<br/>snapshot 검증 · 반영"] -->|인증된 snapshot 조회| Catalog["catalog-service<br/>성공한 수집 결과 공개"]
-    Catalog -. 공개 .-> CatalogDB[("Catalog MySQL<br/>공고 · 공개 버전")]
-    Core -. 갱신 .-> CoreDB[("Core MySQL<br/>조회용 공고 복제본")]
+    Catalog["catalog-service<br/>수집 · ES · Qdrant<br/>모두 성공 확인"] -->|추가 · 갱신| CatalogDB[("Catalog MySQL<br/>최신 공고 목록 저장")]
+    CatalogDB --> Snapshot["Catalog 내부 API<br/>저장된 공고 목록 읽기"]
+    Snapshot -->|Core의 요청에 목록 응답| Core["core-service<br/>받은 목록 검증"]
+    Core -->|추가 · 갱신| CoreDB[("Core MySQL<br/>사용자 조회용 공고 저장")]
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
-    class Core,Catalog service
+    class Core,Catalog,Snapshot service
     class CoreDB,CatalogDB mysql
 ```
 
-**공고 목록 갱신 방식:** 제공처의 전체 목록을 정상적으로 수집하고 응답 검증·검색 색인 준비까지 끝나면,
-기존 공고는 새 내용으로 갱신하고 처음 보는 공고는 추가합니다. 이번 전체 목록에서 사라진 공고는
-DB에서 삭제하지 않고 **현재 공고 목록·검색에서 제외되도록 표시**합니다. 이를 비활성화라고 합니다.
+위 그림은 공고 데이터가 전달되는 방향입니다. Core가 **인증된 Catalog 내부 HTTP API로 최신 목록을 요청**하고,
+받은 데이터를 검증한 뒤 자신의 DB에 저장합니다. 코드에서 **공개**는 준비가 끝난 공고 목록을 Catalog MySQL에
+저장하는 단계이고, **동기화**는 Core가 그 목록을 가져와 Core MySQL을 갱신하는 단계입니다.
+
+**기존 공고와 실패 처리:** 처음 보는 공고는 추가하고 이미 있는 공고는 내용을 갱신합니다.
+제공처의 전체 목록에서 사라진 공고는 DB에서 삭제하지 않고 **현재 목록·검색에서 제외되도록 표시**합니다.
+이를 비활성화라고 합니다. 일부 페이지 수집이나 검색 자료 준비에 실패하면 해당 제공처의 기존 공고 목록을
+유지하며, 수집이 끝난 것처럼 처리해 공고를 비활성화하지 않습니다.
+
+공고는 **제공처 코드 + 원본 ID**로 구분하고, 접수 상태는 신청 기간과 서울 기준 현재 날짜로 계산합니다.
+이미 저장된 공고의 검색 자료를 복구할 때는 Catalog MySQL에서 공고를 읽어 Elasticsearch·Qdrant의 누락 자료를 준비합니다.
 
 [Catalog 구현·계약](backend/catalog-service/README.md) · [서비스 분리 설명](docs/catalog-service-extraction.md) ·
 [한국어 키워드 검색](docs/elasticsearch-lexical-search.md)
+
+### 7.2 임베딩과 Qdrant 저장 구조
+
+Qdrant에는 **관련 공고를 찾는 공고 단위 벡터**와 **답변 근거를 찾는 원문 청크 단위 벡터**를
+서로 다른 컬렉션에 저장합니다. 공고 검색 색인은 목록 수집·동기화 과정에서 준비하며,
+원문 청크 색인은 상세 질문·관심 공고 질문 또는 관심 공고 원문 선수집 때 별도로 수행합니다.
+
+<img src="docs/assets/readme/program-vector-indexing-caption.svg" alt="① AI 대화 검색 · 공고 단위 — Catalog가 공고 검색 텍스트를 구성하고, AI Service가 OpenAI 임베딩으로 공고 검색 문서 1건당 벡터 1개를 저장합니다." width="820">
+
+```mermaid
+flowchart LR
+    Source["공식 API 공고<br/>제공처별 수집 · 정규화"] --> Catalog["catalog-service<br/>검색 텍스트 구성"]
+    Catalog --> AI["ai-service<br/>OpenAI 임베딩<br/>검색 문서 1건당 벡터 1개"]
+    AI -. 벡터 저장 .-> Qdrant[("Qdrant<br/>공고 검색용 컬렉션")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    class Source client
+    class Catalog,AI service
+    class Qdrant vectorDb
+```
+
+- **임베딩 텍스트:** 제목·지원 대상·지원 내용·분야·지역을 합칩니다. K-Startup은 값이 있는
+  업력·대상·대표자 연령 분류도 추가하며, 이 분류 정보는 검색용으로 사용하고 신청 자격의 근거로 취급하지 않습니다.
+  Elasticsearch 키워드 검색과 카탈로그 변경 감지에는 기관·신청기간을 포함한 전체 본문을 유지합니다.
+- **저장 내용:** 벡터 + 공고 ID(제공처 코드 + 원본 ID) + 내용 해시 + 제공처 코드.
+
+<img src="docs/assets/readme/evidence-vector-indexing-caption.svg" alt="② 공고 원문 RAG · 청크 단위 — 기업마당·K-Startup 상세 HTML을 정리하고 청크로 나눈 뒤, AI Service가 OpenAI 임베딩으로 청크별 벡터를 저장합니다." width="820">
+
+```mermaid
+flowchart LR
+    Source["공식 상세 HTML<br/>기업마당 · K-Startup"] --> Prepare["core-service<br/>본문 추출 · 태그 제거<br/>공백 · 텍스트 정리"]
+    Prepare --> Chunk["core-service<br/>청크 분리<br/>최대 1,500자 · 문서당 50개"]
+    Chunk --> AI["ai-service<br/>OpenAI 임베딩<br/>청크 1개당 벡터 1개"]
+    AI -. 벡터 저장 .-> Qdrant[("Qdrant<br/>원문 근거용 컬렉션")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    class Source client
+    class Prepare,Chunk,AI service
+    class Qdrant vectorDb
+```
+
+- **대상 원문:** 기업마당·K-Startup의 공식 상세 HTML 본문입니다. PDF·HWP 등 첨부파일 본문은 이 색인에 포함하지 않습니다.
+- **청크 기준:** 청크당 최대 1,500자(UTF-16 기준), 문서당 최대 50개입니다. 50개를 초과하면 일부만 저장하지 않고 오류로 처리합니다.
+- **저장 내용:** 벡터 + 청크 원문 + 문서 ID + 청크 ID·내용 해시·순서.
+- **활용 기능:** 상세 공고 질문, GovBiz 도우미의 관심 공고 질문, 관리자 Gov 에이전트의 원문 질문이 같은 근거 컬렉션을 사용합니다.
+
+공고 데이터와 정제 원문은 MySQL에 보존합니다. **같은 문서·청크 버전과 임베딩 설정으로 이미 저장된 벡터는
+재사용하고, 누락된 벡터만 생성합니다.** 검색할 때는 질문도 임베딩해 저장된 벡터와 비교하며,
+질문 벡터를 공고·청크 컬렉션에 추가 저장하지 않습니다.
+근거 검색 이후의 답변 생성·인용 검증은 [8.2 공고 상세의 근거 기반 답변](#공고-상세의-근거-기반-답변rag)에서 설명합니다.
 
 <a id="ai-처리-흐름"></a>
 
@@ -740,6 +809,12 @@ flowchart LR
 하나의 후보로 합치고, **RRF**로 두 검색의 순위를 결합합니다. 선택한 ID에 해당하는 공고 내용은
 처음 읽어 둔 MySQL 데이터에서 찾아 AI 평가에 전달하므로, 검색 후 공고마다 DB를 다시 조회하지 않습니다.
 두 색인 모두 현재 MySQL 공고의 ID·내용 버전을 기준으로 검색 범위를 제한하고 결과를 검증합니다.
+각 검색의 상위 20건을 동일 가중치 `1 / (1 + 순위)`로 합산하고, 합산 점수가 같으면 **BM25 순위 → 제공처 포함 ID** 순으로 정렬합니다.
+두 검색의 하위 교집합이 한 검색의 최상위 공고보다 무조건 앞서지 않도록 상위 순위의 차이를 반영합니다.
+의미검색은 **제목 → 지원대상 → 지원내용 → 분야 → 지역**으로 본문을 구성하며 K-Startup 분류는 보존합니다.
+BM25에는 기관·신청기간을 포함한 기존 본문을 사용합니다. 결합 후 AI 평가에 전달하는 후보는 최대 20건입니다.
+[본문·RRF 개선 비교](evaluation/support-program-search/runs/semantic-focus-20261015-v1/README.md)에 질문별 변화와 한계를 기록했습니다.
+이는 기존 16문항의 AI 참조 판정에 대한 비교이며 독립적인 품질 검증은 아닙니다.
 
 | 최종 응답에 포함되는 내용 | 데이터 출처 |
 |---|---|

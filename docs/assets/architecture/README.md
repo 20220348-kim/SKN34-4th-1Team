@@ -47,7 +47,7 @@ Ops Pod에는 API와 상태 동기화 컨테이너가 함께 있으며, Service 
 
 ```sh
 pdftoppm -f 15 -l 15 -r 192 -x 88 -y 438 -W 2384 -H 926 -singlefile -png \
-  output/pdf/GovBiz_4차프로젝트_발표자료_24장_main_c09b97ac.pdf \
+  output/pdf/GovBiz_4차프로젝트_발표자료_19장_main_c09b97ac.pdf \
   docs/assets/architecture/govbiz-kubernetes-application
 ```
 

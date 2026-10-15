@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.core.supportprogram.helper.SupportProgramCatalogFingerprintHelper
+import ai.govbiz.core.supportprogram.helper.SupportProgramIndexTextHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper.catalogProgram
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -16,10 +17,14 @@ import org.junit.jupiter.api.Test
 
 class SupportProgramIndexDocumentMapperTest {
     @Test
-    fun preservesTheExactExistingBizinfoTextAndHashWithoutAddingMetadataLines() {
+    fun focusesSemanticTextWhilePreservingTheLegacyLexicalTextAndCatalogFingerprint() {
         val candidate = catalogProgram("legacy")
-        val expected = "제목: legacy 지원사업\n기관: 수행기관\n지원대상: 중소기업\n" +
+        val expected = "제목: legacy 지원사업\n지원대상: 중소기업\n내용: 서울 AI 기업 기술 지원\n" +
+            "분야: AI, 기술\n지역: 서울"
+        val legacyText = "제목: legacy 지원사업\n기관: 수행기관\n지원대상: 중소기업\n" +
             "분야: AI, 기술\n지역: 서울\n신청기간: 상시 접수\n내용: 서울 AI 기업 기술 지원"
+        assertEquals(legacyText, SupportProgramIndexTextHelper.buildText(candidate))
+        assertEquals("2afa90a40217910aa4cc5bc30eb263515b446a445fa51a2bc62bf5bc0ff443fb", SupportProgramCatalogFingerprintHelper.calculate(listOf(candidate)))
         val document = SupportProgramIndexDocumentMapper.fromCatalog(candidate)
         assertEquals(expected, document.text)
         assertEquals(
@@ -29,6 +34,20 @@ class SupportProgramIndexDocumentMapperTest {
         assertEquals(document, SupportProgramIndexDocumentMapper.fromCatalog(candidate.copy(
             startupDetails = SupportProgramStartupDetails(listOf("예비창업자"), listOf("일반인"), listOf("만 40세 이상")),
         )))
+    }
+
+    @Test
+    fun catalogFingerprintStillTracksFieldsExcludedFromSemanticText() {
+        val candidate = catalogProgram("legacy")
+        val original = SupportProgramIndexDocumentMapper.fromCatalog(candidate)
+        val originalFingerprint = SupportProgramCatalogFingerprintHelper.calculate(listOf(candidate))
+        for (changed in listOf(
+            candidate.copy(program = candidate.program.copy(organization = "변경된 수행기관")),
+            candidate.copy(program = candidate.program.copy(applicationPeriod = "2026-10-01 ~ 2026-10-31")),
+        )) {
+            assertEquals(original, SupportProgramIndexDocumentMapper.fromCatalog(changed))
+            assertNotEquals(originalFingerprint, SupportProgramCatalogFingerprintHelper.calculate(listOf(changed)))
+        }
     }
 
     @Test
@@ -136,7 +155,7 @@ class SupportProgramIndexDocumentMapperTest {
     fun normalizesUnsupportedControlAndFormatCharactersBeforeHashing() {
         val candidate = catalogProgram("one", "AI\u0000지원\u200b사업\n다음\t줄")
         val document = SupportProgramIndexDocumentMapper.fromCatalog(candidate)
-        assertTrue(document.text.endsWith("내용: AI 지원 사업\n다음\t줄"))
+        assertTrue(document.text.contains("내용: AI 지원 사업\n다음\t줄\n분야:"))
         assertFalse(document.text.contains('\u0000'))
         assertFalse(document.text.contains('\u200b'))
     }

@@ -1,6 +1,7 @@
 package ai.govbiz.catalog.supportprogram.client.elasticsearch
 
 import ai.govbiz.catalog.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
+import ai.govbiz.catalog.supportprogram.helper.SupportProgramIndexTextHelper
 import ai.govbiz.catalog.supportprogram.client.elasticsearch.config.ElasticsearchClientProperties
 import ai.govbiz.catalog.supportprogram.client.elasticsearch.dto.ElasticsearchSupportProgramDocumentRequest
 import ai.govbiz.catalog.supportprogram.client.elasticsearch.exception.ElasticsearchClientException
@@ -74,7 +75,8 @@ class ElasticsearchSupportProgramClientIntegrationTest {
         val newer = ElasticsearchSupportProgramDocumentMapper.fromCatalog(original.copy(sortTimestamp = "2026"))
         assertEquals(old.contentHash, newer.contentHash)
         assertNotEquals(old.versionId, newer.versionId)
-        assertEquals(SupportProgramIndexDocumentMapper.fromCatalog(original).contentHash, old.contentHash)
+        assertEquals(SupportProgramIndexTextHelper.calculateContentHash(SupportProgramIndexTextHelper.buildText(original)), old.contentHash)
+        assertNotEquals(SupportProgramIndexDocumentMapper.fromCatalog(original).contentHash, old.contentHash)
         client.indexSnapshot(listOf(old))
         client.indexSnapshot(listOf(newer))
         assertEquals(listOf(old.id), client.search("동일", listOf(old.reference()), 20))
