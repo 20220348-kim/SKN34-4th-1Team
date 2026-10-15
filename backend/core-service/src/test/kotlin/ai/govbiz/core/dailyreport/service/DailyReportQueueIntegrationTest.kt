@@ -84,7 +84,7 @@ class DailyReportQueueIntegrationTest {
         jdbc.update("DELETE FROM account WHERE email LIKE '%@queue.test'")
         doReturn(SupportProgramSearchReadinessResult(SupportProgramSearchState.SEARCHABLE, 1, true, null, null, emptyList()))
             .`when`(readiness).get()
-        doReturn(SupportProgramSearchResult("서울 AI", emptyList())).`when`(search).search(anyString(), eq(true), anyValue())
+        doReturn(SupportProgramSearchResult("서울 AI", emptyList())).`when`(search).search(anyString(), eq(true), anyValue(), eq(false))
     }
 
     @Test
@@ -103,7 +103,7 @@ class DailyReportQueueIntegrationTest {
             assertEquals(0, admin.getQueueInfo(DailyReportRabbitConfig.QUEUE)?.messageCount)
         }
         listener.stop()
-        verify(search, times(1)).search(anyString(), eq(true), anyValue())
+        verify(search, times(1)).search(anyString(), eq(true), anyValue(), eq(false))
         assertEquals("SUCCEEDED", jobStatus(id))
         assertEquals(1, repository.forDay(owner.id, today)?.generationAttempts)
     }
@@ -129,7 +129,7 @@ class DailyReportQueueIntegrationTest {
         listener.start()
         await().atMost(Duration.ofSeconds(15)).untilAsserted { assertEquals("SUCCEEDED", jobStatus(id)) }
         assertEquals(1, repository.forDay(owner.id, today)?.generationAttempts)
-        verify(search, times(1)).search(anyString(), eq(true), anyValue())
+        verify(search, times(1)).search(anyString(), eq(true), anyValue(), eq(false))
     }
 
     @Test

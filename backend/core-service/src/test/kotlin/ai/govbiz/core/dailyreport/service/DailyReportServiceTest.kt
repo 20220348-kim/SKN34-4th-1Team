@@ -77,7 +77,7 @@ class DailyReportServiceTest {
     fun sendsSavedProfileWithoutInventingEstablishedDateAndPersistsPartialEvidenceFailures() {
         prepareGeneration()
         val programs = listOf(program("BIZINFO", "1"), program("KSTARTUP", "1"), program("BIZINFO", "2"), program("BIZINFO", "ignored"))
-        doReturn(SupportProgramSearchResult("q", programs)).`when`(search).search(anyString(), eq(true), anyValue())
+        doReturn(SupportProgramSearchResult("q", programs)).`when`(search).search(anyString(), eq(true), anyValue(), eq(false))
         doReturn(SupportProgramEvidenceAnswerResult("사업계획서를 제출합니다.", SupportProgramEvidenceAnswerStatus.ANSWERED,
             listOf(SupportProgramEvidenceCitationResult("사업계획서", "https://www.bizinfo.go.kr/detail?id=1", "기업마당 상세 본문", 0))))
             .`when`(evidence).answer(equalValue("BIZINFO"), equalValue("1"), anyString(), eq(false))
@@ -87,7 +87,7 @@ class DailyReportServiceTest {
 
         service.preview(account)
 
-        verify(search).search("서울 정보통신업 수출 지원사업", true, SupportProgramCompanyConditions("서울", "정보통신업", null, "수출"))
+        verify(search).search("서울 정보통신업 수출 지원사업", true, SupportProgramCompanyConditions("서울", "정보통신업", null, "수출"), sampleProduction = false)
         val saved = requireNotNull(content)
         assertEquals(listOf(DailyReportEvidenceStatus.ANSWERED, DailyReportEvidenceStatus.UNSUPPORTED, DailyReportEvidenceStatus.FAILED), saved.programs.map { it.evidenceStatus })
         assertEquals(3, saved.programs.size)
@@ -102,7 +102,7 @@ class DailyReportServiceTest {
     @Test
     fun searchFailureIsStoredAsFailedNotAnEmptySuccessfulReport() {
         prepareGeneration()
-        doThrow(IllegalStateException("private upstream failure")).`when`(search).search(anyString(), eq(true), anyValue())
+        doThrow(IllegalStateException("private upstream failure")).`when`(search).search(anyString(), eq(true), anyValue(), eq(false))
         service.preview(account)
         verify(repository).fail(report)
         verify(repository, never()).succeed(anyValue(), anyValue())
@@ -163,7 +163,7 @@ class DailyReportServiceTest {
         doReturn(account).`when`(accounts).findById(account.id)
         doReturn(report).`when`(repository).claimGenerationJob(7)
         doReturn(true).`when`(push).hasSubscriber(account.id)
-        doReturn(SupportProgramSearchResult("q", emptyList())).`when`(search).search(anyString(), eq(true), anyValue())
+        doReturn(SupportProgramSearchResult("q", emptyList())).`when`(search).search(anyString(), eq(true), anyValue(), eq(false))
         org.junit.jupiter.api.Assertions.assertTrue(service.generateQueued(7))
         verify(repository).finishGenerationJob(eq(7L), equalValue(report), anyValue(), eq(false))
         verifyNoInteractions(mail)
