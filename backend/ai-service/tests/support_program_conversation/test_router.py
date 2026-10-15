@@ -67,19 +67,30 @@ def test_invalid_upstream_output_returns_safe_503_without_search(request_data, o
 
 
 @pytest.mark.parametrize("deadline", ["model", "run"])
-def test_deadline_returns_safe_504_and_sanitized_timing_without_retry(request_data, deadline, caplog):
+def test_deadline_returns_safe_504_and_sanitized_timing_without_retry(
+    request_data, deadline, caplog, conversation_deadlines,
+):
+    cancelled = []
+
     async def hang_forever(_):
-        await asyncio.Event().wait()
-        return []
+        assert set(conversation_deadlines) == {"model", "run"}
+        conversation_deadlines[deadline].reschedule(asyncio.get_running_loop().time())
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
     model = ResponsesChatStub([(hang_forever)])
     agent = SupportProgramConversationAgent(model=model.model,
-        model_timeout_seconds=0.1 if deadline == "model" else 1,
-        run_timeout_seconds=1 if deadline == "model" else 0.01)
+        model_timeout_seconds=10, run_timeout_seconds=20)
     with TestClient(create_app(settings=SETTINGS, support_program_conversation_agent=agent)) as client:
         response = client.post(PATH, json=request_data)
     assert response.status_code == 504
     assert response.json() == {"detail": "Support program conversation interpretation timed out."}
-    assert len(model.calls) <= 1 if deadline == "run" else len(model.calls) == 1
+    assert len(model.calls) == 1
+    assert model.first_call.timeout == 10
+    assert cancelled == [True]
+    assert {name for name, scope in conversation_deadlines.items() if scope.expired()} == {deadline}
     records = [record for record in caplog.records if record.name.endswith("support_program_conversation.router")]
     assert len(records) == 1
     record = records[0]
